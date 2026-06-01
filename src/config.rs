@@ -51,6 +51,37 @@ pub struct ModelConfig {
     pub output_per_1m_usd: f64,
 }
 
+impl Config {
+    /// Finds the named provider and model, returning references to both.
+    /// Returns `InvalidConfig` if either is absent.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn resolve_provider(
+        &self,
+        provider_name: &str,
+        model_name: &str,
+    ) -> Result<(&ProviderConfig, &ModelConfig), PeerError> {
+        let provider = self
+            .providers
+            .iter()
+            .find(|p| p.name == provider_name)
+            .ok_or_else(|| PeerError::InvalidConfig {
+                message: format!("provider '{provider_name}' not found in config"),
+                source: None,
+            })?;
+
+        let model = provider
+            .models
+            .iter()
+            .find(|m| m.name == model_name)
+            .ok_or_else(|| PeerError::InvalidConfig {
+                message: format!("model '{model_name}' not found in provider '{provider_name}'"),
+                source: None,
+            })?;
+
+        Ok((provider, model))
+    }
+}
+
 /// Walks parent directories from `from` looking for `.peer/config.toml`.
 /// Returns the parsed config and the project root (the directory containing `.peer/`).
 pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
@@ -367,6 +398,34 @@ models = [
         ));
 
         assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn resolve_provider_returns_provider_and_model() {
+        let provider_name = "mistral";
+        let model_name = "mistral-large-2512";
+        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        let (provider, model) = config.resolve_provider(provider_name, model_name).unwrap();
+        assert_eq!(provider.name, provider_name);
+        assert_eq!(model.name, model_name);
+    }
+
+    #[test]
+    fn resolve_provider_fails_when_provider_missing() {
+        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert_matches!(
+            config.resolve_provider("nonexistent", "mistral-large-latest"),
+            Err(PeerError::InvalidConfig { source: None, .. })
+        );
+    }
+
+    #[test]
+    fn resolve_provider_fails_when_model_missing() {
+        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert_matches!(
+            config.resolve_provider("mistral", "no-such-model"),
+            Err(PeerError::InvalidConfig { source: None, .. })
+        );
     }
 
     #[test]
