@@ -1,3 +1,4 @@
+mod commit_message;
 mod error;
 
 use std::path::PathBuf;
@@ -8,10 +9,10 @@ use crate::cli::ExtractCommand;
 use crate::config::Config;
 use crate::console::Console;
 
+pub use self::commit_message::CommitMessage;
 use self::error::ExtractError;
 
 /// Provides the programmatic entry point to repository extraction.
-#[expect(dead_code)]
 pub struct Extractor {
     project_root: PathBuf,
     console: Console,
@@ -28,14 +29,21 @@ impl Extractor {
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "kebab-case")]
-pub enum ExtractData {}
+pub enum ExtractData {
+    CommitMessage(CommitMessage),
+}
 
 pub async fn handler(
     console: Console,
-    _command: &ExtractCommand,
+    command: &ExtractCommand,
     _config: Config,
     project_root: PathBuf,
 ) -> Result<ExtractData, ExtractError> {
-    let _extractor = Extractor::new(project_root, console);
-    unimplemented!()
+    let extractor = Extractor::new(project_root, console);
+    Ok(match command {
+        ExtractCommand::CommitMessage { revision } => {
+            ExtractData::CommitMessage(extractor.commit_message(revision).await?)
+        }
+        _ => unimplemented!(),
+    })
 }

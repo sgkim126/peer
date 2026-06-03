@@ -14,7 +14,6 @@ impl CommitHash {
     const MIN_LEN: usize = 7;
     const MAX_LEN: usize = 64;
 
-    #[allow(dead_code)]
     pub async fn resolve(rev: &str, dir: &Path, console: Console) -> Result<Self, GitError> {
         let rev_commit = format!("{rev}^{{commit}}");
         let output = super::run_git(&["rev-parse", "--verify", &rev_commit], dir, console)
