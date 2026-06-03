@@ -1,0 +1,19 @@
+version = 1
+
+[review]
+max_commits = 10
+
+[llm]
+default_provider = "mistral"
+default_model = "mistral-large-latest"
+confidence_threshold = 0.8
+max_iterations = 5
+
+[[providers]]
+name = "mistral"
+api_key_env = "MISTRAL_API_KEY"
+
+  [[providers.models]]
+  name = "mistral-large-latest"
+  input_per_1m_usd = 2.0
+  output_per_1m_usd = 6.0
