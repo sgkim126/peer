@@ -5,7 +5,6 @@ use tokio::process::Command;
 
 use crate::console::Console;
 
-#[allow(dead_code)]
 pub async fn run_git(
     args: &[&str],
     current_dir: &Path,
