@@ -7,7 +7,6 @@ use crate::git::GitError;
 
 /// Initialise the `.peer/` directory in the current git repository root.
 /// Returns the current working directory on success.
-#[allow(dead_code)]
 pub fn handler(_console: Console) -> Result<PathBuf, PeerError> {
     let cwd = std::env::current_dir().map_err(|e| PeerError::InvalidConfig {
         message: "cannot determine current directory".into(),
