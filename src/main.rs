@@ -1,5 +1,7 @@
 mod cli;
+mod config;
 mod console;
+mod error;
 
 use clap::Parser;
 
