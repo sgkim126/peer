@@ -1,3 +1,4 @@
+mod commit_files;
 mod commit_message;
 mod error;
 
@@ -9,8 +10,9 @@ use crate::cli::ExtractCommand;
 use crate::config::Config;
 use crate::console::Console;
 
+pub use self::commit_files::CommitFiles;
 pub use self::commit_message::CommitMessage;
-use self::error::ExtractError;
+pub use self::error::ExtractError;
 
 /// Provides the programmatic entry point to repository extraction.
 pub struct Extractor {
@@ -30,6 +32,7 @@ impl Extractor {
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "kebab-case")]
 pub enum ExtractData {
+    CommitFiles(CommitFiles),
     CommitMessage(CommitMessage),
 }
 
@@ -41,6 +44,9 @@ pub async fn handler(
 ) -> Result<ExtractData, ExtractError> {
     let extractor = Extractor::new(project_root, console);
     Ok(match command {
+        ExtractCommand::CommitFiles { revision } => {
+            ExtractData::CommitFiles(extractor.commit_files(revision).await?)
+        }
         ExtractCommand::CommitMessage { revision } => {
             ExtractData::CommitMessage(extractor.commit_message(revision).await?)
         }
