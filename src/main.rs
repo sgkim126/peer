@@ -3,6 +3,7 @@ mod config;
 mod console;
 mod error;
 mod git;
+mod init;
 
 use clap::Parser;
 

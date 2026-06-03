@@ -4,7 +4,6 @@ use crate::git::GitError;
 
 #[derive(Debug)]
 pub enum PeerError {
-    #[allow(dead_code)]
     Internal {
         message: String,
         source: Box<dyn std::error::Error>,
@@ -13,7 +12,6 @@ pub enum PeerError {
         message: String,
         source: Option<Box<dyn std::error::Error>>,
     },
-    #[allow(dead_code)]
     Git(GitError),
 }
 
