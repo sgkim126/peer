@@ -3,20 +3,16 @@ use std::path::PathBuf;
 use crate::config::DEFAULT_CONFIG_TOML;
 use crate::console::Console;
 use crate::error::PeerError;
-use crate::git::GitError;
+use crate::git::run_git;
 
 /// Return .peer path
-pub async fn handler(_console: Console) -> Result<PathBuf, PeerError> {
+pub async fn handler(console: Console) -> Result<PathBuf, PeerError> {
     let cwd = std::env::current_dir().map_err(|e| PeerError::InvalidConfig {
         message: "cannot determine current directory".into(),
         source: Some(Box::new(e)),
     })?;
 
-    tokio::process::Command::new("git")
-        .arg("--version")
-        .output()
-        .await
-        .map_err(|e| PeerError::Git(GitError::Spawn(e)))?;
+    run_git(&["--version"], &cwd, console).await?;
 
     if !cwd.join(".git").exists() {
         return Err(PeerError::InvalidConfig {
