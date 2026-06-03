@@ -1,3 +1,4 @@
+mod commit_hash;
 mod error;
 
 use std::path::Path;
