@@ -14,10 +14,20 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    let _console = Console::from_cli(&cli);
+    let console = Console::from_cli(&cli);
 
     match cli.command {
-        Command::Init => unimplemented!(),
+        Command::Init => match init::handler(console) {
+            Ok(path) => {
+                println!("initialized peer in {}", path.display());
+                ExitCode::SUCCESS
+            }
+            Err(err) => {
+                eprintln!("error: {err}");
+                console.debug(format!("{err:?}"));
+                ExitCode::FAILURE
+            }
+        },
         Command::Review { .. } => unimplemented!(),
         Command::Extract { .. } => unimplemented!(),
         Command::Check { .. } => unimplemented!(),
