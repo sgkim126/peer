@@ -163,7 +163,6 @@ fn parse_and_validate(
 }
 
 /// the default `.peer/config.toml` content written by `peer init`.
-#[allow(dead_code)]
 pub const DEFAULT_CONFIG_TOML: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/resources/default_config.toml"
