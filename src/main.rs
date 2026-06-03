@@ -18,7 +18,7 @@ async fn main() -> ExitCode {
     let console = Console::from_cli(&cli);
 
     match cli.command {
-        Command::Init => match init::handler(console) {
+        Command::Init => match init::handler(console).await {
             Ok(path) => {
                 println!("initialized peer in {}", path.display());
                 ExitCode::SUCCESS

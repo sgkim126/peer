@@ -12,9 +12,10 @@ pub async fn handler(_console: Console) -> Result<PathBuf, PeerError> {
         source: Some(Box::new(e)),
     })?;
 
-    std::process::Command::new("git")
+    tokio::process::Command::new("git")
         .arg("--version")
         .output()
+        .await
         .map_err(|e| PeerError::Git(GitError::Spawn(e)))?;
 
     if !cwd.join(".git").exists() {
