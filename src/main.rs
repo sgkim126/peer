@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod console;
 mod error;
+mod git;
 
 use clap::Parser;
 
