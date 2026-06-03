@@ -2,6 +2,7 @@ mod cli;
 mod config;
 mod console;
 mod error;
+mod extract;
 mod git;
 mod init;
 

@@ -3,7 +3,6 @@ use std::fmt;
 use serde::{Deserialize, Serialize, Serializer, de};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct CommitHash(String);
 
 impl CommitHash {
