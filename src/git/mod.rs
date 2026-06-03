@@ -1,9 +1,12 @@
+mod commit_hash;
 mod error;
 
 use std::path::Path;
 
 use tokio::process::Command;
 
+#[allow(unused_imports)]
+pub use self::commit_hash::CommitHash;
 pub use self::error::GitError;
 use crate::console::Console;
 
