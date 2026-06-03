@@ -12,7 +12,8 @@ use crate::console::Console;
 
 use std::process::ExitCode;
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
     let console = Console::from_cli(&cli);
 

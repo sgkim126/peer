@@ -6,7 +6,7 @@ use crate::error::PeerError;
 use crate::git::GitError;
 
 /// Return .peer path
-pub fn handler(_console: Console) -> Result<PathBuf, PeerError> {
+pub async fn handler(_console: Console) -> Result<PathBuf, PeerError> {
     let cwd = std::env::current_dir().map_err(|e| PeerError::InvalidConfig {
         message: "cannot determine current directory".into(),
         source: Some(Box::new(e)),
