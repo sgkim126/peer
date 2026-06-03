@@ -1,11 +1,15 @@
 use std::fmt;
 
+use crate::git::GitError;
+
 #[derive(Debug)]
 pub enum PeerError {
     InvalidConfig {
         message: String,
         source: Option<Box<dyn std::error::Error>>,
     },
+    #[allow(dead_code)]
+    Git(GitError),
 }
 
 impl fmt::Display for PeerError {
@@ -18,6 +22,9 @@ impl fmt::Display for PeerError {
                     write!(f, "{message}")
                 }
             }
+            Self::Git(source) => {
+                write!(f, "cannot run git ({source})")
+            }
         }
     }
 }
@@ -26,7 +33,14 @@ impl std::error::Error for PeerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::InvalidConfig { source, .. } => source.as_deref(),
+            Self::Git(source) => Some(source),
         }
+    }
+}
+
+impl From<GitError> for PeerError {
+    fn from(err: GitError) -> Self {
+        Self::Git(err)
     }
 }
 
