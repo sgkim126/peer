@@ -2,6 +2,7 @@ mod commit_diff;
 mod commit_files;
 mod commit_message;
 mod error;
+mod file_content;
 
 use std::path::PathBuf;
 
@@ -15,6 +16,7 @@ pub use self::commit_diff::CommitDiff;
 pub use self::commit_files::CommitFiles;
 pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
+pub use self::file_content::FileContent;
 
 /// Provides the programmatic entry point to repository extraction.
 pub struct Extractor {
@@ -33,11 +35,11 @@ impl Extractor {
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "kebab-case")]
-#[allow(clippy::enum_variant_names)]
 pub enum ExtractData {
     CommitDiff(CommitDiff),
     CommitFiles(CommitFiles),
     CommitMessage(CommitMessage),
+    FileContent(FileContent),
 }
 
 pub async fn handler(
@@ -56,6 +58,9 @@ pub async fn handler(
         }
         ExtractCommand::CommitMessage { revision } => {
             ExtractData::CommitMessage(extractor.commit_message(revision).await?)
+        }
+        ExtractCommand::FileContent { revision, path } => {
+            ExtractData::FileContent(extractor.file_content(revision, path).await?)
         }
         _ => unimplemented!(),
     })
