@@ -2,8 +2,9 @@ mod commit_diff;
 mod commit_files;
 mod commit_message;
 mod error;
+mod file_content;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -15,11 +16,11 @@ use crate::git::CommitHash;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "kebab-case")]
-#[allow(clippy::enum_variant_names)]
 pub enum ExtractData {
     CommitDiff(commit_diff::CommitDiff),
     CommitFiles(commit_files::CommitFiles),
     CommitMessage(commit_message::CommitMessage),
+    FileContent(file_content::FileContent),
 }
 
 pub async fn handler(
@@ -43,6 +44,12 @@ pub async fn handler(
             let hash = CommitHash::new(hash).map_err(ExtractError::InvalidInput)?;
             ExtractData::CommitMessage(
                 commit_message::commit_message(hash, &project_root, console).await?,
+            )
+        }
+        ExtractCommand::FileContent { path, at } => {
+            let at = CommitHash::new(at).map_err(ExtractError::InvalidInput)?;
+            ExtractData::FileContent(
+                file_content::file_content(Path::new(path), at, &project_root, console).await?,
             )
         }
         _ => unimplemented!(),
