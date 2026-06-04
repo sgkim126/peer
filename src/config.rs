@@ -12,7 +12,6 @@ const SUPPORTED_VERSIONS: [u32; 1] = [1];
 
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[allow(dead_code)]
 pub struct Config {
     pub version: u32,
     pub review: ReviewConfig,
@@ -54,7 +53,6 @@ pub struct ModelConfig {
 
 /// Walks parent directories from `from` looking for `.peer/config.toml`.
 /// Returns the parsed config and the project root (the directory containing `.peer/`).
-#[allow(dead_code)]
 pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
     if !from.is_absolute() {
         return Err(PeerError::invalid_config(format!(
