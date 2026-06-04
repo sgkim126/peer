@@ -2,6 +2,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize, Serializer, de};
 
+use super::error::{GitError, InvalidCommitHashReason};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitHash(String);
 
@@ -10,17 +12,24 @@ impl CommitHash {
     const MAX_LEN: usize = 64;
 
     #[allow(dead_code)]
-    pub fn new(s: &str) -> Result<Self, String> {
-        if s.len() < Self::MIN_LEN || s.len() > Self::MAX_LEN {
-            return Err(format!(
-                "commit hash must be {}-{} characters, got {}: {s:?}",
-                Self::MIN_LEN,
-                Self::MAX_LEN,
-                s.len(),
-            ));
+    pub fn new(s: &str) -> Result<Self, GitError> {
+        if s.len() < Self::MIN_LEN {
+            return Err(GitError::InvalidCommitHash {
+                value: s.to_string(),
+                reason: InvalidCommitHashReason::TooShort,
+            });
+        }
+        if Self::MAX_LEN < s.len() {
+            return Err(GitError::InvalidCommitHash {
+                value: s.to_string(),
+                reason: InvalidCommitHashReason::TooLong,
+            });
         }
         if !s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f')) {
-            return Err(format!("commit hash must be lowercase hex: {s:?}"));
+            return Err(GitError::InvalidCommitHash {
+                value: s.to_string(),
+                reason: InvalidCommitHashReason::InvalidCharacter,
+            });
         }
         Ok(Self(s.to_string()))
     }
@@ -67,24 +76,54 @@ mod tests {
     #[test]
     fn commit_hash_too_short_is_rejected() {
         let hash = "c".repeat(6);
-        CommitHash::new(&hash).unwrap_err();
+        assert!(matches!(
+            CommitHash::new(&hash),
+            Err(GitError::InvalidCommitHash {
+                reason: InvalidCommitHashReason::TooShort,
+                ..
+            }),
+        ));
     }
 
     #[test]
     fn commit_hash_too_long_is_rejected() {
         let hash = "d".repeat(65);
-        CommitHash::new(&hash).unwrap_err();
+        assert!(matches!(
+            CommitHash::new(&hash),
+            Err(GitError::InvalidCommitHash {
+                reason: InvalidCommitHashReason::TooLong,
+                ..
+            }),
+        ));
     }
 
     #[test]
     fn commit_hash_uppercase_is_rejected() {
-        CommitHash::new("DEADBEEF").unwrap_err();
+        assert!(matches!(
+            CommitHash::new("DEADBEEF"),
+            Err(GitError::InvalidCommitHash {
+                reason: InvalidCommitHashReason::InvalidCharacter,
+                ..
+            }),
+        ));
     }
 
     #[test]
     fn commit_hash_non_hex_chars_are_rejected() {
-        CommitHash::new("xyzxyzx").unwrap_err();
-        CommitHash::new("dead be").unwrap_err();
+        assert!(matches!(
+            CommitHash::new("xyzxyzx"),
+            Err(GitError::InvalidCommitHash {
+                reason: InvalidCommitHashReason::InvalidCharacter,
+                ..
+            }),
+        ));
+        assert!(matches!(
+            CommitHash::new("dead be"),
+            Err(GitError::InvalidCommitHash {
+                reason: InvalidCommitHashReason::InvalidCharacter,
+                ..
+            }),
+        ));
     }
 
     #[test]
