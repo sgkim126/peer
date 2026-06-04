@@ -30,26 +30,26 @@ pub async fn handler(
     project_root: PathBuf,
 ) -> Result<ExtractData, ExtractError> {
     Ok(match command {
-        ExtractCommand::CommitDiff { hash } => {
-            let hash = CommitHash::new(hash)?;
+        ExtractCommand::CommitDiff { revision } => {
+            let hash = CommitHash::resolve(revision, &project_root, console).await?;
             ExtractData::CommitDiff(commit_diff::commit_diff(hash, &project_root, console).await?)
         }
-        ExtractCommand::CommitFiles { hash } => {
-            let hash = CommitHash::new(hash)?;
+        ExtractCommand::CommitFiles { revision } => {
+            let hash = CommitHash::resolve(revision, &project_root, console).await?;
             ExtractData::CommitFiles(
                 commit_files::commit_files(hash, &project_root, console).await?,
             )
         }
-        ExtractCommand::CommitMessage { hash } => {
-            let hash = CommitHash::new(hash)?;
+        ExtractCommand::CommitMessage { revision } => {
+            let hash = CommitHash::resolve(revision, &project_root, console).await?;
             ExtractData::CommitMessage(
                 commit_message::commit_message(hash, &project_root, console).await?,
             )
         }
-        ExtractCommand::FileContent { path, at } => {
-            let at = CommitHash::new(at)?;
+        ExtractCommand::FileContent { path, revision } => {
+            let hash = CommitHash::resolve(revision, &project_root, console).await?;
             ExtractData::FileContent(
-                file_content::file_content(Path::new(path), at, &project_root, console).await?,
+                file_content::file_content(Path::new(path), hash, &project_root, console).await?,
             )
         }
         _ => unimplemented!(),

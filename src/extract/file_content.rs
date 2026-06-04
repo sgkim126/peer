@@ -11,37 +11,41 @@ use crate::git::{CommitHash, GitError, run_git_bytes};
 pub enum FileContent {
     Text {
         path: String,
-        at: CommitHash,
+        hash: CommitHash,
         content: String,
     },
     Binary {
         path: String,
-        at: CommitHash,
+        hash: CommitHash,
         size: u64,
     },
 }
 
 pub async fn file_content(
     path: &Path,
-    at: CommitHash,
+    hash: CommitHash,
     project_root: &Path,
     console: Console,
 ) -> Result<FileContent, ExtractError> {
     let path = path.to_string_lossy().into_owned();
-    let treeish = format!("{at}:{path}");
+    let treeish = format!("{hash}:{path}");
 
     let bytes = run_git_bytes(&["show", &treeish], project_root, console).await?;
 
     if bytes.contains(&0u8) {
         return Ok(FileContent::Binary {
             path: path.clone(),
-            at,
+            hash,
             size: bytes.len() as u64,
         });
     }
 
     let content = String::from_utf8(bytes).map_err(GitError::FromUtf8)?;
-    Ok(FileContent::Text { path, at, content })
+    Ok(FileContent::Text {
+        path,
+        hash,
+        content,
+    })
 }
 
 #[cfg(test)]

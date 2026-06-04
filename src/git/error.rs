@@ -12,7 +12,6 @@ pub enum GitError {
         value: String,
         reason: InvalidCommitHashReason,
     },
-    #[allow(dead_code)]
     InvalidRevision(String),
 }
 
