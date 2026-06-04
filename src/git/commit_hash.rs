@@ -46,7 +46,7 @@ impl Serialize for CommitHash {
 impl<'de> Deserialize<'de> for CommitHash {
     fn deserialize<D: de::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
         let s = String::deserialize(d)?;
-        CommitHash::new(&s).map_err(de::Error::custom)
+        Self::new(&s).map_err(de::Error::custom)
     }
 }
 

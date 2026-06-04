@@ -10,11 +10,11 @@ pub enum GitError {
 impl fmt::Display for GitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GitError::Spawn(e) => write!(f, "failed to spawn git: {e}"),
-            GitError::NonZeroExit { status, stderr } => {
+            Self::Spawn(e) => write!(f, "failed to spawn git: {e}"),
+            Self::NonZeroExit { status, stderr } => {
                 write!(f, "git exited with status {status}: {stderr}")
             }
-            GitError::FromUtf8(e) => write!(f, "git output is not valid UTF-8: {e}"),
+            Self::FromUtf8(e) => write!(f, "git output is not valid UTF-8: {e}"),
         }
     }
 }
@@ -22,9 +22,9 @@ impl fmt::Display for GitError {
 impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            GitError::Spawn(e) => Some(e),
-            GitError::NonZeroExit { .. } => None,
-            GitError::FromUtf8(e) => Some(e),
+            Self::Spawn(e) => Some(e),
+            Self::NonZeroExit { .. } => None,
+            Self::FromUtf8(e) => Some(e),
         }
     }
 }
