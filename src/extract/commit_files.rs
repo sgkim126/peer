@@ -104,7 +104,6 @@ fn parse_binary_paths(numstat: &str) -> HashSet<&str> {
     binary
 }
 
-#[allow(dead_code)]
 pub async fn commit_files(
     hash: CommitHash,
     project_root: &Path,

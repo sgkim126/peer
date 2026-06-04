@@ -8,6 +8,7 @@ pub enum PeerError {
         message: String,
         source: Box<dyn std::error::Error>,
     },
+    InvalidInput(String),
     InvalidConfig {
         message: String,
         source: Option<Box<dyn std::error::Error>>,
@@ -20,6 +21,9 @@ impl fmt::Display for PeerError {
         match self {
             Self::Internal { message, source } => {
                 write!(f, "{message}: ({source})")
+            }
+            Self::InvalidInput(message) => {
+                write!(f, "{message}")
             }
             Self::InvalidConfig { message, source } => {
                 if let Some(source) = source {
@@ -39,6 +43,7 @@ impl std::error::Error for PeerError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Internal { source, .. } => Some(source.as_ref()),
+            Self::InvalidInput(_) => None,
             Self::InvalidConfig { source, .. } => source.as_deref(),
             Self::Git(source) => Some(source),
         }

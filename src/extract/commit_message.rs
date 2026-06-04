@@ -7,13 +7,11 @@ use crate::error::PeerError;
 use crate::git::{CommitHash, run_git};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
-#[allow(dead_code)]
 pub struct CommitMessage {
     pub hash: CommitHash,
     pub message: String,
 }
 
-#[allow(dead_code)]
 pub async fn commit_message(
     hash: CommitHash,
     project_root: &Path,
