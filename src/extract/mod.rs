@@ -31,23 +31,23 @@ pub async fn handler(
 ) -> Result<ExtractData, ExtractError> {
     Ok(match command {
         ExtractCommand::CommitDiff { hash } => {
-            let hash = CommitHash::new(hash).map_err(ExtractError::InvalidInput)?;
+            let hash = CommitHash::new(hash)?;
             ExtractData::CommitDiff(commit_diff::commit_diff(hash, &project_root, console).await?)
         }
         ExtractCommand::CommitFiles { hash } => {
-            let hash = CommitHash::new(hash).map_err(ExtractError::InvalidInput)?;
+            let hash = CommitHash::new(hash)?;
             ExtractData::CommitFiles(
                 commit_files::commit_files(hash, &project_root, console).await?,
             )
         }
         ExtractCommand::CommitMessage { hash } => {
-            let hash = CommitHash::new(hash).map_err(ExtractError::InvalidInput)?;
+            let hash = CommitHash::new(hash)?;
             ExtractData::CommitMessage(
                 commit_message::commit_message(hash, &project_root, console).await?,
             )
         }
         ExtractCommand::FileContent { path, at } => {
-            let at = CommitHash::new(at).map_err(ExtractError::InvalidInput)?;
+            let at = CommitHash::new(at)?;
             ExtractData::FileContent(
                 file_content::file_content(Path::new(path), at, &project_root, console).await?,
             )

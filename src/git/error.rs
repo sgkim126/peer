@@ -3,8 +3,22 @@ use std::fmt;
 #[derive(Debug)]
 pub enum GitError {
     Spawn(std::io::Error),
-    NonZeroExit { status: i32, stderr: String },
+    NonZeroExit {
+        status: i32,
+        stderr: String,
+    },
     FromUtf8(std::string::FromUtf8Error),
+    InvalidCommitHash {
+        value: String,
+        reason: InvalidCommitHashReason,
+    },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidCommitHashReason {
+    TooShort,
+    TooLong,
+    InvalidCharacter,
 }
 
 impl fmt::Display for GitError {
@@ -15,6 +29,14 @@ impl fmt::Display for GitError {
                 write!(f, "git exited with status {status}: {stderr}")
             }
             Self::FromUtf8(e) => write!(f, "git output is not valid UTF-8: {e}"),
+            Self::InvalidCommitHash { value, reason } => {
+                let reason = match reason {
+                    InvalidCommitHashReason::TooShort => "is too short",
+                    InvalidCommitHashReason::TooLong => "is too long",
+                    InvalidCommitHashReason::InvalidCharacter => "has non-lowercase hex character",
+                };
+                write!(f, "{value} is an invalid commit hash because it {reason}")
+            }
         }
     }
 }
@@ -25,6 +47,7 @@ impl std::error::Error for GitError {
             Self::Spawn(e) => Some(e),
             Self::NonZeroExit { .. } => None,
             Self::FromUtf8(e) => Some(e),
+            Self::InvalidCommitHash { .. } => None,
         }
     }
 }
