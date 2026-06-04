@@ -7,11 +7,11 @@ use tokio::process::Command;
 pub use self::error::GitError;
 use crate::console::Console;
 
-pub async fn run_git(
+pub async fn run_git_bytes(
     args: &[&str],
     current_dir: &Path,
     console: Console,
-) -> Result<String, GitError> {
+) -> Result<Vec<u8>, GitError> {
     let commands = format_argv(args);
     console.debug(format_args!("{commands}"));
 
@@ -30,7 +30,17 @@ pub async fn run_git(
         return Err(GitError::NonZeroExit { status, stderr });
     }
 
-    String::from_utf8(output.stdout).map_err(GitError::FromUtf8)
+    Ok(output.stdout)
+}
+
+pub async fn run_git(
+    args: &[&str],
+    current_dir: &Path,
+    console: Console,
+) -> Result<String, GitError> {
+    let stdout = run_git_bytes(args, current_dir, console).await?;
+
+    String::from_utf8(stdout).map_err(GitError::FromUtf8)
 }
 
 fn format_argv(args: &[&str]) -> String {
