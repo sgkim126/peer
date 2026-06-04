@@ -3,8 +3,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::ExtractError;
 use crate::console::Console;
-use crate::error::PeerError;
 use crate::git::{CommitHash, run_git};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -108,7 +108,7 @@ pub async fn commit_files(
     hash: CommitHash,
     project_root: &Path,
     console: Console,
-) -> Result<CommitFiles, PeerError> {
+) -> Result<CommitFiles, ExtractError> {
     let hash_str: &str = hash.as_ref();
 
     let name_status_out = run_git(
@@ -514,6 +514,6 @@ mod tests {
         let hash = CommitHash::new("deadbeef").unwrap();
         let err = commit_files(hash, tmp.path(), console).await.unwrap_err();
 
-        assert!(matches!(err, PeerError::Git { .. }));
+        assert!(matches!(err, ExtractError::Git { .. }));
     }
 }

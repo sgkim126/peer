@@ -2,8 +2,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use super::ExtractError;
 use crate::console::Console;
-use crate::error::PeerError;
 use crate::git::{CommitHash, run_git};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -16,7 +16,7 @@ pub async fn commit_message(
     hash: CommitHash,
     project_root: &Path,
     console: Console,
-) -> Result<CommitMessage, PeerError> {
+) -> Result<CommitMessage, ExtractError> {
     let output = run_git(
         &["log", "-1", "--format=%B", hash.as_ref()],
         project_root,
@@ -95,6 +95,6 @@ mod tests {
         run_git(&["init"], tmp.path(), console).await.unwrap();
         let hash = CommitHash::new("deadbeef").unwrap();
         let err = commit_message(hash, tmp.path(), console).await.unwrap_err();
-        assert!(matches!(err, PeerError::Git { .. }));
+        assert!(matches!(err, ExtractError::Git { .. }));
     }
 }

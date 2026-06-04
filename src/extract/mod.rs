@@ -1,14 +1,15 @@
 mod commit_files;
 mod commit_message;
+mod error;
 
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+pub use self::error::ExtractError;
 use crate::cli::ExtractCommand;
 use crate::config::Config;
 use crate::console::Console;
-use crate::error::PeerError;
 use crate::git::CommitHash;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -23,10 +24,10 @@ pub async fn handler(
     command: &ExtractCommand,
     _config: Config,
     project_root: PathBuf,
-) -> Result<ExtractData, PeerError> {
+) -> Result<ExtractData, ExtractError> {
     Ok(match command {
         ExtractCommand::CommitFiles { hash } => {
-            let hash = CommitHash::new(hash).map_err(PeerError::InvalidInput)?;
+            let hash = CommitHash::new(hash).map_err(ExtractError::InvalidInput)?;
             ExtractData::CommitFiles(
                 commit_files::commit_files(hash, &project_root, console).await?,
             )
