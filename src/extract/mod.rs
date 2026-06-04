@@ -1,3 +1,4 @@
+mod commit_diff;
 mod commit_files;
 mod commit_message;
 mod error;
@@ -14,7 +15,9 @@ use crate::git::CommitHash;
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "command", rename_all = "kebab-case")]
+#[allow(clippy::enum_variant_names)]
 pub enum ExtractData {
+    CommitDiff(commit_diff::CommitDiff),
     CommitFiles(commit_files::CommitFiles),
     CommitMessage(commit_message::CommitMessage),
 }
@@ -26,6 +29,10 @@ pub async fn handler(
     project_root: PathBuf,
 ) -> Result<ExtractData, ExtractError> {
     Ok(match command {
+        ExtractCommand::CommitDiff { hash } => {
+            let hash = CommitHash::new(hash).map_err(ExtractError::InvalidInput)?;
+            ExtractData::CommitDiff(commit_diff::commit_diff(hash, &project_root, console).await?)
+        }
         ExtractCommand::CommitFiles { hash } => {
             let hash = CommitHash::new(hash).map_err(ExtractError::InvalidInput)?;
             ExtractData::CommitFiles(
@@ -33,7 +40,7 @@ pub async fn handler(
             )
         }
         ExtractCommand::CommitMessage { hash } => {
-            let hash = CommitHash::new(hash).map_err(PeerError::InvalidInput)?;
+            let hash = CommitHash::new(hash).map_err(ExtractError::InvalidInput)?;
             ExtractData::CommitMessage(
                 commit_message::commit_message(hash, &project_root, console).await?,
             )
