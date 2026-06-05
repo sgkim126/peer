@@ -1,6 +1,9 @@
 use std::fmt;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize, Serializer, de};
+
+use crate::console::Console;
 
 use super::error::{GitError, InvalidCommitHashReason};
 
@@ -10,6 +13,17 @@ pub struct CommitHash(String);
 impl CommitHash {
     const MIN_LEN: usize = 7;
     const MAX_LEN: usize = 40;
+
+    #[allow(dead_code)]
+    pub async fn resolve(rev: &str, dir: &Path, console: Console) -> Result<Self, GitError> {
+        let rev_commit = format!("{rev}^{{commit}}");
+        let output = super::run_git(&["rev-parse", "--verify", &rev_commit], dir, console).await?;
+        let commit_hash = output.trim();
+        if commit_hash.is_empty() {
+            return Err(GitError::InvalidRevision(rev.to_string()));
+        }
+        Self::new(commit_hash)
+    }
 
     pub fn new(s: &str) -> Result<Self, GitError> {
         if s.len() < Self::MIN_LEN {
