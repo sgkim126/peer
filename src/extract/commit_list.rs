@@ -18,6 +18,22 @@ pub async fn commit_list(
     project_root: &Path,
     console: Console,
 ) -> Result<CommitList, ExtractError> {
+    if range.contains("...") || !range.contains("..") {
+        return Err(ExtractError::InvalidRange(range.to_string()));
+    }
+
+    let (from, to) = range.split_once("..").unwrap();
+    if from.is_empty() || to.is_empty() {
+        return Err(ExtractError::InvalidRange(range.to_string()));
+    }
+
+    CommitHash::resolve(from, project_root, console)
+        .await
+        .map_err(|_| ExtractError::InvalidRevision(from.to_string()))?;
+    CommitHash::resolve(to, project_root, console)
+        .await
+        .map_err(|_| ExtractError::InvalidRevision(to.to_string()))?;
+
     let output = run_git(&["rev-list", "--reverse", range], project_root, console).await?;
 
     let commits = output
@@ -109,14 +125,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn commit_list_fails_for_invalid_range() {
-        let tmp = tempfile::tempdir().unwrap();
-        run_git(&["init"], tmp.path(), Console::default())
-            .await
-            .unwrap();
-        let err = commit_list("deadbeef..HEAD", tmp.path(), Console::default())
+    async fn commit_list_fails_for_three_dots_range() {
+        let repo = Repo::new().await;
+        let hash1 = repo.commit("a.txt", "first").await;
+        let range = format!("{hash1}...HEAD");
+        let err = commit_list(&range, &repo.path, Console::default())
             .await
             .unwrap_err();
-        assert!(matches!(err, ExtractError::Git { .. }));
+        assert!(matches!(err, ExtractError::InvalidRange(value) if value == range));
+    }
+
+    #[tokio::test]
+    async fn commit_list_fails_for_non_range() {
+        let repo = Repo::new().await;
+        let hash1 = repo.commit("a.txt", "first").await;
+        let err = commit_list(hash1.as_ref(), &repo.path, Console::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExtractError::InvalidRange(value) if value == hash1.as_ref()));
+    }
+
+    #[tokio::test]
+    async fn commit_list_fails_for_missing_from_revision() {
+        let repo = Repo::new().await;
+        repo.commit("a.txt", "first").await;
+        let from = "deadbeef1234567";
+        let range = format!("{from}..HEAD");
+        let err = commit_list(&range, &repo.path, Console::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExtractError::InvalidRevision(value) if value == from));
+    }
+
+    #[tokio::test]
+    async fn commit_list_fails_for_missing_to_revision() {
+        let repo = Repo::new().await;
+        let hash1 = repo.commit("a.txt", "first").await;
+        let to = "deadbeef1234567";
+        let range = format!("{hash1}..{to}");
+        let err = commit_list(&range, &repo.path, Console::default())
+            .await
+            .unwrap_err();
+        assert!(matches!(err, ExtractError::InvalidRevision(value) if value == to));
     }
 }
