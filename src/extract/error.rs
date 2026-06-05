@@ -3,7 +3,6 @@ use std::fmt;
 use crate::git::GitError;
 
 #[derive(Debug)]
-#[expect(dead_code)]
 pub enum ExtractError {
     Git(GitError),
     InvalidTwoDotRange(String),

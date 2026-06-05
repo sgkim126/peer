@@ -1,5 +1,6 @@
 mod commit_diff;
 mod commit_files;
+mod commit_list;
 mod commit_message;
 mod error;
 mod file_content;
@@ -14,6 +15,7 @@ use crate::console::Console;
 
 pub use self::commit_diff::CommitDiff;
 pub use self::commit_files::CommitFiles;
+pub use self::commit_list::CommitList;
 pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
 pub use self::file_content::FileContent;
@@ -38,6 +40,7 @@ impl Extractor {
 pub enum ExtractData {
     CommitDiff(CommitDiff),
     CommitFiles(CommitFiles),
+    CommitList(CommitList),
     CommitMessage(CommitMessage),
     FileContent(FileContent),
 }
@@ -56,12 +59,14 @@ pub async fn handler(
         ExtractCommand::CommitFiles { revision } => {
             ExtractData::CommitFiles(extractor.commit_files(revision).await?)
         }
+        ExtractCommand::CommitList { range } => {
+            ExtractData::CommitList(extractor.commit_list(range).await?)
+        }
         ExtractCommand::CommitMessage { revision } => {
             ExtractData::CommitMessage(extractor.commit_message(revision).await?)
         }
         ExtractCommand::FileContent { revision, path } => {
             ExtractData::FileContent(extractor.file_content(revision, path).await?)
         }
-        _ => unimplemented!(),
     })
 }
