@@ -105,11 +105,11 @@ fn parse_binary_paths(numstat: &str) -> HashSet<&str> {
 }
 
 pub async fn commit_files(
-    hash: CommitHash,
+    revision: &str,
     project_root: &Path,
     console: Console,
 ) -> Result<CommitFiles, ExtractError> {
-    let hash_str: &str = hash.as_ref();
+    let hash = CommitHash::resolve(revision, project_root, console).await?;
 
     let name_status_out = run_git(
         &[
@@ -120,7 +120,7 @@ pub async fn commit_files(
             "--name-status",
             "-M",
             "-C",
-            hash_str,
+            hash.as_ref(),
         ],
         project_root,
         console,
@@ -134,7 +134,7 @@ pub async fn commit_files(
             "--root",
             "-r",
             "--numstat",
-            hash_str,
+            hash.as_ref(),
         ],
         project_root,
         console,
@@ -388,7 +388,9 @@ mod tests {
         let hash = repo
             .commit_files_raw(&[("hello.txt", b"hello")], "add hello")
             .await;
-        let result = commit_files(hash, &repo.path, console).await.unwrap();
+        let result = commit_files(hash.as_ref(), &repo.path, console)
+            .await
+            .unwrap();
 
         assert_eq!(
             result.files,
@@ -410,7 +412,9 @@ mod tests {
         let hash = repo
             .commit_files_raw(&[("data.bin", &binary_data)], "add binary")
             .await;
-        let result = commit_files(hash, &repo.path, console).await.unwrap();
+        let result = commit_files(hash.as_ref(), &repo.path, console)
+            .await
+            .unwrap();
 
         assert_eq!(
             result.files,
@@ -445,7 +449,9 @@ mod tests {
             .unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = commit_files(hash, &repo.path, console).await.unwrap();
+        let result = commit_files(hash.as_ref(), &repo.path, console)
+            .await
+            .unwrap();
 
         assert_eq!(
             result.files,
@@ -492,7 +498,9 @@ mod tests {
             .unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = commit_files(hash, &repo.path, console).await.unwrap();
+        let result = commit_files(hash.as_ref(), &repo.path, console)
+            .await
+            .unwrap();
 
         assert_eq!(
             result.files,
@@ -511,7 +519,7 @@ mod tests {
 
         let tmp = tempfile::tempdir().unwrap();
         run_git(&["init"], tmp.path(), console).await.unwrap();
-        let hash = CommitHash::new("deadbeef").unwrap();
+        let hash = "deadbeef";
         let err = commit_files(hash, tmp.path(), console).await.unwrap_err();
 
         assert!(matches!(err, ExtractError::Git { .. }));

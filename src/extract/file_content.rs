@@ -23,10 +23,12 @@ pub enum FileContent {
 
 pub async fn file_content(
     path: &Path,
-    hash: CommitHash,
+    revision: &str,
     project_root: &Path,
     console: Console,
 ) -> Result<FileContent, ExtractError> {
+    let hash = CommitHash::resolve(revision, project_root, console).await?;
+
     let path = path.to_string_lossy().into_owned();
     let treeish = format!("{hash}:{path}");
 
@@ -103,9 +105,14 @@ mod tests {
     async fn file_content_returns_text_content() {
         let repo = Repo::new().await;
         let hash = repo.commit(&[("hello.txt", b"hello world")], "add").await;
-        let result = file_content(Path::new("hello.txt"), hash, &repo.path, Console::default())
-            .await
-            .unwrap();
+        let result = file_content(
+            Path::new("hello.txt"),
+            hash.as_ref(),
+            &repo.path,
+            Console::default(),
+        )
+        .await
+        .unwrap();
         let FileContent::Text { content, .. } = result else {
             panic!("expected text");
         };
@@ -120,9 +127,14 @@ mod tests {
         let hash = repo
             .commit(&[("data.bin", &binary_data)], "add binary")
             .await;
-        let result = file_content(Path::new("data.bin"), hash, &repo.path, Console::default())
-            .await
-            .unwrap();
+        let result = file_content(
+            Path::new("data.bin"),
+            hash.as_ref(),
+            &repo.path,
+            Console::default(),
+        )
+        .await
+        .unwrap();
         let FileContent::Binary { size, .. } = result else {
             panic!("expected binary");
         };
@@ -138,9 +150,14 @@ mod tests {
         // delete from working tree but file still exists at `hash`
         std::fs::remove_file(repo.path.join("f.txt")).unwrap();
 
-        let result = file_content(Path::new("f.txt"), hash, &repo.path, Console::default())
-            .await
-            .unwrap();
+        let result = file_content(
+            Path::new("f.txt"),
+            hash.as_ref(),
+            &repo.path,
+            Console::default(),
+        )
+        .await
+        .unwrap();
         let FileContent::Text { content, .. } = result else {
             panic!("expected text");
         };
@@ -154,7 +171,7 @@ mod tests {
         let hash = repo.commit(&[("a.txt", b"a")], "add").await;
         let err = file_content(
             Path::new("nonexistent.txt"),
-            hash,
+            hash.as_ref(),
             &repo.path,
             Console::default(),
         )

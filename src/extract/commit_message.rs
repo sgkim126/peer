@@ -13,10 +13,12 @@ pub struct CommitMessage {
 }
 
 pub async fn commit_message(
-    hash: CommitHash,
+    revision: &str,
     project_root: &Path,
     console: Console,
 ) -> Result<CommitMessage, ExtractError> {
+    let hash = CommitHash::resolve(revision, project_root, console).await?;
+
     let output = run_git(
         &["log", "-1", "--format=%B", hash.as_ref()],
         project_root,
@@ -72,7 +74,7 @@ mod tests {
     async fn commit_message_returns_correct_message() {
         let console = Console::default();
         let (repo, hash) = Repo::new("initial commit").await;
-        let result = commit_message(hash.clone(), &repo.path, console)
+        let result = commit_message(hash.as_ref(), &repo.path, console)
             .await
             .unwrap();
         assert_eq!(result.hash, hash);
@@ -84,7 +86,9 @@ mod tests {
         let console = Console::default();
         let msg = "subject line\n\nbody paragraph";
         let (repo, hash) = Repo::new(msg).await;
-        let result = commit_message(hash, &repo.path, console).await.unwrap();
+        let result = commit_message(hash.as_ref(), &repo.path, console)
+            .await
+            .unwrap();
         assert_eq!(result.message, msg);
     }
 
@@ -93,7 +97,7 @@ mod tests {
         let console = Console::default();
         let tmp = tempfile::tempdir().unwrap();
         run_git(&["init"], tmp.path(), console).await.unwrap();
-        let hash = CommitHash::new("deadbeef").unwrap();
+        let hash = "deadbeef";
         let err = commit_message(hash, tmp.path(), console).await.unwrap_err();
         assert!(matches!(err, ExtractError::Git { .. }));
     }

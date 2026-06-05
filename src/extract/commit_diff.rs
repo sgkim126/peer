@@ -13,11 +13,11 @@ pub struct CommitDiff {
 }
 
 pub async fn commit_diff(
-    hash: CommitHash,
+    revision: &str,
     project_root: &Path,
     console: Console,
 ) -> Result<CommitDiff, ExtractError> {
-    let hash_str: &str = hash.as_ref();
+    let hash = CommitHash::resolve(revision, project_root, console).await?;
 
     let diff = run_git(
         &[
@@ -26,7 +26,7 @@ pub async fn commit_diff(
             "--root",
             "-r",
             "-p",
-            hash_str,
+            hash.as_ref(),
         ],
         project_root,
         console,
@@ -92,7 +92,7 @@ mod tests {
         let hash = repo
             .commit(&[("hello.txt", b"hello world\n")], "add hello")
             .await;
-        let result = commit_diff(hash, &repo.path, Console::default())
+        let result = commit_diff(hash.as_ref(), &repo.path, Console::default())
             .await
             .unwrap();
         assert!(result.diff.contains("+hello world"));
@@ -119,7 +119,7 @@ mod tests {
             .unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = commit_diff(hash, &repo.path, Console::default())
+        let result = commit_diff(hash.as_ref(), &repo.path, Console::default())
             .await
             .unwrap();
 
@@ -133,7 +133,7 @@ mod tests {
         run_git(&["init"], tmp.path(), Console::default())
             .await
             .unwrap();
-        let hash = CommitHash::new("deadbeef").unwrap();
+        let hash = "deadbeef";
         let err = commit_diff(hash, tmp.path(), Console::default())
             .await
             .unwrap_err();
