@@ -12,6 +12,7 @@ pub enum GitError {
         value: String,
         reason: InvalidCommitHashReason,
     },
+    InvalidRevision(String),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +40,9 @@ impl fmt::Display for GitError {
                 };
                 write!(f, "{value} is an invalid commit hash because it {reason}")
             }
+            Self::InvalidRevision(value) => {
+                write!(f, "{value} is an invalid revision")
+            }
         }
     }
 }
@@ -50,6 +54,7 @@ impl std::error::Error for GitError {
             Self::NonZeroExit { .. } => None,
             Self::FromUtf8(e) => Some(e),
             Self::InvalidCommitHash { .. } => None,
+            Self::InvalidRevision(_) => None,
         }
     }
 }
