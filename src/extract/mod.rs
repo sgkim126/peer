@@ -1,5 +1,6 @@
 mod commit_diff;
 mod commit_files;
+mod commit_list;
 mod commit_message;
 mod error;
 mod file_content;
@@ -19,6 +20,7 @@ use crate::git::CommitHash;
 pub enum ExtractData {
     CommitDiff(commit_diff::CommitDiff),
     CommitFiles(commit_files::CommitFiles),
+    CommitList(commit_list::CommitList),
     CommitMessage(commit_message::CommitMessage),
     FileContent(file_content::FileContent),
 }
@@ -40,6 +42,9 @@ pub async fn handler(
                 commit_files::commit_files(hash, &project_root, console).await?,
             )
         }
+        ExtractCommand::CommitList { range } => {
+            ExtractData::CommitList(commit_list::commit_list(range, &project_root, console).await?)
+        }
         ExtractCommand::CommitMessage { revision } => {
             let hash = CommitHash::resolve(revision, &project_root, console).await?;
             ExtractData::CommitMessage(
@@ -52,6 +57,5 @@ pub async fn handler(
                 file_content::file_content(Path::new(path), hash, &project_root, console).await?,
             )
         }
-        _ => unimplemented!(),
     })
 }
