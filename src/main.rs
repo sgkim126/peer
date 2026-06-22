@@ -5,6 +5,7 @@ mod error;
 mod extract;
 mod git;
 mod init;
+mod llm;
 mod secret;
 
 use clap::Parser;
