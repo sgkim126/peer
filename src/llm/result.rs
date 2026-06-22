@@ -3,6 +3,7 @@ use std::path::Path;
 
 use crate::console::Console;
 use crate::git::CommitHash;
+use crate::llm::provider::RawUsage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -22,7 +23,6 @@ pub struct FileLocation {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Finding {
     pub commit: CommitHash,
     pub severity: Severity,
@@ -47,11 +47,32 @@ pub struct CheckUsage {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct CheckOutput {
     #[serde(default)]
     pub summary: String,
     pub findings: Vec<Finding>,
+}
+
+impl CheckUsage {
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn from_raw_usage(
+        usage: RawUsage,
+        model: impl Into<String>,
+        input_per_1m_usd: f64,
+        output_per_1m_usd: f64,
+    ) -> Self {
+        Self {
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cost_usd: cost_usd(usage, input_per_1m_usd, output_per_1m_usd),
+            model: model.into(),
+        }
+    }
+}
+
+fn cost_usd(usage: RawUsage, input_per_1m_usd: f64, output_per_1m_usd: f64) -> f64 {
+    (usage.input_tokens as f64 / 1_000_000.0) * input_per_1m_usd
+        + (usage.output_tokens as f64 / 1_000_000.0) * output_per_1m_usd
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -131,6 +152,8 @@ mod tests {
     use super::*;
 
     use std::assert_matches;
+
+    const MILLION: f64 = 1_000_000.0;
 
     fn finding(commit: &str, severity: Severity) -> Finding {
         Finding {
@@ -319,5 +342,26 @@ mod tests {
 
         assert!(output.summary.is_empty());
         assert!(output.findings.is_empty());
+    }
+
+    #[test]
+    fn check_usage_from_raw_usage_calculates_cost() {
+        let input_tokens = 1_000;
+        let output_tokens = 500;
+        let model = "mistral-large-latest";
+
+        let usage = RawUsage {
+            input_tokens,
+            output_tokens,
+        };
+        let check = CheckUsage::from_raw_usage(usage, model, 2.0, 6.0);
+
+        assert_eq!(check.input_tokens, input_tokens);
+        assert_eq!(check.output_tokens, output_tokens);
+        assert_eq!(check.model, model);
+
+        let expected_cost =
+            (input_tokens as f64 / MILLION) * 2.0 + (output_tokens as f64 / MILLION) * 6.0;
+        assert!((check.cost_usd - expected_cost).abs() < f64::EPSILON);
     }
 }
