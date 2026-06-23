@@ -5,7 +5,6 @@ mod response;
 
 pub use error::LlmCallError;
 pub use request::{ConversationTurn, LlmRequest, ToolSpec};
-#[allow(unused_imports)]
 pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
 
 #[allow(dead_code)]
