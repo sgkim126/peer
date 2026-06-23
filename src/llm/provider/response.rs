@@ -8,14 +8,12 @@ pub struct ToolCall {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum LlmResponse {
     CheckOutput(CheckOutput),
     ToolCalls(Vec<ToolCall>),
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub struct LlmCallResult {
     pub response: LlmResponse,
     pub usage: RawUsage,

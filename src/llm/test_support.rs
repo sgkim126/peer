@@ -1,8 +1,9 @@
 use std::collections::VecDeque;
 use std::sync::Mutex;
 
+use super::agent::{ToolExecutionResult, ToolExecutor};
 use super::provider::{
-    ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, ToolSpec,
+    ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, ToolCall, ToolSpec,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -19,6 +20,12 @@ pub struct MockProvider {
     requests: Mutex<Vec<RecordedLlmRequest>>,
 }
 
+#[derive(Debug)]
+pub struct FakeToolExecutor {
+    responses: Mutex<VecDeque<ToolExecutionResult>>,
+    calls: Mutex<Vec<ToolCall>>,
+}
+
 impl MockProvider {
     pub fn new(responses: impl IntoIterator<Item = Result<LlmCallResult, LlmCallError>>) -> Self {
         Self {
@@ -29,6 +36,19 @@ impl MockProvider {
 
     pub fn requests(&self) -> Vec<RecordedLlmRequest> {
         self.requests.lock().unwrap().clone()
+    }
+}
+
+impl FakeToolExecutor {
+    pub fn new(responses: impl IntoIterator<Item = ToolExecutionResult>) -> Self {
+        Self {
+            responses: Mutex::new(responses.into_iter().collect()),
+            calls: Mutex::new(Vec::new()),
+        }
+    }
+
+    pub fn calls(&self) -> Vec<ToolCall> {
+        self.calls.lock().unwrap().clone()
     }
 }
 
@@ -46,6 +66,18 @@ impl LlmProvider for MockProvider {
             .unwrap()
             .pop_front()
             .unwrap_or_else(|| panic!("MockProvider has no queued response"))
+    }
+}
+
+impl ToolExecutor for FakeToolExecutor {
+    async fn execute(&self, call: ToolCall) -> ToolExecutionResult {
+        self.calls.lock().unwrap().push(call);
+
+        self.responses
+            .lock()
+            .unwrap()
+            .pop_front()
+            .unwrap_or_else(|| panic!("FakeToolExecutor has no queued response"))
     }
 }
 
@@ -149,5 +181,29 @@ mod tests {
         };
 
         let _ = provider.send(request).await;
+    }
+
+    #[tokio::test]
+    async fn fake_tool_executor_returns_queued_results_and_records_calls() {
+        let executor = FakeToolExecutor::new([Ok(json!({
+            "ok": true
+        }))]);
+        let call = ToolCall {
+            id: "call-1".to_string(),
+            name: "commit_diff".to_string(),
+            arguments: json!({
+                "hash": "abc1234"
+            }),
+        };
+
+        let result = executor.execute(call.clone()).await;
+
+        assert_eq!(
+            result.unwrap(),
+            json!({
+                "ok": true
+            })
+        );
+        assert_eq!(executor.calls(), vec![call]);
     }
 }
