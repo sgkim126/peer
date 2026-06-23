@@ -1,7 +1,6 @@
 use std::fmt;
 
 #[derive(Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct Secret(String);
 
 #[derive(Debug)]
@@ -15,7 +14,6 @@ impl Secret {
         Self(value.into())
     }
 
-    #[allow(dead_code)]
     pub fn from_env(name: &str) -> Result<Self, SecretError> {
         match std::env::var(name) {
             Ok(value) if !value.is_empty() => Ok(Self::new(value)),
@@ -31,7 +29,6 @@ impl Secret {
         }
     }
 
-    #[allow(dead_code)]
     pub fn expose_secret(&self) -> &str {
         &self.0
     }
