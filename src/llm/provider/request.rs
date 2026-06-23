@@ -18,7 +18,6 @@ pub enum ConversationTurn {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
