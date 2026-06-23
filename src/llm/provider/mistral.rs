@@ -3,9 +3,11 @@ use serde_json::json;
 use std::fmt;
 
 use super::{
-    ConversationTurn, LlmCallError, LlmCallResult, LlmRequest, LlmResponse, RawUsage, ToolCall,
-    ToolSpec,
+    ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, LlmResponse, RawUsage,
+    ToolCall, ToolSpec,
 };
+use crate::console::Console;
+use crate::llm::provider::http::ProviderHttpClient;
 use crate::llm::result::CheckOutput;
 use crate::secret::Secret;
 
@@ -22,10 +24,58 @@ pub struct MistralHttpRequest {
     pub body: serde_json::Value,
 }
 
+#[derive(Debug, Clone)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct MistralProvider {
+    client: ProviderHttpClient,
+    request_builder: MistralRequestBuilder,
+}
+
 const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";
+// FIXME: make the timeout configurable
+const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+impl MistralProvider {
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn from_env(
+        api_key_env: &str,
+        base_url: Option<&str>,
+        console: Console,
+    ) -> Result<Self, LlmCallError> {
+        let request_builder = MistralRequestBuilder::from_env(api_key_env, base_url)?;
+        let client = reqwest::Client::builder()
+            .timeout(DEFAULT_TIMEOUT)
+            .build()
+            .map_err(|error| LlmCallError::Permanent {
+                message: "failed to build Mistral HTTP client".to_string(),
+                source: Box::new(error),
+            })?;
+
+        Ok(Self {
+            client: ProviderHttpClient::new(client, console, "mistral"),
+            request_builder,
+        })
+    }
+}
+
+impl LlmProvider for MistralProvider {
+    async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
+        let http = self.request_builder.build(request)?;
+        let request = self
+            .client
+            .post(&http.url)
+            .bearer_auth(http.bearer_token.expose_secret());
+        let response = self.client.send_json(request, &http.body).await?;
+
+        if response.status.is_success() {
+            parse_success(&response.body)
+        } else {
+            Err(parse_error(&response.body, response.status.as_u16()))
+        }
+    }
+}
 
 impl MistralRequestBuilder {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_env(api_key_env: &str, base_url: Option<&str>) -> Result<Self, LlmCallError> {
         let api_key = Secret::from_env(api_key_env).map_err(|error| LlmCallError::Permanent {
             message: format!("cannot read {api_key_env}"),
@@ -410,6 +460,17 @@ mod tests {
 
         assert!(matches!(error, LlmCallError::Permanent { .. }));
         assert!(error.to_string().contains(name));
+    }
+
+    #[test]
+    fn provider_from_env_fails_when_api_key_is_missing() {
+        let name = "PEER_TEST_MISSING_MISTRAL_PROVIDER_API_KEY_92F4A1C8D3";
+
+        let error = MistralProvider::from_env(name, None, Console::default()).unwrap_err();
+
+        assert!(matches!(error, LlmCallError::Permanent { .. }));
+        assert!(error.to_string().contains(name));
+        assert!(std::error::Error::source(&error).is_some());
     }
 
     #[test]

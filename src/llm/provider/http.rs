@@ -32,7 +32,6 @@ pub struct JsonHttpResponse {
 }
 
 impl ProviderHttpClient {
-    #[expect(dead_code)]
     pub fn new(client: reqwest::Client, console: Console, provider_name: &'static str) -> Self {
         Self {
             client,
@@ -41,12 +40,10 @@ impl ProviderHttpClient {
         }
     }
 
-    #[expect(dead_code)]
     pub fn post(&self, url: &str) -> reqwest::RequestBuilder {
         self.client.post(url)
     }
 
-    #[expect(dead_code)]
     pub async fn send_json(
         &self,
         request: reqwest::RequestBuilder,
