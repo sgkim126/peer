@@ -4,6 +4,7 @@ mod console;
 mod error;
 mod git;
 mod init;
+mod secret;
 
 use clap::Parser;
 
