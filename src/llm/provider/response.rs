@@ -1,7 +1,6 @@
 use crate::llm::result::CheckOutput;
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,

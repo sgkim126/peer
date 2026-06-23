@@ -23,14 +23,12 @@ pub enum ConversationTurn {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
 }
 
-#[allow(dead_code)]
 pub struct LlmRequest<'a> {
     pub model: &'a str,
     pub conversation: &'a [ConversationTurn],
