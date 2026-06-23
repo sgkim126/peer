@@ -34,7 +34,7 @@ impl Secret {
         }
     }
 
-    #[expect(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn expose_secret(&self) -> &str {
         &self.0
     }

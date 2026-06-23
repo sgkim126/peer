@@ -1,10 +1,10 @@
 mod error;
 mod http;
+mod mistral;
 mod request;
 mod response;
 
 pub use error::LlmCallError;
-#[expect(unused_imports)]
 pub use request::{ConversationTurn, LlmRequest, ToolSpec};
 #[expect(unused_imports)]
 pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
