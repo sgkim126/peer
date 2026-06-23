@@ -1,6 +1,12 @@
 use serde_json::json;
 
-use super::{ConversationTurn, LlmCallError, LlmRequest, ToolCall, ToolSpec};
+use std::fmt;
+
+use super::{
+    ConversationTurn, LlmCallError, LlmCallResult, LlmRequest, LlmResponse, RawUsage, ToolCall,
+    ToolSpec,
+};
+use crate::llm::result::CheckOutput;
 use crate::secret::Secret;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -58,6 +64,175 @@ impl MistralRequestBuilder {
         })
     }
 }
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn parse_success(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+    let response = parse_response(body)?;
+    let usage = RawUsage {
+        input_tokens: required_u64(body, "/usage/prompt_tokens")?,
+        output_tokens: required_u64(body, "/usage/completion_tokens")?,
+    };
+
+    Ok(LlmCallResult { response, usage })
+}
+
+fn parse_response(body: &serde_json::Value) -> Result<LlmResponse, LlmCallError> {
+    let message = body
+        .pointer("/choices/0/message")
+        .ok_or(permanent_parse_error("missing choices[0].message"))?;
+
+    if let Some(tool_calls) = message
+        .get("tool_calls")
+        .and_then(serde_json::Value::as_array)
+    {
+        let tool_calls = tool_calls
+            .iter()
+            .map(parse_tool_call)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        if let Some(check_output) = tool_calls
+            .iter()
+            .find(|tool_call| tool_call.name == STRUCTURED_OUTPUT_TOOL_NAME)
+            .map(|tool_call| parse_check_output(tool_call.arguments.clone()))
+            .transpose()?
+        {
+            return Ok(LlmResponse::CheckOutput(check_output));
+        }
+
+        return Ok(LlmResponse::ToolCalls(tool_calls));
+    }
+
+    let content = message
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or(permanent_parse_error(
+            "missing assistant content or tool_calls",
+        ))?;
+    let value = serde_json::from_str(content).map_err(|error| LlmCallError::Permanent {
+        message: "failed to parse assistant content as JSON".to_string(),
+        source: Box::new(error),
+    })?;
+    let check_output = parse_check_output(value)?;
+
+    Ok(LlmResponse::CheckOutput(check_output))
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn parse_error(body: &serde_json::Value, status: u16) -> LlmCallError {
+    let message = body
+        .pointer("/message")
+        .or_else(|| body.pointer("/error/message"))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("Mistral request failed")
+        .to_string();
+
+    if is_context_overflow(status, &message) {
+        return LlmCallError::ContextOverflow { message };
+    }
+
+    let source = Box::new(MistralStatusError {
+        status,
+        message: message.clone(),
+    });
+    if is_transient_status(status) {
+        LlmCallError::Transient { message, source }
+    } else {
+        LlmCallError::Permanent { message, source }
+    }
+}
+
+fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
+    let id = required_string(value, "/id")?.to_string();
+    let name = required_string(value, "/function/name")?.to_string();
+    let arguments = required_string(value, "/function/arguments")?;
+    let arguments = serde_json::from_str(arguments).map_err(|error| LlmCallError::Permanent {
+        message: format!("failed to parse tool call arguments for {name}"),
+        source: Box::new(error),
+    })?;
+
+    Ok(ToolCall {
+        id,
+        name,
+        arguments,
+    })
+}
+
+fn parse_check_output(value: serde_json::Value) -> Result<CheckOutput, LlmCallError> {
+    serde_json::from_value(value).map_err(|error| LlmCallError::Permanent {
+        message: "failed to parse check output".to_string(),
+        source: Box::new(error),
+    })
+}
+
+fn required_string<'a>(
+    value: &'a serde_json::Value,
+    pointer: &str,
+) -> Result<&'a str, LlmCallError> {
+    value
+        .pointer(pointer)
+        .and_then(serde_json::Value::as_str)
+        .ok_or(permanent_parse_error(format!(
+            "missing string at {pointer}"
+        )))
+}
+
+fn required_u64(value: &serde_json::Value, pointer: &str) -> Result<u64, LlmCallError> {
+    value
+        .pointer(pointer)
+        .and_then(serde_json::Value::as_u64)
+        .ok_or(permanent_parse_error(format!(
+            "missing unsigned integer at {pointer}"
+        )))
+}
+
+fn is_context_overflow(status: u16, message: &str) -> bool {
+    if status != 400 && status != 413 {
+        return false;
+    }
+
+    let message = message.to_ascii_lowercase();
+    message.contains("context")
+        || message.contains("maximum")
+        || message.contains("token")
+        || message.contains("too large")
+}
+
+fn is_transient_status(status: u16) -> bool {
+    matches!(status, 408 | 409 | 425 | 429 | 500 | 502 | 503 | 504)
+}
+
+fn permanent_parse_error(message: impl Into<String>) -> LlmCallError {
+    let message = message.into();
+    LlmCallError::Permanent {
+        source: Box::new(MistralParseError(message.clone())),
+        message,
+    }
+}
+
+#[derive(Debug)]
+struct MistralParseError(String);
+
+impl fmt::Display for MistralParseError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+impl std::error::Error for MistralParseError {}
+
+#[derive(Debug)]
+struct MistralStatusError {
+    status: u16,
+    message: String,
+}
+
+impl fmt::Display for MistralStatusError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Mistral returned HTTP {}: {}", self.status, self.message)
+    }
+}
+
+impl std::error::Error for MistralStatusError {}
 
 fn message(turn: &ConversationTurn) -> Result<serde_json::Value, LlmCallError> {
     match turn {
@@ -256,5 +431,164 @@ mod tests {
         assert!(!http_debug.contains("test-api-key"));
         assert!(builder_debug.contains("<******>"));
         assert!(http_debug.contains("<******>"));
+    }
+
+    #[test]
+    fn parses_tool_call_response() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "commit_diff",
+                            "arguments": "{\"hash\":\"abc1234\"}"
+                        }
+                    }]
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 25
+            }
+        });
+
+        let result = parse_success(&body).unwrap();
+
+        assert_eq!(result.usage.input_tokens, 100);
+        assert_eq!(result.usage.output_tokens, 25);
+        let LlmResponse::ToolCalls(tool_calls) = result.response else {
+            panic!("expected tool calls");
+        };
+        assert_eq!(tool_calls.len(), 1);
+        assert_eq!(tool_calls[0].id, "call-1");
+        assert_eq!(tool_calls[0].name, "commit_diff");
+        assert_eq!(tool_calls[0].arguments, json!({ "hash": "abc1234" }));
+    }
+
+    #[test]
+    fn parses_structured_output_tool_response() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call-structured",
+                        "type": "function",
+                        "function": {
+                            "name": STRUCTURED_OUTPUT_TOOL_NAME,
+                            "arguments": "{\"summary\":\"looks good\",\"findings\":[]}"
+                        }
+                    }]
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 80,
+                "completion_tokens": 40
+            }
+        });
+
+        let result = parse_success(&body).unwrap();
+
+        assert_eq!(result.usage.input_tokens, 80);
+        assert_eq!(result.usage.output_tokens, 40);
+        let LlmResponse::CheckOutput(output) = result.response else {
+            panic!("expected check output");
+        };
+        assert_eq!(output.summary, "looks good");
+        assert_eq!(output.findings, vec![]);
+    }
+
+    #[test]
+    fn parses_json_content_as_structured_response() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "{\"summary\":\"content json\",\"findings\":[]}"
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5
+            }
+        });
+
+        let result = parse_success(&body).unwrap();
+
+        let LlmResponse::CheckOutput(output) = result.response else {
+            panic!("expected check output");
+        };
+        assert_eq!(output.summary, "content json");
+        assert_eq!(output.findings, vec![]);
+    }
+
+    #[test]
+    fn invalid_success_response_is_permanent_error() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [{
+                        "id": "call-1",
+                        "type": "function",
+                        "function": {
+                            "name": "commit_diff",
+                            "arguments": "{"
+                        }
+                    }]
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 100,
+                "completion_tokens": 25
+            }
+        });
+
+        let error = parse_success(&body).unwrap_err();
+
+        assert!(matches!(error, LlmCallError::Permanent { .. }));
+        assert!(error.to_string().contains("tool call arguments"));
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn parses_context_overflow_error() {
+        let body = json!({
+            "message": "maximum context length exceeded"
+        });
+
+        let error = parse_error(&body, 400);
+
+        assert!(matches!(error, LlmCallError::ContextOverflow { .. }));
+    }
+
+    #[test]
+    fn parses_retryable_error_as_transient() {
+        let body = json!({
+            "message": "rate limit exceeded"
+        });
+
+        let error = parse_error(&body, 429);
+
+        assert!(matches!(error, LlmCallError::Transient { .. }));
+        assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn parses_non_retryable_error_as_permanent() {
+        let body = json!({
+            "error": {
+                "message": "invalid API key"
+            }
+        });
+
+        let error = parse_error(&body, 401);
+
+        assert!(matches!(error, LlmCallError::Permanent { .. }));
+        assert!(error.to_string().contains("invalid API key"));
+        assert!(std::error::Error::source(&error).is_some());
     }
 }

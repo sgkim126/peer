@@ -1,7 +1,6 @@
 use std::fmt;
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum LlmCallError {
     ContextOverflow {
         message: String,
