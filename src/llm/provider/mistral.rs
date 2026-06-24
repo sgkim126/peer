@@ -36,7 +36,6 @@ const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";
 const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl MistralProvider {
-    #[allow(dead_code)]
     pub fn from_env(api_key_env: &str, base_url: Option<&str>) -> Result<Self, LlmCallError> {
         let request_builder = MistralRequestBuilder::from_env(api_key_env, base_url)?;
         let client = reqwest::Client::builder()
