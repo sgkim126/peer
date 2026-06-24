@@ -22,8 +22,7 @@ pub async fn run_git_bytes(
         .current_dir(current_dir)
         .kill_on_drop(true)
         .output()
-        .await
-        .map_err(GitError::Spawn)?;
+        .await?;
 
     if !output.status.success() {
         let status = output.status.code().unwrap_or(-1);
@@ -42,7 +41,7 @@ pub async fn run_git(
 ) -> Result<String, GitError> {
     let stdout = run_git_bytes(args, current_dir, console).await?;
 
-    String::from_utf8(stdout).map_err(GitError::FromUtf8)
+    Ok(String::from_utf8(stdout)?)
 }
 
 fn format_argv(args: &[&str]) -> String {
