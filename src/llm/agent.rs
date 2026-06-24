@@ -27,6 +27,22 @@ pub struct AgentRunResult {
     pub iterations: u32,
 }
 
+#[derive(Debug)]
+#[allow(dead_code)]
+pub enum AgentRunOutcome {
+    Completed(AgentRunResult),
+    Exhausted {
+        result: AgentRunResult,
+        reason: AgentExhaustionReason,
+    },
+}
+
+#[derive(Debug)]
+pub enum AgentExhaustionReason {
+    MaxIterations,
+    LlmCall(LlmCallError),
+}
+
 pub type ToolExecutionResult = Result<serde_json::Value, Box<dyn std::error::Error>>;
 
 pub trait ToolExecutor {
@@ -38,23 +54,40 @@ pub async fn run_agent<P, E>(
     provider: &P,
     tool_executor: &E,
     request: AgentRequest<'_>,
-) -> Result<AgentRunResult, LlmCallError>
+) -> Result<AgentRunOutcome, LlmCallError>
 where
     P: LlmProvider,
     E: ToolExecutor,
 {
     let mut conversation = request.conversation.to_vec();
     let mut usage = RawUsage::default();
+    let mut best_low_confidence_output: Option<CheckOutput> = None;
 
     for iteration in 1..=request.max_iterations {
-        let result = provider
+        let result = match provider
             .send(LlmRequest {
                 model: request.model,
                 conversation: &conversation,
                 tools: request.tools,
                 output_schema: request.output_schema,
             })
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(error) => {
+                let Some(output) = best_low_confidence_output else {
+                    return Err(error);
+                };
+                return Ok(AgentRunOutcome::Exhausted {
+                    result: AgentRunResult {
+                        output,
+                        usage,
+                        iterations: iteration,
+                    },
+                    reason: AgentExhaustionReason::LlmCall(error),
+                });
+            }
+        };
         usage += result.usage;
 
         match result.response {
@@ -65,17 +98,23 @@ where
                     request.confidence_threshold.as_f64()
                 ));
                 if output.confidence >= request.confidence_threshold {
-                    return Ok(AgentRunResult {
+                    return Ok(AgentRunOutcome::Completed(AgentRunResult {
                         output,
                         usage,
                         iterations: iteration,
-                    });
+                    }));
                 }
 
-                conversation.push(ConversationTurn::AssistantCheckOutput(output));
+                conversation.push(ConversationTurn::AssistantCheckOutput(output.clone()));
                 conversation.push(ConversationTurn::User(
                     LOW_CONFIDENCE_REFINEMENT_INSTRUCTION.to_string(),
                 ));
+                if best_low_confidence_output
+                    .as_ref()
+                    .is_none_or(|best| output.confidence >= best.confidence)
+                {
+                    best_low_confidence_output = Some(output);
+                }
             }
             LlmResponse::ToolCalls(tool_calls) => {
                 request.console.debug(format!(
@@ -101,6 +140,17 @@ where
                 }
             }
         }
+    }
+
+    if let Some(output) = best_low_confidence_output {
+        return Ok(AgentRunOutcome::Exhausted {
+            result: AgentRunResult {
+                output,
+                usage,
+                iterations: request.max_iterations,
+            },
+            reason: AgentExhaustionReason::MaxIterations,
+        });
     }
 
     Err(LlmCallError::Permanent {
@@ -133,6 +183,15 @@ impl fmt::Display for AgentLoopError {
 }
 
 impl std::error::Error for AgentLoopError {}
+
+impl fmt::Display for AgentExhaustionReason {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MaxIterations => write!(f, "maximum iterations reached"),
+            Self::LlmCall(error) => error.fmt(f),
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -181,6 +240,13 @@ mod tests {
         }
     }
 
+    fn completed(outcome: AgentRunOutcome) -> AgentRunResult {
+        let AgentRunOutcome::Completed(result) = outcome else {
+            panic!("expected completed agent run");
+        };
+        result
+    }
+
     #[tokio::test]
     async fn returns_check_output_without_tool_call() {
         let provider = MockProvider::new([Ok(call_result(
@@ -190,9 +256,11 @@ mod tests {
         ))]);
         let executor = FakeToolExecutor::new([]);
         let schema = json!({ "type": "object" });
-        let result = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
-            .await
-            .unwrap();
+        let result = completed(
+            run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+                .await
+                .unwrap(),
+        );
 
         assert_eq!(result.output.summary, "done");
         assert_eq!(result.usage.input_tokens, 10);
@@ -217,9 +285,11 @@ mod tests {
         let executor = FakeToolExecutor::new([]);
         let schema = json!({ "type": "object" });
 
-        let result = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
-            .await
-            .unwrap();
+        let result = completed(
+            run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+                .await
+                .unwrap(),
+        );
 
         assert_eq!(result.output.summary, "revised");
         assert_eq!(result.iterations, 2);
@@ -248,9 +318,11 @@ mod tests {
         let executor = FakeToolExecutor::new([]);
         let schema = json!({ "type": "object" });
 
-        let result = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
-            .await
-            .unwrap();
+        let result = completed(
+            run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+                .await
+                .unwrap(),
+        );
 
         assert_eq!(result.output.summary, "enough");
         assert_eq!(result.iterations, 1);
@@ -258,15 +330,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fails_when_confidence_remains_below_threshold() {
+    async fn returns_highest_confidence_output_when_confidence_remains_below_threshold() {
         let provider = MockProvider::new([
             Ok(call_result(
-                LlmResponse::CheckOutput(check_output_with_confidence("first", 0.6)),
+                LlmResponse::CheckOutput(check_output_with_confidence("first", 0.7)),
                 10,
                 5,
             )),
             Ok(call_result(
-                LlmResponse::CheckOutput(check_output_with_confidence("second", 0.7)),
+                LlmResponse::CheckOutput(check_output_with_confidence("second", 0.6)),
                 20,
                 7,
             )),
@@ -274,12 +346,75 @@ mod tests {
         let executor = FakeToolExecutor::new([]);
         let schema = json!({ "type": "object" });
 
-        let error = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 2))
+        let outcome = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 2))
+            .await
+            .unwrap();
+
+        let AgentRunOutcome::Exhausted { result, reason } = outcome else {
+            panic!("expected exhausted agent run");
+        };
+        assert_eq!(result.output.summary, "first");
+        assert_eq!(result.output.confidence.as_f64(), 0.7);
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.usage.input_tokens, 30);
+        assert_eq!(result.usage.output_tokens, 12);
+        assert!(matches!(reason, AgentExhaustionReason::MaxIterations));
+        assert_eq!(provider.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn returns_last_low_confidence_output_when_later_llm_call_fails() {
+        let provider = MockProvider::new([
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output_with_confidence("uncertain", 0.7)),
+                10,
+                5,
+            )),
+            Err(LlmCallError::Transient {
+                message: "request timed out".to_string(),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "request timed out",
+                )),
+            }),
+        ]);
+        let executor = FakeToolExecutor::new([]);
+        let schema = json!({ "type": "object" });
+
+        let outcome = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+            .await
+            .unwrap();
+
+        let AgentRunOutcome::Exhausted { result, reason } = outcome else {
+            panic!("expected exhausted agent run");
+        };
+        assert_eq!(result.output.summary, "uncertain");
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.usage.input_tokens, 10);
+        assert_eq!(result.usage.output_tokens, 5);
+        assert!(matches!(
+            reason,
+            AgentExhaustionReason::LlmCall(LlmCallError::Transient { .. })
+        ));
+    }
+
+    #[tokio::test]
+    async fn propagates_llm_call_error_without_prior_check_output() {
+        let provider = MockProvider::new([Err(LlmCallError::Transient {
+            message: "request timed out".to_string(),
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request timed out",
+            )),
+        })]);
+        let executor = FakeToolExecutor::new([]);
+        let schema = json!({ "type": "object" });
+
+        let error = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
             .await
             .unwrap_err();
 
-        assert!(matches!(error, LlmCallError::Permanent { .. }));
-        assert_eq!(provider.requests().len(), 2);
+        assert!(matches!(error, LlmCallError::Transient { .. }));
     }
 
     #[tokio::test]
@@ -312,13 +447,15 @@ mod tests {
         }];
         let schema = json!({ "type": "object" });
 
-        let result = run_agent(
-            &provider,
-            &executor,
-            agent_request(&conversation, &tools, &schema, 3),
-        )
-        .await
-        .unwrap();
+        let result = completed(
+            run_agent(
+                &provider,
+                &executor,
+                agent_request(&conversation, &tools, &schema, 3),
+            )
+            .await
+            .unwrap(),
+        );
 
         assert_eq!(result.output.summary, "done");
         assert_eq!(result.usage.input_tokens, 30);
