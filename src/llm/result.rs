@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::git::CommitHash;
+use crate::llm::agent::{AgentRunOutcome, AgentRunResult};
 use crate::llm::confidence::Confidence;
 use crate::llm::provider::RawUsage;
 
@@ -88,6 +89,42 @@ pub struct CheckResult {
     pub usage: CheckUsage,
 }
 
+impl CheckResult {
+    #[allow(dead_code)]
+    pub fn from_agent_outcome(
+        check: impl Into<String>,
+        target: CheckTarget,
+        outcome: AgentRunOutcome,
+        model: impl Into<String>,
+        input_per_1m_usd: f64,
+        output_per_1m_usd: f64,
+    ) -> Self {
+        let (result, exhaustion_reason) = match outcome {
+            AgentRunOutcome::Completed(result) => (result, None),
+            AgentRunOutcome::Exhausted { result, reason } => (result, Some(reason.to_string())),
+        };
+
+        let AgentRunResult {
+            output,
+            usage,
+            iterations,
+        } = result;
+        let is_exhausted = exhaustion_reason.is_some();
+
+        Self {
+            check: check.into(),
+            target,
+            summary: output.summary,
+            findings: output.findings,
+            confidence: output.confidence,
+            iterations,
+            is_exhausted,
+            exhaustion_reason,
+            usage: CheckUsage::from_raw_usage(usage, model, input_per_1m_usd, output_per_1m_usd),
+        }
+    }
+}
+
 pub fn validate_per_commit_targets(
     findings: &[Finding],
     target: &CommitHash,
@@ -118,6 +155,8 @@ pub fn validate_range_targets(findings: &[Finding], commits: &[CommitHash]) -> R
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::llm::agent::{AgentExhaustionReason, AgentRunOutcome, AgentRunResult};
+    use crate::llm::provider::LlmCallError;
 
     const MILLION: f64 = 1_000_000.0;
 
@@ -127,6 +166,25 @@ mod tests {
             severity,
             message: "test finding".to_string(),
             location: None,
+        }
+    }
+
+    fn agent_result(output: CheckOutput) -> AgentRunResult {
+        AgentRunResult {
+            output,
+            usage: RawUsage {
+                input_tokens: 1_000,
+                output_tokens: 500,
+            },
+            iterations: 2,
+        }
+    }
+
+    fn check_output(commit: &str, confidence: f64) -> CheckOutput {
+        CheckOutput {
+            summary: "summary".to_string(),
+            findings: vec![finding(commit, Severity::Medium)],
+            confidence: Confidence::try_from(confidence).unwrap(),
         }
     }
 
@@ -211,5 +269,87 @@ mod tests {
         let expected_cost =
             (input_tokens as f64 / MILLION) * 2.0 + (output_tokens as f64 / MILLION) * 6.0;
         assert!((check.cost_usd - expected_cost).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn completed_agent_outcome_becomes_non_exhausted_check_result() {
+        let target = CommitHash::new("abc1234").unwrap();
+        let outcome = AgentRunOutcome::Completed(agent_result(check_output("abc1234", 0.9)));
+
+        let result = CheckResult::from_agent_outcome(
+            "security",
+            CheckTarget::Commit(target.clone()),
+            outcome,
+            "test-model",
+            2.0,
+            6.0,
+        );
+
+        assert_eq!(result.check, "security");
+        assert_eq!(result.target, CheckTarget::Commit(target));
+        assert!(!result.is_exhausted);
+        assert_eq!(result.exhaustion_reason, None);
+        assert_eq!(result.confidence.as_f64(), 0.9);
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.usage.input_tokens, 1_000);
+        assert_eq!(result.usage.output_tokens, 500);
+        assert_eq!(result.usage.cost_usd, 0.005);
+    }
+
+    #[test]
+    fn exhausted_agent_outcome_preserves_best_output_and_reason() {
+        let outcome = AgentRunOutcome::Exhausted {
+            result: agent_result(check_output("def5678", 0.7)),
+            reason: AgentExhaustionReason::MaxIterations,
+        };
+
+        let result = CheckResult::from_agent_outcome(
+            "security",
+            CheckTarget::Range("HEAD~2..HEAD".to_string()),
+            outcome,
+            "test-model",
+            2.0,
+            6.0,
+        );
+
+        assert_eq!(
+            result.target,
+            CheckTarget::Range("HEAD~2..HEAD".to_string())
+        );
+        assert!(result.is_exhausted);
+        assert_eq!(
+            result.exhaustion_reason.as_deref(),
+            Some("maximum iterations reached")
+        );
+        assert_eq!(result.confidence.as_f64(), 0.7);
+    }
+
+    #[test]
+    fn llm_call_exhaustion_reason_preserves_error_message() {
+        let target = CommitHash::new("abc1234").unwrap();
+        let outcome = AgentRunOutcome::Exhausted {
+            result: agent_result(check_output("abc1234", 0.7)),
+            reason: AgentExhaustionReason::LlmCall(LlmCallError::Transient {
+                message: "request timed out".to_string(),
+                source: Box::new(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "request timed out",
+                )),
+            }),
+        };
+
+        let result = CheckResult::from_agent_outcome(
+            "security",
+            CheckTarget::Commit(target),
+            outcome,
+            "test-model",
+            2.0,
+            6.0,
+        );
+
+        assert_eq!(
+            result.exhaustion_reason.as_deref(),
+            Some("transient LLM call failure: request timed out")
+        );
     }
 }
