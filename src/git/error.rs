@@ -15,6 +15,18 @@ pub enum GitError {
     InvalidRevision(String),
 }
 
+impl From<std::io::Error> for GitError {
+    fn from(err: std::io::Error) -> Self {
+        Self::Spawn(err)
+    }
+}
+
+impl From<std::string::FromUtf8Error> for GitError {
+    fn from(err: std::string::FromUtf8Error) -> Self {
+        Self::FromUtf8(err)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum InvalidCommitHashReason {
     TooShort,
