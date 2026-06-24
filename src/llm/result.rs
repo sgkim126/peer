@@ -88,7 +88,6 @@ pub struct CheckResult {
     pub usage: CheckUsage,
 }
 
-#[allow(dead_code)]
 pub fn validate_per_commit_targets(
     findings: &[Finding],
     target: &CommitHash,
@@ -104,7 +103,6 @@ pub fn validate_per_commit_targets(
     Ok(())
 }
 
-#[allow(dead_code)]
 pub fn validate_range_targets(findings: &[Finding], commits: &[CommitHash]) -> Result<(), String> {
     for finding in findings {
         if !commits.contains(&finding.commit) {
