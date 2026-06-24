@@ -23,7 +23,6 @@ pub struct MistralHttpRequest {
 }
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct MistralProvider {
     client: reqwest::Client,
     request_builder: MistralRequestBuilder,
@@ -119,7 +118,6 @@ impl MistralRequestBuilder {
         }
     }
 
-    #[allow(dead_code)]
     pub fn build(&self, request: LlmRequest<'_>) -> Result<MistralHttpRequest, LlmCallError> {
         Ok(MistralHttpRequest {
             url: format!("{}/v1/chat/completions", self.base_url),

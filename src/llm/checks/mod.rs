@@ -55,6 +55,131 @@ pub trait CheckDefinition {
     async fn prepare(&self, extractor: &Extractor) -> Result<PreparedCheck, ExtractError>;
 }
 
+#[allow(dead_code)]
+fn all_tools() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "get_commit_message".to_string(),
+            description: "Returns the full commit message for a commit.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "revision": {
+                        "type": "string",
+                        "description": "Git revision resolving to a commit."
+                    }
+                },
+                "required": ["revision"]
+            }),
+        },
+        ToolSpec {
+            name: "get_commit_diff".to_string(),
+            description: "Returns the full unified diff for a commit.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "revision": {
+                        "type": "string",
+                        "description": "Git revision resolving to a commit."
+                    }
+                },
+                "required": ["revision"]
+            }),
+        },
+        ToolSpec {
+            name: "get_changed_files".to_string(),
+            description: "Returns the files changed in a commit.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "revision": {
+                        "type": "string",
+                        "description": "Git revision resolving to a commit."
+                    }
+                },
+                "required": ["revision"]
+            }),
+        },
+        ToolSpec {
+            name: "get_commits_in_range".to_string(),
+            description: "Returns commit hashes in a two-dot range, oldest to newest.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "range": {
+                        "type": "string",
+                        "description": "Git two-dot range."
+                    }
+                },
+                "required": ["range"]
+            }),
+        },
+        ToolSpec {
+            name: "get_file_content".to_string(),
+            description: "Returns a file's content at a commit.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "revision": {
+                        "type": "string",
+                        "description": "Git revision at which to read the file."
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "Repository-root-relative path."
+                    }
+                },
+                "required": ["path", "revision"]
+            }),
+        },
+    ]
+}
+
+#[allow(dead_code)]
+fn output_schema() -> serde_json::Value {
+    serde_json::json!({
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": "One-sentence summary of the check result."
+            },
+            "findings": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "commit": {
+                            "type": "string"
+                        },
+                        "severity": {
+                            "type": "string",
+                            "enum": ["info", "low", "medium", "high", "critical"]
+                        },
+                        "message": {
+                            "type": "string"
+                        },
+                        "file": {
+                            "type": "string"
+                        },
+                        "line": {
+                            "type": "integer",
+                            "minimum": 1
+                        }
+                    },
+                    "required": ["commit", "severity", "message"]
+                }
+            },
+            "confidence": {
+                "type": "number",
+                "minimum": 0.0,
+                "maximum": 1.0
+            }
+        },
+        "required": ["summary", "findings", "confidence"]
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
