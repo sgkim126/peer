@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::ExtractError;
+use super::{ExtractError, Extractor};
 use crate::console::Console;
 use crate::git::{CommitHash, run_git};
 
@@ -12,7 +12,13 @@ pub struct CommitMessage {
     pub message: String,
 }
 
-pub async fn commit_message(
+impl Extractor {
+    pub async fn commit_message(&self, revision: &str) -> Result<CommitMessage, ExtractError> {
+        commit_message(revision, &self.project_root, self.console).await
+    }
+}
+
+async fn commit_message(
     revision: &str,
     project_root: &Path,
     console: Console,

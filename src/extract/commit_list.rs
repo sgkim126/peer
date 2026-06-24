@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::console::Console;
 use crate::git::{CommitHash, run_git};
 
-use super::ExtractError;
+use super::{ExtractError, Extractor};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommitList {
@@ -13,7 +13,13 @@ pub struct CommitList {
     pub commits: Vec<CommitHash>,
 }
 
-pub async fn commit_list(
+impl Extractor {
+    pub async fn commit_list(&self, range: &str) -> Result<CommitList, ExtractError> {
+        commit_list(range, &self.project_root, self.console).await
+    }
+}
+
+async fn commit_list(
     range: &str,
     project_root: &Path,
     console: Console,

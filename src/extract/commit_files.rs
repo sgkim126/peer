@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::ExtractError;
+use super::{ExtractError, Extractor};
 use crate::console::Console;
 use crate::git::{CommitHash, run_git};
 
@@ -104,7 +104,13 @@ fn parse_binary_paths(numstat: &str) -> HashSet<&str> {
     binary
 }
 
-pub async fn commit_files(
+impl Extractor {
+    pub async fn commit_files(&self, revision: &str) -> Result<CommitFiles, ExtractError> {
+        commit_files(revision, &self.project_root, self.console).await
+    }
+}
+
+async fn commit_files(
     revision: &str,
     project_root: &Path,
     console: Console,

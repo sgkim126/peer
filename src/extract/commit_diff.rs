@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::ExtractError;
+use super::{ExtractError, Extractor};
 use crate::console::Console;
 use crate::git::{CommitHash, run_git};
 
@@ -12,7 +12,13 @@ pub struct CommitDiff {
     pub diff: String,
 }
 
-pub async fn commit_diff(
+impl Extractor {
+    pub async fn commit_diff(&self, revision: &str) -> Result<CommitDiff, ExtractError> {
+        commit_diff(revision, &self.project_root, self.console).await
+    }
+}
+
+async fn commit_diff(
     revision: &str,
     project_root: &Path,
     console: Console,

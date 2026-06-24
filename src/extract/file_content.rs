@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::ExtractError;
+use super::{ExtractError, Extractor};
 use crate::console::Console;
 use crate::git::{CommitHash, GitError, run_git_bytes};
 
@@ -21,7 +21,17 @@ pub enum FileContent {
     },
 }
 
-pub async fn file_content(
+impl Extractor {
+    pub async fn file_content(
+        &self,
+        path: &Path,
+        revision: &str,
+    ) -> Result<FileContent, ExtractError> {
+        file_content(path, revision, &self.project_root, self.console).await
+    }
+}
+
+async fn file_content(
     path: &Path,
     revision: &str,
     project_root: &Path,
