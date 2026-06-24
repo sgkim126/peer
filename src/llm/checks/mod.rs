@@ -1,3 +1,4 @@
+mod intent;
 pub mod runner;
 mod size;
 
@@ -9,6 +10,7 @@ use crate::config::Config;
 use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
+use crate::llm::checks::intent::IntentCheck;
 use crate::llm::checks::runner::{CheckRunConfig, CheckRunError, run_check};
 use crate::llm::checks::size::SizeCheck;
 use crate::llm::confidence::{Confidence, ConfidenceError};
@@ -82,7 +84,9 @@ pub async fn handler(
         CheckCommand::Size { revision } => {
             run_definition(SizeCheck::new(revision), console, &config, project_root).await
         }
-        CheckCommand::Intent { .. } => unimplemented!(),
+        CheckCommand::Intent { revision } => {
+            run_definition(IntentCheck::new(revision), console, &config, project_root).await
+        }
         CheckCommand::Quality { .. } => unimplemented!(),
         CheckCommand::Security { .. } => unimplemented!(),
         CheckCommand::Coherence { .. } => unimplemented!(),
