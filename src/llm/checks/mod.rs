@@ -1,3 +1,5 @@
+mod size;
+
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::provider::{ConversationTurn, ToolSpec};
@@ -55,7 +57,6 @@ pub trait CheckDefinition {
     async fn prepare(&self, extractor: &Extractor) -> Result<PreparedCheck, ExtractError>;
 }
 
-#[allow(dead_code)]
 fn all_tools() -> Vec<ToolSpec> {
     vec![
         ToolSpec {
@@ -135,7 +136,6 @@ fn all_tools() -> Vec<ToolSpec> {
     ]
 }
 
-#[allow(dead_code)]
 fn output_schema() -> serde_json::Value {
     serde_json::json!({
         "type": "object",
