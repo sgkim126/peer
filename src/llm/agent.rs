@@ -127,6 +127,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::llm::confidence::Confidence;
     use crate::llm::provider::{LlmCallResult, LlmResponse};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
 
@@ -134,7 +135,7 @@ mod tests {
         CheckOutput {
             summary: summary.to_string(),
             findings: Vec::new(),
-            confidence: 0.9,
+            confidence: Confidence::try_from(0.9).unwrap(),
         }
     }
 

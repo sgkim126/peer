@@ -86,6 +86,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::llm::confidence::Confidence;
     use crate::llm::provider::{LlmResponse, RawUsage};
     use crate::llm::result::CheckOutput;
 
@@ -94,7 +95,7 @@ mod tests {
             response: LlmResponse::CheckOutput(CheckOutput {
                 summary: summary.to_string(),
                 findings: Vec::new(),
-                confidence: 0.9,
+                confidence: Confidence::try_from(0.9).unwrap(),
             }),
             usage: RawUsage {
                 input_tokens: 10,

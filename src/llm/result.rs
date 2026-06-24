@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::git::CommitHash;
+use crate::llm::confidence::Confidence;
 use crate::llm::provider::RawUsage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -48,7 +49,7 @@ pub struct CheckUsage {
 pub struct CheckOutput {
     pub summary: String,
     pub findings: Vec<Finding>,
-    pub confidence: f64,
+    pub confidence: Confidence,
 }
 
 impl CheckUsage {
@@ -80,22 +81,11 @@ pub struct CheckResult {
     pub target: CheckTarget,
     pub summary: String,
     pub findings: Vec<Finding>,
-    pub confidence: f64,
+    pub confidence: Confidence,
     pub iterations: u32,
     pub is_exhausted: bool,
     pub exhaustion_reason: Option<String>,
     pub usage: CheckUsage,
-}
-
-#[allow(dead_code)]
-pub fn validate_confidence(confidence: f64) -> Result<(), String> {
-    if (0.0..=1.0).contains(&confidence) {
-        Ok(())
-    } else {
-        Err(format!(
-            "confidence {confidence} is outside the range [0.0, 1.0]"
-        ))
-    }
 }
 
 #[allow(dead_code)]
@@ -140,16 +130,6 @@ mod tests {
             message: "test finding".to_string(),
             location: None,
         }
-    }
-
-    #[test]
-    fn confidence_must_be_between_zero_and_one() {
-        assert!(validate_confidence(0.0).is_ok());
-        assert!(validate_confidence(0.5).is_ok());
-        assert!(validate_confidence(1.0).is_ok());
-        assert!(validate_confidence(-0.1).is_err());
-        assert!(validate_confidence(1.1).is_err());
-        assert!(validate_confidence(f64::NAN).is_err());
     }
 
     #[test]

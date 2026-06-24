@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod confidence;
 pub mod provider;
 pub mod result;
 

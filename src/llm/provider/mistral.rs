@@ -596,7 +596,7 @@ mod tests {
         };
         assert_eq!(output.summary, "looks good");
         assert_eq!(output.findings, vec![]);
-        assert_eq!(output.confidence, 0.9);
+        assert_eq!(output.confidence.as_f64(), 0.9);
     }
 
     #[test]
@@ -621,7 +621,7 @@ mod tests {
         };
         assert_eq!(output.summary, "content json");
         assert_eq!(output.findings, vec![]);
-        assert_eq!(output.confidence, 0.8);
+        assert_eq!(output.confidence.as_f64(), 0.8);
     }
 
     #[test]
