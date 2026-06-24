@@ -45,7 +45,6 @@ pub struct ModelConfig {
 impl Config {
     /// Finds the named provider and model, returning references to both.
     /// Returns `InvalidConfig` if either is absent.
-    #[allow(dead_code)]
     pub fn resolve_provider(
         &self,
         provider_name: &str,

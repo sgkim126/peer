@@ -7,12 +7,10 @@ use crate::extract::{ExtractData, ExtractError, Extractor, FileContent};
 use crate::llm::agent::{ToolExecutionResult, ToolExecutor};
 use crate::llm::provider::ToolCall;
 
-#[allow(dead_code)]
 pub struct PeerToolExecutor {
     extractor: Extractor,
 }
 
-#[allow(dead_code)]
 impl PeerToolExecutor {
     pub fn new(extractor: Extractor) -> Self {
         Self { extractor }

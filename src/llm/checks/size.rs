@@ -18,7 +18,6 @@ pub struct SizeCheck {
     revision: String,
 }
 
-#[allow(dead_code)]
 impl SizeCheck {
     pub fn new(revision: String) -> Self {
         Self { revision }

@@ -1,12 +1,128 @@
 pub mod runner;
 mod size;
 
+use std::fmt;
+use std::path::PathBuf;
+
+use crate::cli::CheckCommand;
+use crate::config::Config;
+use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::provider::{ConversationTurn, ToolSpec};
+use crate::llm::checks::runner::{CheckRunConfig, CheckRunError, run_check};
+use crate::llm::checks::size::SizeCheck;
+use crate::llm::confidence::{Confidence, ConfidenceError};
+use crate::llm::provider::{ConversationTurn, ProviderCreationError, ToolSpec, create_provider};
 use crate::llm::result::{
-    CheckOutput, CheckTarget, validate_per_commit_targets, validate_range_targets,
+    CheckOutput, CheckResult, CheckTarget, validate_per_commit_targets, validate_range_targets,
 };
+use crate::llm::tool_executor::PeerToolExecutor;
+
+#[derive(Debug)]
+pub enum CheckCommandError {
+    Config(crate::error::PeerError),
+    InvalidConfidence(ConfidenceError),
+    Provider(ProviderCreationError),
+    Run(CheckRunError),
+}
+
+impl From<crate::error::PeerError> for CheckCommandError {
+    fn from(err: crate::error::PeerError) -> Self {
+        Self::Config(err)
+    }
+}
+
+impl From<ConfidenceError> for CheckCommandError {
+    fn from(err: ConfidenceError) -> Self {
+        Self::InvalidConfidence(err)
+    }
+}
+
+impl From<ProviderCreationError> for CheckCommandError {
+    fn from(err: ProviderCreationError) -> Self {
+        Self::Provider(err)
+    }
+}
+
+impl From<CheckRunError> for CheckCommandError {
+    fn from(err: CheckRunError) -> Self {
+        Self::Run(err)
+    }
+}
+
+impl fmt::Display for CheckCommandError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Config(error) => error.fmt(f),
+            Self::InvalidConfidence(error) => error.fmt(f),
+            Self::Provider(error) => error.fmt(f),
+            Self::Run(error) => error.fmt(f),
+        }
+    }
+}
+
+impl std::error::Error for CheckCommandError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Config(error) => Some(error),
+            Self::InvalidConfidence(error) => Some(error),
+            Self::Provider(error) => Some(error),
+            Self::Run(error) => Some(error),
+        }
+    }
+}
+
+#[allow(dead_code)]
+pub async fn handler(
+    console: Console,
+    command: CheckCommand,
+    config: Config,
+    project_root: PathBuf,
+) -> Result<CheckResult, CheckCommandError> {
+    match command {
+        CheckCommand::Size { revision } => {
+            run_definition(SizeCheck::new(revision), console, &config, project_root).await
+        }
+        CheckCommand::Intent { .. } => unimplemented!(),
+        CheckCommand::Quality { .. } => unimplemented!(),
+        CheckCommand::Security { .. } => unimplemented!(),
+        CheckCommand::Coherence { .. } => unimplemented!(),
+    }
+}
+
+async fn run_definition<C>(
+    check: C,
+    console: Console,
+    config: &Config,
+    project_root: PathBuf,
+) -> Result<CheckResult, CheckCommandError>
+where
+    C: CheckDefinition,
+{
+    let provider_name = config.llm.default_provider.clone();
+    let model_name = config.llm.default_model.clone();
+    let confidence_threshold = Confidence::try_from(config.llm.confidence_threshold)?;
+    let max_iterations = config.llm.max_iterations;
+    let (provider_config, model_config) = config.resolve_provider(&provider_name, &model_name)?;
+
+    let provider = create_provider(
+        &provider_config.name,
+        &provider_config.api_key_env,
+        provider_config.base_url.as_deref(),
+    )?;
+    let extractor = Extractor::new(project_root.clone(), console);
+    let tool_executor = PeerToolExecutor::new(Extractor::new(project_root, console));
+    let run_config = CheckRunConfig {
+        model: &model_config.name,
+        confidence_threshold,
+        max_iterations,
+        input_per_1m_usd: model_config.input_per_1m_usd,
+        output_per_1m_usd: model_config.output_per_1m_usd,
+        console,
+    };
+
+    Ok(run_check(&check, &extractor, &provider, &tool_executor, run_config).await?)
+}
 
 /// Inputs prepared before the agent loop starts.
 pub struct PreparedCheck {

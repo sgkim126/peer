@@ -25,7 +25,6 @@ impl LlmProvider for Provider {
     }
 }
 
-#[allow(dead_code)]
 pub fn create_provider(
     name: &str,
     api_key_env: &str,

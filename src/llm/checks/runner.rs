@@ -9,7 +9,6 @@ use crate::llm::result::{CheckOutput, CheckResult};
 
 use super::CheckDefinition;
 
-#[allow(dead_code)]
 pub struct CheckRunConfig<'a> {
     pub model: &'a str,
     pub confidence_threshold: Confidence,
@@ -55,7 +54,6 @@ impl From<LlmCallError> for CheckRunError {
     }
 }
 
-#[allow(dead_code)]
 pub async fn run_check<C, P, E>(
     check: &C,
     extractor: &Extractor,
