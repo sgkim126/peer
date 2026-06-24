@@ -90,7 +90,6 @@ pub struct CheckResult {
 }
 
 impl CheckResult {
-    #[allow(dead_code)]
     pub fn from_agent_outcome(
         check: impl Into<String>,
         target: CheckTarget,

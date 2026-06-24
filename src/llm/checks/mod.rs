@@ -1,3 +1,4 @@
+pub mod runner;
 mod size;
 
 use crate::extract::{ExtractError, Extractor};
@@ -8,7 +9,6 @@ use crate::llm::result::{
 };
 
 /// Inputs prepared before the agent loop starts.
-#[allow(dead_code)]
 pub struct PreparedCheck {
     pub conversation: Vec<ConversationTurn>,
     pub tools: Vec<ToolSpec>,
@@ -26,7 +26,6 @@ pub enum PreparedCheckTarget {
     },
 }
 
-#[allow(dead_code)]
 impl PreparedCheck {
     pub fn result_target(&self) -> CheckTarget {
         match &self.target {
@@ -48,7 +47,6 @@ impl PreparedCheck {
 }
 
 /// Defines the provider-neutral inputs and validation rules for an LLM check.
-#[allow(dead_code)]
 pub trait CheckDefinition {
     /// Returns the stable name written to `CheckResult::check`.
     fn name(&self) -> &'static str;

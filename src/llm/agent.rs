@@ -29,7 +29,6 @@ pub struct AgentRunResult {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub enum AgentRunOutcome {
     Completed(AgentRunResult),
     Exhausted {
@@ -50,7 +49,6 @@ pub trait ToolExecutor {
     async fn execute(&self, call: ToolCall) -> ToolExecutionResult;
 }
 
-#[allow(dead_code)]
 pub async fn run_agent<P, E>(
     provider: &P,
     tool_executor: &E,
