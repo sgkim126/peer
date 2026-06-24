@@ -1,17 +1,21 @@
 use std::fmt;
 
 use crate::console::Console;
+use crate::llm::confidence::Confidence;
 use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmProvider, LlmRequest, LlmResponse, RawUsage, ToolCall,
     ToolSpec,
 };
 use crate::llm::result::CheckOutput;
 
+const LOW_CONFIDENCE_REFINEMENT_INSTRUCTION: &str = "Your previous check result was below the required confidence threshold. Continue the analysis, use additional tools if needed, and submit a revised check result.";
+
 pub struct AgentRequest<'a> {
     pub model: &'a str,
     pub conversation: &'a [ConversationTurn],
     pub tools: &'a [ToolSpec],
     pub output_schema: &'a serde_json::Value,
+    pub confidence_threshold: Confidence,
     pub max_iterations: u32,
     pub console: Console,
 }
@@ -55,15 +59,23 @@ where
 
         match result.response {
             LlmResponse::CheckOutput(output) => {
-                request
-                    .console
-                    .debug(format!("llm iteration {iteration}: check output"));
-                // TODO: Check confidence
-                return Ok(AgentRunResult {
-                    output,
-                    usage,
-                    iterations: iteration,
-                });
+                request.console.debug(format!(
+                    "llm iteration {iteration}: check output confidence={} threshold={}",
+                    output.confidence.as_f64(),
+                    request.confidence_threshold.as_f64()
+                ));
+                if output.confidence >= request.confidence_threshold {
+                    return Ok(AgentRunResult {
+                        output,
+                        usage,
+                        iterations: iteration,
+                    });
+                }
+
+                conversation.push(ConversationTurn::AssistantCheckOutput(output));
+                conversation.push(ConversationTurn::User(
+                    LOW_CONFIDENCE_REFINEMENT_INSTRUCTION.to_string(),
+                ));
             }
             LlmResponse::ToolCalls(tool_calls) => {
                 request.console.debug(format!(
@@ -127,15 +139,18 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::llm::confidence::Confidence;
     use crate::llm::provider::{LlmCallResult, LlmResponse};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
 
     fn check_output(summary: &str) -> CheckOutput {
+        check_output_with_confidence(summary, 0.9)
+    }
+
+    fn check_output_with_confidence(summary: &str, confidence: f64) -> CheckOutput {
         CheckOutput {
             summary: summary.to_string(),
             findings: Vec::new(),
-            confidence: Confidence::try_from(0.9).unwrap(),
+            confidence: Confidence::try_from(confidence).unwrap(),
         }
     }
 
@@ -160,6 +175,7 @@ mod tests {
             conversation,
             tools,
             output_schema,
+            confidence_threshold: Confidence::try_from(0.8).unwrap(),
             max_iterations,
             console: Console::default(),
         }
@@ -182,6 +198,88 @@ mod tests {
         assert_eq!(result.usage.input_tokens, 10);
         assert_eq!(result.usage.output_tokens, 5);
         assert_eq!(result.iterations, 1);
+    }
+
+    #[tokio::test]
+    async fn retries_when_check_output_confidence_is_below_threshold() {
+        let provider = MockProvider::new([
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output_with_confidence("uncertain", 0.7)),
+                10,
+                5,
+            )),
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output_with_confidence("revised", 0.9)),
+                20,
+                7,
+            )),
+        ]);
+        let executor = FakeToolExecutor::new([]);
+        let schema = json!({ "type": "object" });
+
+        let result = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+            .await
+            .unwrap();
+
+        assert_eq!(result.output.summary, "revised");
+        assert_eq!(result.iterations, 2);
+        assert_eq!(result.usage.input_tokens, 30);
+        assert_eq!(result.usage.output_tokens, 12);
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        let ConversationTurn::AssistantCheckOutput(previous) = &requests[1].conversation[0] else {
+            panic!("expected previous check output");
+        };
+        assert_eq!(previous.summary, "uncertain");
+        let ConversationTurn::User(instruction) = &requests[1].conversation[1] else {
+            panic!("expected refinement instruction");
+        };
+        assert_eq!(instruction, LOW_CONFIDENCE_REFINEMENT_INSTRUCTION);
+    }
+
+    #[tokio::test]
+    async fn accepts_confidence_equal_to_threshold() {
+        let provider = MockProvider::new([Ok(call_result(
+            LlmResponse::CheckOutput(check_output_with_confidence("enough", 0.8)),
+            10,
+            5,
+        ))]);
+        let executor = FakeToolExecutor::new([]);
+        let schema = json!({ "type": "object" });
+
+        let result = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+            .await
+            .unwrap();
+
+        assert_eq!(result.output.summary, "enough");
+        assert_eq!(result.iterations, 1);
+        assert_eq!(provider.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn fails_when_confidence_remains_below_threshold() {
+        let provider = MockProvider::new([
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output_with_confidence("first", 0.6)),
+                10,
+                5,
+            )),
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output_with_confidence("second", 0.7)),
+                20,
+                7,
+            )),
+        ]);
+        let executor = FakeToolExecutor::new([]);
+        let schema = json!({ "type": "object" });
+
+        let error = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 2))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, LlmCallError::Permanent { .. }));
+        assert_eq!(provider.requests().len(), 2);
     }
 
     #[tokio::test]

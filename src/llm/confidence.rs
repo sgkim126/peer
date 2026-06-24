@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 pub struct Confidence(f64);
 
 impl Confidence {
-    #[allow(dead_code)]
     pub fn as_f64(self) -> f64 {
         self.0
     }
