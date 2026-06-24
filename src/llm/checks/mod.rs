@@ -72,7 +72,6 @@ impl std::error::Error for CheckCommandError {
     }
 }
 
-#[allow(dead_code)]
 pub async fn handler(
     console: Console,
     command: CheckCommand,

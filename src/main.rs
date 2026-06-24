@@ -64,7 +64,36 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Check { .. } => unimplemented!(),
+        Command::Check { command } => {
+            let cwd = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(err) => {
+                    eprintln!("cannot determine current directory.");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let (config, project_root) = match discover(&cwd) {
+                Ok(result) => result,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            match llm::checks::handler(console, command, config, project_root).await {
+                Ok(result) => {
+                    println!("{}", serde_json::to_string_pretty(&result).unwrap());
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    console.debug(format!("{err:?}"));
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Render { .. } => unimplemented!(),
     }
 }
