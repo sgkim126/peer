@@ -2,7 +2,6 @@ use super::response::ToolCall;
 use crate::llm::result::CheckOutput;
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub enum ConversationTurn {
     System(String),
     User(String),

@@ -15,6 +15,7 @@ pub struct AgentRequest<'a> {
     pub conversation: &'a [ConversationTurn],
     pub tools: &'a [ToolSpec],
     pub output_schema: &'a serde_json::Value,
+    pub validate_output: &'a dyn Fn(&CheckOutput) -> Result<(), String>,
     pub confidence_threshold: Confidence,
     pub max_iterations: u32,
     pub console: Console,
@@ -92,6 +93,17 @@ where
 
         match result.response {
             LlmResponse::CheckOutput(output) => {
+                if let Err(error) = (request.validate_output)(&output) {
+                    request.console.debug(format!(
+                        "llm iteration {iteration}: invalid check output: {error}"
+                    ));
+                    conversation.push(ConversationTurn::AssistantCheckOutput(output));
+                    conversation.push(ConversationTurn::User(
+                        invalid_output_refinement_instruction(&error),
+                    ));
+                    continue;
+                }
+
                 request.console.debug(format!(
                     "llm iteration {iteration}: check output confidence={} threshold={}",
                     output.confidence.as_f64(),
@@ -162,6 +174,15 @@ where
     })
 }
 
+fn invalid_output_refinement_instruction<E>(error: &E) -> String
+where
+    E: fmt::Display,
+{
+    format!(
+        "Your previous check result was invalid: {error}. Correct the result and submit it again."
+    )
+}
+
 fn tool_result_json(result: ToolExecutionResult) -> serde_json::Value {
     match result {
         Ok(value) => value,
@@ -229,11 +250,16 @@ mod tests {
         output_schema: &'a serde_json::Value,
         max_iterations: u32,
     ) -> AgentRequest<'a> {
+        fn accept_output(_output: &CheckOutput) -> Result<(), String> {
+            Ok(())
+        }
+
         AgentRequest {
             model: "test-model",
             conversation,
             tools,
             output_schema,
+            validate_output: &accept_output,
             confidence_threshold: Confidence::try_from(0.8).unwrap(),
             max_iterations,
             console: Console::default(),
@@ -327,6 +353,44 @@ mod tests {
         assert_eq!(result.output.summary, "enough");
         assert_eq!(result.iterations, 1);
         assert_eq!(provider.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn retries_when_check_output_validation_fails() {
+        let provider = MockProvider::new([
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output("invalid")),
+                10,
+                5,
+            )),
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output("valid")),
+                20,
+                7,
+            )),
+        ]);
+        let executor = FakeToolExecutor::new([]);
+        let schema = json!({ "type": "object" });
+        let validate = |output: &CheckOutput| {
+            if output.summary == "valid" {
+                Ok(())
+            } else {
+                Err("summary must be valid".to_string())
+            }
+        };
+        let mut request = agent_request(&[], &[], &schema, 2);
+        request.validate_output = &validate;
+
+        let result = completed(run_agent(&provider, &executor, request).await.unwrap());
+
+        assert_eq!(result.output.summary, "valid");
+        assert_eq!(result.iterations, 2);
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        let ConversationTurn::User(instruction) = &requests[1].conversation[1] else {
+            panic!("expected validation refinement instruction");
+        };
+        assert!(instruction.contains("summary must be valid"));
     }
 
     #[tokio::test]
