@@ -13,6 +13,7 @@ use crate::config::Config;
 use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
+use crate::llm::agent::ToolExecutor;
 use crate::llm::checks::coherence::CoherenceCheck;
 use crate::llm::checks::intent::IntentCheck;
 use crate::llm::checks::quality::QualityCheck;
@@ -20,7 +21,9 @@ use crate::llm::checks::runner::{CheckRunConfig, CheckRunError, run_check};
 use crate::llm::checks::security::SecurityCheck;
 use crate::llm::checks::size::SizeCheck;
 use crate::llm::confidence::{Confidence, ConfidenceError};
-use crate::llm::provider::{ConversationTurn, ProviderCreationError, ToolSpec, create_provider};
+use crate::llm::provider::{
+    ConversationTurn, LlmProvider, ProviderCreationError, ToolSpec, create_provider,
+};
 use crate::llm::result::{
     CheckOutput, CheckResult, CheckTarget, validate_per_commit_targets, validate_range_targets,
 };
@@ -114,11 +117,8 @@ async fn run_definition<C>(
 where
     C: CheckDefinition,
 {
-    let provider_name = config.llm.default_provider.clone();
-    let model_name = config.llm.default_model.clone();
-    let confidence_threshold = Confidence::try_from(config.llm.confidence_threshold)?;
-    let max_iterations = config.llm.max_iterations;
-    let (provider_config, model_config) = config.resolve_provider(&provider_name, &model_name)?;
+    let (provider_config, _) =
+        config.resolve_provider(&config.llm.default_provider, &config.llm.default_model)?;
 
     let provider = create_provider(
         &provider_config.name,
@@ -127,6 +127,35 @@ where
     )?;
     let extractor = Extractor::new(project_root.clone(), console);
     let tool_executor = PeerToolExecutor::new(Extractor::new(project_root, console));
+
+    run_definition_with(
+        check,
+        console,
+        config,
+        &extractor,
+        &provider,
+        &tool_executor,
+    )
+    .await
+}
+
+async fn run_definition_with<C, P, E>(
+    check: C,
+    console: Console,
+    config: &Config,
+    extractor: &Extractor,
+    provider: &P,
+    tool_executor: &E,
+) -> Result<CheckResult, CheckCommandError>
+where
+    C: CheckDefinition,
+    P: LlmProvider,
+    E: ToolExecutor,
+{
+    let confidence_threshold = Confidence::try_from(config.llm.confidence_threshold)?;
+    let max_iterations = config.llm.max_iterations;
+    let (_, model_config) =
+        config.resolve_provider(&config.llm.default_provider, &config.llm.default_model)?;
     let run_config = CheckRunConfig {
         model: &model_config.name,
         confidence_threshold,
@@ -136,7 +165,7 @@ where
         console,
     };
 
-    Ok(run_check(&check, &extractor, &provider, &tool_executor, run_config).await?)
+    Ok(run_check(&check, extractor, provider, tool_executor, run_config).await?)
 }
 
 /// Inputs prepared before the agent loop starts.
