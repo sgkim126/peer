@@ -7,6 +7,7 @@ mod git;
 mod init;
 mod llm;
 mod render;
+mod review;
 mod secret;
 
 use clap::Parser;
