@@ -6,6 +6,8 @@ pub mod runner;
 mod security;
 mod size;
 
+pub use output::CheckCommandOutput;
+
 use std::fmt;
 use std::path::PathBuf;
 

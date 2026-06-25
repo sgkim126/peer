@@ -8,7 +8,6 @@ use crate::llm::provider::{LlmCallError, ProviderCreationError};
 use crate::llm::result::CheckResult;
 
 #[derive(Debug, Deserialize, Serialize)]
-#[allow(dead_code)]
 pub struct CheckCommandOutput {
     #[serde(flatten)]
     outcome: CheckCommandOutcome,
@@ -16,7 +15,6 @@ pub struct CheckCommandOutput {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
-#[allow(dead_code)]
 enum CheckCommandOutcome {
     Success { data: CheckResult },
     Error { error: CheckCommandErrorOutput },
@@ -105,14 +103,12 @@ fn llm_error_classification(error: &LlmCallError) -> (ErrorCode, bool) {
 }
 
 impl CheckCommandOutput {
-    #[allow(dead_code)]
     pub fn success(data: CheckResult) -> Self {
         Self {
             outcome: CheckCommandOutcome::Success { data },
         }
     }
 
-    #[allow(dead_code)]
     pub fn error(error: CheckCommandErrorOutput) -> Self {
         Self {
             outcome: CheckCommandOutcome::Error { error },

@@ -13,6 +13,8 @@ use clap::Parser;
 use crate::cli::{Cli, Command};
 use crate::config::discover;
 use crate::console::Console;
+use crate::llm::checks::{CheckCommandError, CheckCommandOutput};
+use crate::llm::result::CheckResult;
 
 use std::process::ExitCode;
 
@@ -82,18 +84,32 @@ async fn main() -> ExitCode {
                 }
             };
 
-            match llm::checks::handler(console, command, config, project_root).await {
-                Ok(result) => {
-                    println!("{}", serde_json::to_string_pretty(&result).unwrap());
-                    ExitCode::SUCCESS
-                }
-                Err(err) => {
-                    eprintln!("error: {err}");
-                    console.debug(format!("{err:?}"));
-                    ExitCode::FAILURE
-                }
+            let result = llm::checks::handler(console, command, config, project_root).await;
+            if let Err(error) = &result {
+                console.debug(format!("{error:?}"));
             }
+            print_check_result(result)
         }
         Command::Render { .. } => unimplemented!(),
+    }
+}
+
+fn print_check_result(result: Result<CheckResult, CheckCommandError>) -> ExitCode {
+    let exit_code = if result.is_ok() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    };
+    let output = CheckCommandOutput::from(result);
+
+    match serde_json::to_string_pretty(&output) {
+        Ok(json) => {
+            println!("{json}");
+            exit_code
+        }
+        Err(error) => {
+            eprintln!("failed to serialize check output: {error}");
+            ExitCode::FAILURE
+        }
     }
 }
