@@ -349,7 +349,7 @@ mod tests {
     use crate::git::run_git;
     use crate::llm::agent::ToolExecutionResult;
     use crate::llm::confidence::Confidence;
-    use crate::llm::provider::{LlmCallResult, LlmResponse, RawUsage};
+    use crate::llm::provider::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
     use crate::llm::result::{Finding, Severity};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
 
@@ -546,6 +546,56 @@ mod tests {
             run_with_injected_dependencies(CoherenceCheck::new("HEAD~1..HEAD".to_string())).await;
 
         assert_eq!(result.check, "coherence");
+    }
+
+    #[tokio::test]
+    async fn runs_check_after_tool_call() {
+        let repository = init_repository().await;
+        let console = Console::default();
+        let tool_call = ToolCall {
+            id: "call-1".to_string(),
+            name: "get_commit_diff".to_string(),
+            arguments: json!({
+                "revision": "HEAD"
+            }),
+        };
+        let provider = MockProvider::new([
+            Ok(LlmCallResult {
+                response: LlmResponse::ToolCalls(vec![tool_call.clone()]),
+                usage: RawUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                },
+            }),
+            Ok(LlmCallResult {
+                response: LlmResponse::CheckOutput(CheckOutput {
+                    summary: "done".to_string(),
+                    findings: Vec::new(),
+                    confidence: Confidence::try_from(0.9).unwrap(),
+                }),
+                usage: RawUsage {
+                    input_tokens: 20,
+                    output_tokens: 10,
+                },
+            }),
+        ]);
+        let tool_executor = FakeToolExecutor::new([Ok(json!("diff"))]);
+        let extractor = Extractor::new(repository.path().to_path_buf(), console);
+
+        let result = run_definition_with(
+            IntentCheck::new("HEAD".to_string()),
+            console,
+            &test_config(),
+            &extractor,
+            &provider,
+            &tool_executor,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(result.iterations, 2);
+        assert_eq!(tool_executor.calls(), vec![tool_call]);
+        assert_eq!(provider.requests().len(), 2);
     }
 
     #[tokio::test]
