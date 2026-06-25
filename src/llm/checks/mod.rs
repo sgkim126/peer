@@ -1,6 +1,7 @@
 mod intent;
 mod quality;
 pub mod runner;
+mod security;
 mod size;
 
 use std::fmt;
@@ -14,6 +15,7 @@ use crate::git::CommitHash;
 use crate::llm::checks::intent::IntentCheck;
 use crate::llm::checks::quality::QualityCheck;
 use crate::llm::checks::runner::{CheckRunConfig, CheckRunError, run_check};
+use crate::llm::checks::security::SecurityCheck;
 use crate::llm::checks::size::SizeCheck;
 use crate::llm::confidence::{Confidence, ConfidenceError};
 use crate::llm::provider::{ConversationTurn, ProviderCreationError, ToolSpec, create_provider};
@@ -92,7 +94,9 @@ pub async fn handler(
         CheckCommand::Quality { revision } => {
             run_definition(QualityCheck::new(revision), console, &config, project_root).await
         }
-        CheckCommand::Security { .. } => unimplemented!(),
+        CheckCommand::Security { revision } => {
+            run_definition(SecurityCheck::new(revision), console, &config, project_root).await
+        }
         CheckCommand::Coherence { .. } => unimplemented!(),
     }
 }
