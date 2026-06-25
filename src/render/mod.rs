@@ -14,7 +14,7 @@ pub fn render(input: &str, format: OutputFormat) -> Result<String, RenderError> 
             serde_json::to_string_pretty(&envelope).map_err(RenderError::Serialization)
         }
         OutputFormat::Terminal => Ok(render_terminal(&envelope)),
-        OutputFormat::Markdown => unimplemented!(),
+        OutputFormat::Markdown => Ok(render_markdown(&envelope)),
     }
 }
 
@@ -80,6 +80,96 @@ fn render_terminal_result(result: &CheckResult) -> String {
 
 fn render_terminal_error(error: &CheckCommandErrorOutput) -> String {
     format!("error: {} — {}", error_code_name(error.code), error.message)
+}
+
+fn render_markdown(output: &CheckCommandOutput) -> String {
+    match output.as_result() {
+        Ok(result) => render_markdown_result(result),
+        Err(error) => render_markdown_error(error),
+    }
+}
+
+fn render_markdown_result(result: &CheckResult) -> String {
+    let mut output = String::new();
+    writeln!(output, "## Check: {}", result.check).unwrap();
+    writeln!(output).unwrap();
+    writeln!(output, "- **Target:** `{}`", display_target(&result.target)).unwrap();
+    writeln!(output, "- **Status:** {}", check_status(&result.findings)).unwrap();
+    writeln!(output).unwrap();
+    writeln!(output, "{}", result.summary).unwrap();
+    writeln!(output).unwrap();
+    writeln!(output, "### Findings").unwrap();
+    writeln!(output).unwrap();
+
+    if result.findings.is_empty() {
+        writeln!(output, "None.").unwrap();
+    } else {
+        for finding in &result.findings {
+            writeln!(output, "- {}", display_markdown_finding(finding)).unwrap();
+        }
+    }
+
+    if result.is_exhausted {
+        writeln!(output).unwrap();
+        writeln!(output, "> [!WARNING]").unwrap();
+        writeln!(
+            output,
+            "> Agent loop exhausted: `{}`",
+            result
+                .exhaustion_reason
+                .as_deref()
+                .unwrap_or("unknown reason")
+        )
+        .unwrap();
+    }
+
+    writeln!(output).unwrap();
+    writeln!(output, "### Metadata").unwrap();
+    writeln!(output).unwrap();
+    writeln!(
+        output,
+        "- **Confidence:** {:.0}%",
+        result.confidence.as_f64() * 100.0
+    )
+    .unwrap();
+    writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
+    writeln!(
+        output,
+        "- **Usage:** {} input, {} output, ${:.6} ({})",
+        result.usage.input_tokens,
+        result.usage.output_tokens,
+        result.usage.cost_usd,
+        result.usage.model
+    )
+    .unwrap();
+
+    output.trim_end().to_string()
+}
+
+fn render_markdown_error(error: &CheckCommandErrorOutput) -> String {
+    format!(
+        "> [!CAUTION]\n> `{}`: {}",
+        error_code_name(error.code),
+        error.message
+    )
+}
+
+fn display_markdown_finding(finding: &Finding) -> String {
+    let mut context = format!("`{}`", finding.commit);
+    if let Some(location) = &finding.location {
+        let location = if let Some(line) = location.line {
+            format!("{}:{line}", location.file)
+        } else {
+            location.file.clone()
+        };
+        write!(context, " · `{location}`").unwrap();
+    }
+
+    format!(
+        "**{}** — {} ({context})",
+        severity_name(finding.severity),
+        finding.message
+    )
 }
 
 fn display_target(target: &CheckTarget) -> &str {
@@ -273,6 +363,63 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
         let rendered = render(&envelope.to_string(), OutputFormat::Terminal).unwrap();
 
         assert_eq!(rendered, "error: config_invalid — invalid config");
+    }
+
+    #[test]
+    fn renders_successful_check_for_markdown() {
+        let rendered = render(
+            &success_envelope_with_finding().to_string(),
+            OutputFormat::Markdown,
+        )
+        .unwrap();
+
+        assert_eq!(
+            rendered,
+            "\
+## Check: size
+
+- **Target:** `abc1234`
+- **Status:** issue
+
+A critical issue was found.
+
+### Findings
+
+- **critical** — User input reaches a shell command. (`abc1234` · `src/main.rs:42`)
+
+### Metadata
+
+- **Confidence:** 85%
+- **Iterations:** 2
+- **Usage:** 100 input, 20 output, $0.001000 (test-model)"
+        );
+    }
+
+    #[test]
+    fn renders_exhausted_check_warning_for_markdown() {
+        let mut envelope = success_envelope();
+        envelope["data"]["is_exhausted"] = json!(true);
+        envelope["data"]["exhaustion_reason"] = json!("max_iterations");
+
+        let rendered = render(&envelope.to_string(), OutputFormat::Markdown).unwrap();
+
+        assert!(rendered.contains("> [!WARNING]\n> Agent loop exhausted: `max_iterations`"));
+    }
+
+    #[test]
+    fn renders_check_error_for_markdown() {
+        let envelope = json!({
+            "status": "error",
+            "error": {
+                "code": "config_invalid",
+                "message": "invalid config",
+                "is_retryable": false
+            }
+        });
+
+        let rendered = render(&envelope.to_string(), OutputFormat::Markdown).unwrap();
+
+        assert_eq!(rendered, "> [!CAUTION]\n> `config_invalid`: invalid config");
     }
 
     #[test]

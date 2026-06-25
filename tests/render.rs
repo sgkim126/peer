@@ -79,6 +79,20 @@ fn renders_pretty_json_from_stdin() {
 }
 
 #[test]
+fn renders_markdown_output_from_stdin() {
+    let output = run_render("markdown", &success_envelope().to_string());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+
+    let output = String::from_utf8(output.stdout).unwrap();
+    assert!(output.starts_with("## Check: size\n"));
+    assert!(output.contains("- **Status:** ok"));
+    assert!(output.contains("### Findings\n\nNone."));
+    assert!(output.contains("### Metadata"));
+}
+
+#[test]
 fn renders_invalid_input_error_in_selected_format() {
     let output = run_render("terminal", "{");
 
