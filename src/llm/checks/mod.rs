@@ -1,5 +1,6 @@
 mod coherence;
 mod intent;
+mod output;
 mod quality;
 pub mod runner;
 mod security;
