@@ -517,6 +517,38 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn runs_intent_check_with_injected_dependencies() {
+        let (result, _) =
+            run_with_injected_dependencies(IntentCheck::new("HEAD".to_string())).await;
+
+        assert_eq!(result.check, "intent");
+    }
+
+    #[tokio::test]
+    async fn runs_quality_check_with_injected_dependencies() {
+        let (result, _) =
+            run_with_injected_dependencies(QualityCheck::new("HEAD".to_string())).await;
+
+        assert_eq!(result.check, "quality");
+    }
+
+    #[tokio::test]
+    async fn runs_security_check_with_injected_dependencies() {
+        let (result, _) =
+            run_with_injected_dependencies(SecurityCheck::new("HEAD".to_string())).await;
+
+        assert_eq!(result.check, "security");
+    }
+
+    #[tokio::test]
+    async fn runs_coherence_check_with_injected_dependencies() {
+        let (result, _) =
+            run_with_injected_dependencies(CoherenceCheck::new("HEAD~1..HEAD".to_string())).await;
+
+        assert_eq!(result.check, "coherence");
+    }
+
+    #[tokio::test]
     async fn check_definition_prepares_required_inputs_before_agent_loop() {
         let target = CommitHash::new("abc1234").unwrap();
         let check = TestCheck {
