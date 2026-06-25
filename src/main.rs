@@ -75,16 +75,13 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let (config, project_root) = match discover(&cwd) {
-                Ok(result) => result,
-                Err(err) => {
-                    eprintln!("error: {err}");
-                    console.debug(format!("{err:?}"));
-                    return ExitCode::FAILURE;
+            let result = match discover(&cwd) {
+                Ok((config, project_root)) => {
+                    llm::checks::handler(console, command, config, project_root).await
                 }
+                Err(error) => Err(CheckCommandError::from(error)),
             };
 
-            let result = llm::checks::handler(console, command, config, project_root).await;
             if let Err(error) = &result {
                 console.debug(format!("{error:?}"));
             }
