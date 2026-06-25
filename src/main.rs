@@ -17,6 +17,7 @@ use crate::console::Console;
 use crate::llm::checks::{CheckCommandError, CheckCommandOutput};
 use crate::llm::result::CheckResult;
 
+use std::io::Read;
 use std::process::ExitCode;
 
 #[tokio::main]
@@ -88,7 +89,25 @@ async fn main() -> ExitCode {
             }
             print_check_result(result)
         }
-        Command::Render { .. } => unimplemented!(),
+        Command::Render { format } => {
+            let mut input = String::new();
+            if let Err(error) = std::io::stdin().read_to_string(&mut input) {
+                eprintln!("failed to read render input: {error}");
+                return ExitCode::FAILURE;
+            }
+
+            match render::render(&input, format) {
+                Ok(output) => {
+                    println!("{output}");
+                }
+                Err(err) => {
+                    console.debug(format!("{err:?}"));
+                    eprintln!("failed to render: {err}");
+                    return ExitCode::FAILURE;
+                }
+            }
+            ExitCode::SUCCESS
+        }
     }
 }
 

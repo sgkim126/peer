@@ -5,7 +5,6 @@ use crate::cli::OutputFormat;
 use crate::llm::checks::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
 use crate::llm::result::{CheckResult, CheckTarget, Finding, Severity};
 
-#[allow(dead_code)]
 pub fn render(input: &str, format: OutputFormat) -> Result<String, RenderError> {
     let envelope: CheckCommandOutput =
         serde_json::from_str(input).map_err(RenderError::InvalidEnvelope)?;
