@@ -649,6 +649,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn returns_exhausted_result_when_confidence_stays_below_threshold() {
+        let repository = init_repository().await;
+        let console = Console::default();
+        let provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::CheckOutput(CheckOutput {
+                summary: "uncertain".to_string(),
+                findings: Vec::new(),
+                confidence: Confidence::try_from(0.7).unwrap(),
+            }),
+            usage: RawUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+            },
+        })]);
+        let tool_executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let extractor = Extractor::new(repository.path().to_path_buf(), console);
+        let mut config = test_config();
+        config.llm.max_iterations = 1;
+
+        let result = run_definition_with(
+            SecurityCheck::new("HEAD".to_string()),
+            console,
+            &config,
+            &extractor,
+            &provider,
+            &tool_executor,
+        )
+        .await
+        .unwrap();
+
+        assert!(result.is_exhausted);
+        assert_eq!(result.summary, "uncertain");
+        assert_eq!(result.confidence.as_f64(), 0.7);
+        assert_eq!(result.iterations, 1);
+        assert_eq!(
+            result.exhaustion_reason.as_deref(),
+            Some("maximum iterations reached")
+        );
+    }
+
+    #[tokio::test]
     async fn check_definition_prepares_required_inputs_before_agent_loop() {
         let target = CommitHash::new("abc1234").unwrap();
         let check = TestCheck {
