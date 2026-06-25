@@ -344,9 +344,14 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
+    use crate::config::{LlmConfig, ModelConfig, ProviderConfig, ReviewConfig};
     use crate::console::Console;
+    use crate::git::run_git;
+    use crate::llm::agent::ToolExecutionResult;
     use crate::llm::confidence::Confidence;
+    use crate::llm::provider::{LlmCallResult, LlmResponse, RawUsage};
     use crate::llm::result::{Finding, Severity};
+    use crate::llm::test_support::{FakeToolExecutor, MockProvider};
 
     struct TestCheck {
         target: CommitHash,
@@ -395,6 +400,120 @@ mod tests {
             }],
             confidence: Confidence::try_from(0.9).unwrap(),
         }
+    }
+
+    fn test_config() -> Config {
+        Config {
+            version: 1,
+            review: ReviewConfig { max_commits: 10 },
+            llm: LlmConfig {
+                default_provider: "test".to_string(),
+                default_model: "test-model".to_string(),
+                confidence_threshold: 0.8,
+                max_iterations: 3,
+            },
+            providers: vec![ProviderConfig {
+                name: "test".to_string(),
+                api_key_env: "UNUSED_API_KEY".to_string(),
+                base_url: None,
+                models: vec![ModelConfig {
+                    name: "test-model".to_string(),
+                    input_per_1m_usd: 2.0,
+                    output_per_1m_usd: 6.0,
+                }],
+            }],
+        }
+    }
+
+    async fn init_repository() -> tempfile::TempDir {
+        let repository = tempfile::tempdir().unwrap();
+        let console = Console::default();
+        run_git(&["init"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["config", "user.email", "test@example.com"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        run_git(&["config", "user.name", "Test"], repository.path(), console)
+            .await
+            .unwrap();
+        std::fs::write(repository.path().join("file.txt"), "content").unwrap();
+        run_git(&["add", "file.txt"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "test commit"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        std::fs::write(repository.path().join("file.txt"), "updated content").unwrap();
+        run_git(&["add", "file.txt"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "update test file"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        repository
+    }
+
+    fn successful_provider() -> MockProvider {
+        MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::CheckOutput(CheckOutput {
+                summary: "done".to_string(),
+                findings: Vec::new(),
+                confidence: Confidence::try_from(0.9).unwrap(),
+            }),
+            usage: RawUsage {
+                input_tokens: 100,
+                output_tokens: 50,
+            },
+        })])
+    }
+
+    async fn run_with_injected_dependencies<C>(check: C) -> (CheckResult, MockProvider)
+    where
+        C: CheckDefinition,
+    {
+        let repository = init_repository().await;
+        let console = Console::default();
+        let provider = successful_provider();
+        let tool_executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let extractor = Extractor::new(repository.path().to_path_buf(), console);
+
+        let result = run_definition_with(
+            check,
+            console,
+            &test_config(),
+            &extractor,
+            &provider,
+            &tool_executor,
+        )
+        .await
+        .unwrap();
+
+        (result, provider)
+    }
+
+    #[tokio::test]
+    async fn runs_size_check_with_injected_dependencies() {
+        let (result, provider) =
+            run_with_injected_dependencies(SizeCheck::new("HEAD".to_string())).await;
+
+        assert_eq!(result.check, "size");
+        assert_eq!(result.summary, "done");
+        assert_eq!(result.iterations, 1);
+        assert!(!result.is_exhausted);
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[tokio::test]
