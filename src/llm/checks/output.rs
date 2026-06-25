@@ -1,5 +1,10 @@
 use serde::{Deserialize, Serialize};
 
+use crate::error::PeerError;
+use crate::extract::ExtractError;
+use crate::llm::checks::CheckCommandError;
+use crate::llm::checks::runner::CheckRunError;
+use crate::llm::provider::{LlmCallError, ProviderCreationError};
 use crate::llm::result::CheckResult;
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -34,6 +39,71 @@ pub enum ErrorCode {
     LlmRequestFailed,
 }
 
+impl From<CheckCommandError> for CheckCommandErrorOutput {
+    fn from(error: CheckCommandError) -> Self {
+        let message = error.to_string();
+        let (code, is_retryable) = match error {
+            CheckCommandError::Config(error) => peer_error_classification(&error),
+            CheckCommandError::InvalidConfidence(_) => (ErrorCode::ConfigInvalid, false),
+            CheckCommandError::Provider(error) => provider_error_classification(&error),
+            CheckCommandError::Run(error) => check_run_error_classification(&error),
+        };
+
+        Self {
+            code,
+            message,
+            is_retryable,
+        }
+    }
+}
+
+impl From<Result<CheckResult, CheckCommandError>> for CheckCommandOutput {
+    fn from(result: Result<CheckResult, CheckCommandError>) -> Self {
+        match result {
+            Ok(result) => Self::success(result),
+            Err(error) => Self::error(CheckCommandErrorOutput::from(error)),
+        }
+    }
+}
+
+fn peer_error_classification(error: &PeerError) -> (ErrorCode, bool) {
+    match error {
+        PeerError::Internal { .. } => (ErrorCode::Internal, false),
+        PeerError::InvalidConfig { .. } => (ErrorCode::ConfigInvalid, false),
+        PeerError::Git(_) => (ErrorCode::GitCommandFailed, false),
+    }
+}
+
+fn provider_error_classification(error: &ProviderCreationError) -> (ErrorCode, bool) {
+    match error {
+        ProviderCreationError::Unsupported { .. } => (ErrorCode::ConfigInvalid, false),
+        ProviderCreationError::Initialization(error) => llm_error_classification(error),
+    }
+}
+
+fn check_run_error_classification(error: &CheckRunError) -> (ErrorCode, bool) {
+    match error {
+        CheckRunError::Preparation(error) => extract_error_classification(error),
+        CheckRunError::LlmCall(error) => llm_error_classification(error),
+    }
+}
+
+fn extract_error_classification(error: &ExtractError) -> (ErrorCode, bool) {
+    match error {
+        ExtractError::Git(_) => (ErrorCode::GitCommandFailed, false),
+        ExtractError::InvalidRange(_) | ExtractError::InvalidRevision(_) => {
+            (ErrorCode::InvalidArgument, false)
+        }
+    }
+}
+
+fn llm_error_classification(error: &LlmCallError) -> (ErrorCode, bool) {
+    (
+        ErrorCode::LlmRequestFailed,
+        matches!(error, LlmCallError::Transient { .. }),
+    )
+}
+
 impl CheckCommandOutput {
     #[allow(dead_code)]
     pub fn success(data: CheckResult) -> Self {
@@ -52,9 +122,17 @@ impl CheckCommandOutput {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::json;
+
     use super::*;
+    use crate::error::PeerError;
+    use crate::extract::ExtractError;
     use crate::git::CommitHash;
+    use crate::git::GitError;
+    use crate::llm::checks::CheckCommandError;
+    use crate::llm::checks::runner::CheckRunError;
     use crate::llm::confidence::Confidence;
+    use crate::llm::provider::LlmCallError;
     use crate::llm::result::{CheckTarget, CheckUsage};
 
     fn check_result() -> CheckResult {
@@ -78,26 +156,124 @@ mod tests {
 
     #[test]
     fn success_output_wraps_check_result_in_data() {
-        let value = serde_json::to_value(CheckCommandOutput::success(check_result())).unwrap();
+        let value = serde_json::to_value(CheckCommandOutput::from(Ok(check_result()))).unwrap();
 
-        assert_eq!(value["status"], "success");
-        assert_eq!(value["data"]["check"], "size");
-        assert!(value.get("error").is_none());
+        assert_eq!(
+            value,
+            json!({
+                "status": "success",
+                "data": {
+                    "check": "size",
+                    "target": "abc1234",
+                    "summary": "The commit is appropriately sized.",
+                    "findings": [],
+                    "confidence": 0.9,
+                    "iterations": 1,
+                    "is_exhausted": false,
+                    "exhaustion_reason": null,
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cost_usd": 0.001,
+                        "model": "test-model"
+                    }
+                }
+            })
+        );
     }
 
     #[test]
     fn error_output_wraps_error_payload() {
-        let value = serde_json::to_value(CheckCommandOutput::error(CheckCommandErrorOutput {
-            code: ErrorCode::LlmRequestFailed,
+        let error = CheckCommandError::Run(CheckRunError::LlmCall(LlmCallError::Transient {
             message: "request timed out".to_string(),
-            is_retryable: true,
-        }))
-        .unwrap();
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request timed out",
+            )),
+        }));
+        let value = serde_json::to_value(CheckCommandOutput::from(Err(error))).unwrap();
 
         assert_eq!(value["status"], "error");
         assert_eq!(value["error"]["code"], "llm_request_failed");
-        assert_eq!(value["error"]["message"], "request timed out");
+        assert_eq!(
+            value["error"]["message"],
+            "transient LLM call failure: request timed out"
+        );
         assert_eq!(value["error"]["is_retryable"], true);
         assert!(value.get("data").is_none());
+    }
+
+    #[test]
+    fn config_error_is_non_retryable() {
+        let error = CheckCommandError::Config(PeerError::InvalidConfig {
+            message: "invalid configuration".to_string(),
+            source: None,
+        });
+
+        let output = CheckCommandErrorOutput::from(error);
+
+        assert_eq!(output.code, ErrorCode::ConfigInvalid);
+        assert_eq!(output.message, "invalid configuration");
+        assert!(!output.is_retryable);
+    }
+
+    #[test]
+    fn transient_llm_error_is_retryable() {
+        let error = CheckCommandError::Run(CheckRunError::LlmCall(LlmCallError::Transient {
+            message: "request timed out".to_string(),
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request timed out",
+            )),
+        }));
+
+        let output = CheckCommandErrorOutput::from(error);
+
+        assert_eq!(output.code, ErrorCode::LlmRequestFailed);
+        assert_eq!(
+            output.message,
+            "transient LLM call failure: request timed out"
+        );
+        assert!(output.is_retryable);
+    }
+
+    #[test]
+    fn permanent_llm_error_is_non_retryable() {
+        let error = CheckCommandError::Run(CheckRunError::LlmCall(LlmCallError::Permanent {
+            message: "invalid API key".to_string(),
+            source: Box::new(std::io::Error::other("unauthorized")),
+        }));
+
+        let output = CheckCommandErrorOutput::from(error);
+
+        assert_eq!(output.code, ErrorCode::LlmRequestFailed);
+        assert!(!output.is_retryable);
+    }
+
+    #[test]
+    fn preparation_git_error_uses_git_error_code() {
+        let error = CheckCommandError::Run(CheckRunError::Preparation(ExtractError::Git(
+            GitError::NonZeroExit {
+                status: 128,
+                stderr: "unknown revision".to_string(),
+            },
+        )));
+
+        let output = CheckCommandErrorOutput::from(error);
+
+        assert_eq!(output.code, ErrorCode::GitCommandFailed);
+        assert!(!output.is_retryable);
+    }
+
+    #[test]
+    fn invalid_preparation_input_uses_invalid_argument_code() {
+        let error = CheckCommandError::Run(CheckRunError::Preparation(ExtractError::InvalidRange(
+            "HEAD".to_string(),
+        )));
+
+        let output = CheckCommandErrorOutput::from(error);
+
+        assert_eq!(output.code, ErrorCode::InvalidArgument);
+        assert!(!output.is_retryable);
     }
 }
