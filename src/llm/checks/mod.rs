@@ -1,3 +1,4 @@
+mod coherence;
 mod intent;
 mod quality;
 pub mod runner;
@@ -12,6 +13,7 @@ use crate::config::Config;
 use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
+use crate::llm::checks::coherence::CoherenceCheck;
 use crate::llm::checks::intent::IntentCheck;
 use crate::llm::checks::quality::QualityCheck;
 use crate::llm::checks::runner::{CheckRunConfig, CheckRunError, run_check};
@@ -97,7 +99,9 @@ pub async fn handler(
         CheckCommand::Security { revision } => {
             run_definition(SecurityCheck::new(revision), console, &config, project_root).await
         }
-        CheckCommand::Coherence { .. } => unimplemented!(),
+        CheckCommand::Coherence { range } => {
+            run_definition(CoherenceCheck::new(range), console, &config, project_root).await
+        }
     }
 }
 
@@ -144,7 +148,6 @@ pub struct PreparedCheck {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum PreparedCheckTarget {
     Commit(CommitHash),
     Range {
