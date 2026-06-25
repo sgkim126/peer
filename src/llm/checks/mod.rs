@@ -349,7 +349,7 @@ mod tests {
     use crate::git::run_git;
     use crate::llm::agent::ToolExecutionResult;
     use crate::llm::confidence::Confidence;
-    use crate::llm::provider::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
+    use crate::llm::provider::{LlmCallError, LlmCallResult, LlmResponse, RawUsage, ToolCall};
     use crate::llm::result::{Finding, Severity};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
 
@@ -596,6 +596,56 @@ mod tests {
         assert_eq!(result.iterations, 2);
         assert_eq!(tool_executor.calls(), vec![tool_call]);
         assert_eq!(provider.requests().len(), 2);
+    }
+
+    async fn run_with_provider_error(error: LlmCallError) -> CheckCommandError {
+        let repository = init_repository().await;
+        let console = Console::default();
+        let provider = MockProvider::new([Err(error)]);
+        let tool_executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let extractor = Extractor::new(repository.path().to_path_buf(), console);
+
+        run_definition_with(
+            SizeCheck::new("HEAD".to_string()),
+            console,
+            &test_config(),
+            &extractor,
+            &provider,
+            &tool_executor,
+        )
+        .await
+        .unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn propagates_transient_provider_failure() {
+        let error = run_with_provider_error(LlmCallError::Transient {
+            message: "request timed out".to_string(),
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request timed out",
+            )),
+        })
+        .await;
+
+        assert!(matches!(
+            error,
+            CheckCommandError::Run(CheckRunError::LlmCall(LlmCallError::Transient { .. }))
+        ));
+    }
+
+    #[tokio::test]
+    async fn propagates_permanent_provider_failure() {
+        let error = run_with_provider_error(LlmCallError::Permanent {
+            message: "invalid request".to_string(),
+            source: Box::new(std::io::Error::other("invalid request")),
+        })
+        .await;
+
+        assert!(matches!(
+            error,
+            CheckCommandError::Run(CheckRunError::LlmCall(LlmCallError::Permanent { .. }))
+        ));
     }
 
     #[tokio::test]
