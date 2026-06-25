@@ -114,6 +114,13 @@ impl CheckCommandOutput {
             outcome: CheckCommandOutcome::Error { error },
         }
     }
+
+    pub fn as_result(&self) -> Result<&CheckResult, &CheckCommandErrorOutput> {
+        match &self.outcome {
+            CheckCommandOutcome::Success { data } => Ok(data),
+            CheckCommandOutcome::Error { error } => Err(error),
+        }
+    }
 }
 
 #[cfg(test)]

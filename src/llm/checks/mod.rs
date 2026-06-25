@@ -6,7 +6,7 @@ pub mod runner;
 mod security;
 mod size;
 
-pub use output::CheckCommandOutput;
+pub use output::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
 
 use std::fmt;
 use std::path::PathBuf;
