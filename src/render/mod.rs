@@ -1,11 +1,17 @@
 use std::fmt;
 use std::fmt::Write;
+use std::io::IsTerminal;
 
 use crate::cli::OutputFormat;
 use crate::llm::checks::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
 use crate::llm::result::{CheckResult, CheckTarget, Finding, Severity};
+use owo_colors::Style;
 
 pub fn render(input: &str, format: OutputFormat) -> Result<String, RenderError> {
+    render_impl(input, format, std::io::stdout().is_terminal())
+}
+
+fn render_impl(input: &str, format: OutputFormat, use_color: bool) -> Result<String, RenderError> {
     let envelope: CheckCommandOutput =
         serde_json::from_str(input).map_err(RenderError::InvalidEnvelope)?;
 
@@ -13,34 +19,58 @@ pub fn render(input: &str, format: OutputFormat) -> Result<String, RenderError> 
         OutputFormat::Json => {
             serde_json::to_string_pretty(&envelope).map_err(RenderError::Serialization)
         }
-        OutputFormat::Terminal => Ok(render_terminal(&envelope)),
+        OutputFormat::Terminal => Ok(render_terminal(&envelope, use_color)),
         OutputFormat::Markdown => Ok(render_markdown(&envelope)),
     }
 }
 
-fn render_terminal(output: &CheckCommandOutput) -> String {
+fn render_terminal(output: &CheckCommandOutput, use_color: bool) -> String {
     match output.as_result() {
-        Ok(result) => render_terminal_result(result),
-        Err(error) => render_terminal_error(error),
+        Ok(result) => render_terminal_result(result, use_color),
+        Err(error) => render_terminal_error(error, use_color),
     }
 }
 
-fn render_terminal_result(result: &CheckResult) -> String {
+fn render_terminal_result(result: &CheckResult, use_color: bool) -> String {
     let mut output = String::new();
-    writeln!(output, "Check: {}", result.check).unwrap();
-    writeln!(output, "Target: {}", display_target(&result.target)).unwrap();
-    writeln!(output, "Status: {}", check_status(&result.findings)).unwrap();
+    writeln!(
+        output,
+        "{} {}",
+        terminal_label("Check:", use_color),
+        styled(&result.check, Style::new().bold(), use_color)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "{} {}",
+        terminal_label("Target:", use_color),
+        display_target(&result.target)
+    )
+    .unwrap();
+    writeln!(
+        output,
+        "{} {}",
+        terminal_label("Status:", use_color),
+        terminal_status(check_status(&result.findings), use_color)
+    )
+    .unwrap();
     writeln!(output).unwrap();
     writeln!(output, "{}", result.summary).unwrap();
 
     if result.findings.is_empty() {
         writeln!(output).unwrap();
-        writeln!(output, "Findings: none").unwrap();
+        writeln!(
+            output,
+            "{} {}",
+            terminal_label("Findings:", use_color),
+            styled("none", Style::new().green(), use_color)
+        )
+        .unwrap();
     } else {
         writeln!(output).unwrap();
-        writeln!(output, "Findings:").unwrap();
+        writeln!(output, "{}", terminal_label("Findings:", use_color)).unwrap();
         for finding in &result.findings {
-            writeln!(output, "- {}", display_finding(finding)).unwrap();
+            writeln!(output, "- {}", display_terminal_finding(finding, use_color)).unwrap();
         }
     }
 
@@ -48,7 +78,8 @@ fn render_terminal_result(result: &CheckResult) -> String {
         writeln!(output).unwrap();
         writeln!(
             output,
-            "Warning: agent loop exhausted ({})",
+            "{} agent loop exhausted ({})",
+            styled("Warning:", Style::new().yellow().bold(), use_color),
             result
                 .exhaustion_reason
                 .as_deref()
@@ -60,14 +91,17 @@ fn render_terminal_result(result: &CheckResult) -> String {
     writeln!(output).unwrap();
     writeln!(
         output,
-        "Confidence: {:.0}% | Iterations: {}",
+        "{} {:.0}% | {} {}",
+        terminal_label("Confidence:", use_color),
         result.confidence.as_f64() * 100.0,
+        terminal_label("Iterations:", use_color),
         result.iterations
     )
     .unwrap();
     write!(
         output,
-        "Usage: {} input, {} output, ${:.6} ({})",
+        "{} {} input, {} output, ${:.6} ({})",
+        terminal_label("Usage:", use_color),
         result.usage.input_tokens,
         result.usage.output_tokens,
         result.usage.cost_usd,
@@ -78,8 +112,17 @@ fn render_terminal_result(result: &CheckResult) -> String {
     output
 }
 
-fn render_terminal_error(error: &CheckCommandErrorOutput) -> String {
-    format!("error: {} — {}", error_code_name(error.code), error.message)
+fn render_terminal_error(error: &CheckCommandErrorOutput, use_color: bool) -> String {
+    format!(
+        "{} {} — {}",
+        styled("error:", Style::new().red().bold(), use_color),
+        styled(
+            error_code_name(error.code),
+            Style::new().red().bold(),
+            use_color
+        ),
+        error.message
+    )
 }
 
 fn render_markdown(output: &CheckCommandOutput) -> String {
@@ -187,7 +230,7 @@ fn check_status(findings: &[Finding]) -> &'static str {
     }
 }
 
-fn display_finding(finding: &Finding) -> String {
+fn display_terminal_finding(finding: &Finding, use_color: bool) -> String {
     let location = finding.location.as_ref().map(|location| {
         if let Some(line) = location.line {
             format!("{}:{line}", location.file)
@@ -201,10 +244,44 @@ fn display_finding(finding: &Finding) -> String {
     };
 
     format!(
-        "[{}] {} ({context})",
-        severity_name(finding.severity),
-        finding.message
+        "[{}] {} ({})",
+        terminal_severity(finding.severity, use_color),
+        finding.message,
+        styled(context, Style::new().dimmed(), use_color)
     )
+}
+
+fn terminal_label(label: &str, use_color: bool) -> String {
+    styled(label, Style::new().bright_blue().bold(), use_color)
+}
+
+fn terminal_status(status: &str, use_color: bool) -> String {
+    let style = match status {
+        "ok" => Style::new().green().bold(),
+        "warning" => Style::new().yellow().bold(),
+        "issue" => Style::new().red().bold(),
+        _ => Style::new().bold(),
+    };
+    styled(status, style, use_color)
+}
+
+fn terminal_severity(severity: Severity, use_color: bool) -> String {
+    let style = match severity {
+        Severity::Info => Style::new().cyan(),
+        Severity::Low => Style::new().blue(),
+        Severity::Medium => Style::new().yellow(),
+        Severity::High => Style::new().red(),
+        Severity::Critical => Style::new().bright_red().bold(),
+    };
+    styled(severity_name(severity), style, use_color)
+}
+
+fn styled(value: impl fmt::Display, style: Style, use_color: bool) -> String {
+    if use_color {
+        style.style(value).to_string()
+    } else {
+        value.to_string()
+    }
 }
 
 fn severity_name(severity: Severity) -> &'static str {
@@ -311,7 +388,7 @@ mod tests {
     fn renders_successful_check_for_terminal() {
         let input = success_envelope_with_finding().to_string();
 
-        let rendered = render(&input, OutputFormat::Terminal).unwrap();
+        let rendered = render_impl(&input, OutputFormat::Terminal, false).unwrap();
 
         assert_eq!(
             rendered,
@@ -331,8 +408,36 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
     }
 
     #[test]
+    fn styles_terminal_output_when_color_is_enabled() {
+        let envelope: CheckCommandOutput =
+            serde_json::from_value(success_envelope_with_finding()).unwrap();
+
+        let rendered = render_terminal(&envelope, true);
+
+        assert!(rendered.contains("\u{1b}["));
+        assert!(rendered.contains("Check:"));
+        assert!(rendered.contains("issue"));
+        assert!(rendered.contains("critical"));
+    }
+
+    #[test]
+    fn omits_ansi_codes_when_color_is_disabled() {
+        let envelope: CheckCommandOutput =
+            serde_json::from_value(success_envelope_with_finding()).unwrap();
+
+        let rendered = render_terminal(&envelope, false);
+
+        assert!(!rendered.contains("\u{1b}["));
+    }
+
+    #[test]
     fn renders_check_without_findings_for_terminal() {
-        let rendered = render(&success_envelope().to_string(), OutputFormat::Terminal).unwrap();
+        let rendered = render_impl(
+            &success_envelope().to_string(),
+            OutputFormat::Terminal,
+            false,
+        )
+        .unwrap();
 
         assert!(rendered.contains("Status: ok"));
         assert!(rendered.contains("Findings: none"));
@@ -344,7 +449,7 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
         envelope["data"]["is_exhausted"] = json!(true);
         envelope["data"]["exhaustion_reason"] = json!("max_iterations");
 
-        let rendered = render(&envelope.to_string(), OutputFormat::Terminal).unwrap();
+        let rendered = render_impl(&envelope.to_string(), OutputFormat::Terminal, false).unwrap();
 
         assert!(rendered.contains("Warning: agent loop exhausted (max_iterations)"));
     }
@@ -360,7 +465,7 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
             }
         });
 
-        let rendered = render(&envelope.to_string(), OutputFormat::Terminal).unwrap();
+        let rendered = render_impl(&envelope.to_string(), OutputFormat::Terminal, false).unwrap();
 
         assert_eq!(rendered, "error: config_invalid — invalid config");
     }
