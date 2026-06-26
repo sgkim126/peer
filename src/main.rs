@@ -124,7 +124,7 @@ async fn main() -> ExitCode {
             };
             let result = match discover(&cwd) {
                 Ok((config, project_root)) => {
-                    llm::checks::handler(console, command, config, project_root).await
+                    llm::checks::handler(console, command, &config, project_root).await
                 }
                 Err(error) => Err(CheckCommandError::from(error)),
             };

@@ -89,24 +89,24 @@ impl std::error::Error for CheckCommandError {
 pub async fn handler(
     console: Console,
     command: CheckCommand,
-    config: Config,
+    config: &Config,
     project_root: PathBuf,
 ) -> Result<CheckResult, CheckCommandError> {
     match command {
         CheckCommand::Size { revision } => {
-            run_definition(SizeCheck::new(revision), console, &config, project_root).await
+            run_definition(SizeCheck::new(revision), console, config, project_root).await
         }
         CheckCommand::Intent { revision } => {
-            run_definition(IntentCheck::new(revision), console, &config, project_root).await
+            run_definition(IntentCheck::new(revision), console, config, project_root).await
         }
         CheckCommand::Quality { revision } => {
-            run_definition(QualityCheck::new(revision), console, &config, project_root).await
+            run_definition(QualityCheck::new(revision), console, config, project_root).await
         }
         CheckCommand::Security { revision } => {
-            run_definition(SecurityCheck::new(revision), console, &config, project_root).await
+            run_definition(SecurityCheck::new(revision), console, config, project_root).await
         }
         CheckCommand::Coherence { range } => {
-            run_definition(CoherenceCheck::new(range), console, &config, project_root).await
+            run_definition(CoherenceCheck::new(range), console, config, project_root).await
         }
     }
 }
