@@ -81,19 +81,21 @@ async fn main() -> ExitCode {
             let plan = review::plan_checks(&review_target);
             console.debug(format!("{plan:?}"));
 
-            let result = match review::run(plan, console, &config, project_root).await {
-                Ok(result) => result,
-                Err(err) => {
-                    eprintln!("error: {err}");
-                    console.debug(format!("{err:?}"));
-                    return ExitCode::FAILURE;
-                }
-            };
+            let result = review::run(plan, console, &config, project_root).await;
+            for error in &result.errors {
+                eprintln!("error: {error}");
+                console.debug(format!("{error:?}"));
+            }
+
             let rendered = render::render_review_result(&result, format, console);
             match rendered {
                 Ok(rendered) => {
                     println!("{rendered}");
-                    ExitCode::SUCCESS
+                    if result.errors.is_empty() {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
                 }
                 Err(err) => {
                     eprintln!("failed to render review output: {err}");

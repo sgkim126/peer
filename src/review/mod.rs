@@ -24,9 +24,18 @@ pub struct ReviewPlan {
     pub checks: Vec<ReviewCheck>,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ReviewResult {
     pub checks: Vec<CheckResult>,
+
+    #[serde(skip, default)]
+    pub errors: Vec<ReviewCheckError>,
+}
+
+#[derive(Debug)]
+pub struct ReviewCheckError {
+    pub check: ReviewCheck,
+    pub error: CheckCommandError,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,6 +56,30 @@ impl From<ReviewCheck> for CheckCommand {
             ReviewCheck::Security { revision } => Self::Security { revision },
             ReviewCheck::Coherence { range } => Self::Coherence { range },
         }
+    }
+}
+
+impl fmt::Display for ReviewCheck {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Size { revision } => write!(f, "size {revision}"),
+            Self::Intent { revision } => write!(f, "intent {revision}"),
+            Self::Quality { revision } => write!(f, "quality {revision}"),
+            Self::Security { revision } => write!(f, "security {revision}"),
+            Self::Coherence { range } => write!(f, "coherence {range}"),
+        }
+    }
+}
+
+impl fmt::Display for ReviewCheckError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} failed: {}", self.check, self.error)
+    }
+}
+
+impl std::error::Error for ReviewCheckError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
     }
 }
 
@@ -89,15 +122,22 @@ pub async fn run(
     console: Console,
     config: &Config,
     project_root: PathBuf,
-) -> Result<ReviewResult, CheckCommandError> {
+) -> ReviewResult {
     let mut results = Vec::with_capacity(plan.checks.len());
+    let mut errors = Vec::new();
 
     for check in plan.checks {
-        let command = CheckCommand::from(check);
-        results.push(checks::handler(console, command, config, project_root.clone()).await?);
+        let command = CheckCommand::from(check.clone());
+        match checks::handler(console, command, config, project_root.clone()).await {
+            Ok(result) => results.push(result),
+            Err(error) => errors.push(ReviewCheckError { check, error }),
+        }
     }
 
-    Ok(ReviewResult { checks: results })
+    ReviewResult {
+        checks: results,
+        errors,
+    }
 }
 
 pub async fn resolve_target(
@@ -574,6 +614,7 @@ mod tests {
 
         let result = ReviewResult {
             checks: vec![check.clone()],
+            errors: Default::default(),
         };
 
         assert_eq!(result.checks, vec![check]);
@@ -583,6 +624,7 @@ mod tests {
     fn serializes_review_result() {
         let result = ReviewResult {
             checks: vec![check_result()],
+            errors: Default::default(),
         };
 
         let value = serde_json::to_value(result).unwrap();

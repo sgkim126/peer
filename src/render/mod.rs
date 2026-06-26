@@ -507,6 +507,7 @@ mod tests {
 
         ReviewResult {
             checks: vec![size, intent],
+            errors: Default::default(),
         }
     }
 
