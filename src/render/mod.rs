@@ -24,9 +24,7 @@ fn render_check_output_impl(
     use_color: bool,
 ) -> Result<String, RenderError> {
     match format {
-        OutputFormat::Json => {
-            serde_json::to_string_pretty(output).map_err(RenderError::Serialization)
-        }
+        OutputFormat::Json => render_json(output),
         OutputFormat::Terminal => Ok(render_terminal(output, use_color)),
         OutputFormat::Markdown => Ok(render_markdown(output)),
     }
@@ -53,6 +51,11 @@ fn render_check_result_impl(
         OutputFormat::Terminal => Ok(render_terminal_result(result, use_color)),
         OutputFormat::Markdown => Ok(render_markdown_result(result)),
     }
+}
+
+fn render_json(output: &CheckCommandOutput) -> Result<String, RenderError> {
+    let value = serde_json::to_value(output).map_err(RenderError::Serialization)?;
+    serde_json::to_string_pretty(&value).map_err(RenderError::Serialization)
 }
 
 fn render_terminal(output: &CheckCommandOutput, use_color: bool) -> String {
