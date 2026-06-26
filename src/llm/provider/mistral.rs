@@ -161,6 +161,7 @@ impl MistralRequestBuilder {
                 "messages": messages(request.conversation)?,
                 "tools": tools(request.tools, request.output_schema),
                 "tool_choice": "auto",
+                "response_format": { "type": "json_object" },
             }),
         })
     }
@@ -484,6 +485,10 @@ mod tests {
         );
         assert_eq!(http.body["tools"][1]["function"]["parameters"], schema);
         assert_eq!(http.body["tool_choice"], "auto");
+        assert_eq!(
+            http.body["response_format"],
+            json!({ "type": "json_object" })
+        );
     }
 
     #[test]
