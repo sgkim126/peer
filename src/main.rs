@@ -38,7 +38,7 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Command::Review { target, format: _ } => {
+        Command::Review { target, format } => {
             let cwd = match std::env::current_dir() {
                 Ok(cwd) => cwd,
                 Err(err) => {
@@ -81,7 +81,30 @@ async fn main() -> ExitCode {
             let plan = review::plan_checks(&review_target);
             console.debug(format!("{plan:?}"));
 
-            unimplemented!()
+            let result = match review::run(plan, console, &config, project_root).await {
+                Ok(result) => result,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let rendered = result
+                .checks
+                .iter()
+                .map(|check| render::render_check_result(check, format))
+                .collect::<Result<Vec<_>, _>>();
+            match rendered {
+                Ok(rendered) => {
+                    println!("{}", rendered.join("\n\n"));
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("failed to render review output: {err}");
+                    console.debug(format!("{err:?}"));
+                    ExitCode::FAILURE
+                }
+            }
         }
         Command::Extract { command } => {
             let cwd = match std::env::current_dir() {

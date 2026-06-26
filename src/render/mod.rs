@@ -32,7 +32,6 @@ fn render_check_output_impl(
     }
 }
 
-#[allow(dead_code)]
 pub fn render_check_result(
     result: &CheckResult,
     format: OutputFormat,

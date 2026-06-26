@@ -84,7 +84,6 @@ fn append_commit_checks(checks: &mut Vec<ReviewCheck>, commit: &CommitHash) {
     checks.push(ReviewCheck::Security { revision });
 }
 
-#[allow(dead_code)]
 pub async fn run(
     plan: ReviewPlan,
     console: Console,
