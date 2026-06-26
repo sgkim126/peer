@@ -15,12 +15,44 @@ fn render_impl(input: &str, format: OutputFormat, use_color: bool) -> Result<Str
     let envelope: CheckCommandOutput =
         serde_json::from_str(input).map_err(RenderError::InvalidEnvelope)?;
 
+    render_check_output_impl(&envelope, format, use_color)
+}
+
+fn render_check_output_impl(
+    output: &CheckCommandOutput,
+    format: OutputFormat,
+    use_color: bool,
+) -> Result<String, RenderError> {
     match format {
         OutputFormat::Json => {
-            serde_json::to_string_pretty(&envelope).map_err(RenderError::Serialization)
+            serde_json::to_string_pretty(output).map_err(RenderError::Serialization)
         }
-        OutputFormat::Terminal => Ok(render_terminal(&envelope, use_color)),
-        OutputFormat::Markdown => Ok(render_markdown(&envelope)),
+        OutputFormat::Terminal => Ok(render_terminal(output, use_color)),
+        OutputFormat::Markdown => Ok(render_markdown(output)),
+    }
+}
+
+#[allow(dead_code)]
+pub fn render_check_result(
+    result: &CheckResult,
+    format: OutputFormat,
+) -> Result<String, RenderError> {
+    render_check_result_impl(result, format, std::io::stdout().is_terminal())
+}
+
+fn render_check_result_impl(
+    result: &CheckResult,
+    format: OutputFormat,
+    use_color: bool,
+) -> Result<String, RenderError> {
+    match format {
+        OutputFormat::Json => render_check_output_impl(
+            &CheckCommandOutput::success(result.clone()),
+            OutputFormat::Json,
+            use_color,
+        ),
+        OutputFormat::Terminal => Ok(render_terminal_result(result, use_color)),
+        OutputFormat::Markdown => Ok(render_markdown_result(result)),
     }
 }
 
@@ -371,6 +403,14 @@ mod tests {
         envelope
     }
 
+    fn success_result() -> CheckResult {
+        serde_json::from_value(success_envelope()["data"].clone()).unwrap()
+    }
+
+    fn success_result_with_finding() -> CheckResult {
+        serde_json::from_value(success_envelope_with_finding()["data"].clone()).unwrap()
+    }
+
     #[test]
     fn renders_check_envelope_as_pretty_json() {
         let input = serde_json::to_string(&success_envelope()).unwrap();
@@ -405,6 +445,27 @@ Findings:
 Confidence: 85% | Iterations: 2
 Usage: 100 input, 20 output, $0.001000 (test-model)"
         );
+    }
+
+    #[test]
+    fn renders_check_result_for_terminal() {
+        let result = success_result_with_finding();
+
+        let rendered = render_check_result_impl(&result, OutputFormat::Terminal, false).unwrap();
+
+        assert!(rendered.contains("Check: size"));
+        assert!(rendered.contains("Status: issue"));
+        assert!(rendered.contains("User input reaches a shell command."));
+    }
+
+    #[test]
+    fn renders_check_result_as_pretty_json_envelope() {
+        let result = success_result();
+
+        let rendered = render_check_result(&result, OutputFormat::Json).unwrap();
+        let value: Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(value, success_envelope());
     }
 
     #[test]
@@ -498,6 +559,17 @@ A critical issue was found.
 - **Iterations:** 2
 - **Usage:** 100 input, 20 output, $0.001000 (test-model)"
         );
+    }
+
+    #[test]
+    fn renders_check_result_for_markdown() {
+        let result = success_result_with_finding();
+
+        let rendered = render_check_result(&result, OutputFormat::Markdown).unwrap();
+
+        assert!(rendered.contains("## Check: size"));
+        assert!(rendered.contains("- **Status:** issue"));
+        assert!(rendered.contains("**critical**"));
     }
 
     #[test]
