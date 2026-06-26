@@ -127,6 +127,7 @@ where
         &provider_config.name,
         &provider_config.api_key_env,
         provider_config.base_url.as_deref(),
+        console,
     )?;
     let extractor = Extractor::new(project_root.clone(), console);
     let tool_executor = PeerToolExecutor::new(Extractor::new(project_root, console));

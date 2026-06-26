@@ -5,6 +5,8 @@ mod response;
 
 use std::fmt;
 
+use crate::console::Console;
+
 pub use error::LlmCallError;
 pub use request::{ConversationTurn, LlmRequest, ToolSpec};
 pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
@@ -29,11 +31,13 @@ pub fn create_provider(
     name: &str,
     api_key_env: &str,
     base_url: Option<&str>,
+    console: Console,
 ) -> Result<impl LlmProvider, ProviderCreationError> {
     match name {
-        "mistral" => {
-            Ok(mistral::MistralProvider::from_env(api_key_env, base_url).map(Provider::Mistral)?)
-        }
+        "mistral" => Ok(
+            mistral::MistralProvider::from_env(api_key_env, base_url, console)
+                .map(Provider::Mistral)?,
+        ),
         _ => Err(ProviderCreationError::Unsupported {
             name: name.to_string(),
         }),
@@ -76,7 +80,8 @@ mod tests {
 
     #[test]
     fn factory_rejects_unsupported_provider() {
-        let Err(error) = create_provider("unknown", "UNUSED_API_KEY", None) else {
+        let Err(error) = create_provider("unknown", "UNUSED_API_KEY", None, Console::default())
+        else {
             panic!("expected unsupported provider error");
         };
 
@@ -90,7 +95,7 @@ mod tests {
     fn factory_supports_mistral_provider() {
         let name = "PEER_TEST_MISSING_MISTRAL_FACTORY_API_KEY_7A2C9D4E1B";
 
-        let Err(error) = create_provider("mistral", name, None) else {
+        let Err(error) = create_provider("mistral", name, None, Console::default()) else {
             panic!("expected provider initialization error");
         };
 

@@ -6,6 +6,7 @@ use super::{
     ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, LlmResponse, RawUsage,
     ToolCall, ToolSpec,
 };
+use crate::console::Console;
 use crate::llm::result::CheckOutput;
 use crate::secret::Secret;
 
@@ -26,6 +27,7 @@ pub struct MistralHttpRequest {
 pub struct MistralProvider {
     client: reqwest::Client,
     request_builder: MistralRequestBuilder,
+    console: Console,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,7 +38,11 @@ const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";
 const DEFAULT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
 impl MistralProvider {
-    pub fn from_env(api_key_env: &str, base_url: Option<&str>) -> Result<Self, LlmCallError> {
+    pub fn from_env(
+        api_key_env: &str,
+        base_url: Option<&str>,
+        console: Console,
+    ) -> Result<Self, LlmCallError> {
         let request_builder = MistralRequestBuilder::from_env(api_key_env, base_url)?;
         let client = reqwest::Client::builder()
             .timeout(DEFAULT_TIMEOUT)
@@ -49,6 +55,7 @@ impl MistralProvider {
         Ok(Self {
             client,
             request_builder,
+            console,
         })
     }
 }
@@ -56,6 +63,8 @@ impl MistralProvider {
 impl LlmProvider for MistralProvider {
     async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
         let http = self.request_builder.build(request)?;
+        self.console
+            .debug(format_json_debug("mistral request", &http.body));
         let response = self
             .client
             .post(&http.url)
@@ -66,19 +75,36 @@ impl LlmProvider for MistralProvider {
             .map_err(map_transport_error)?;
 
         let status = response.status();
-        let body = response
-            .json::<serde_json::Value>()
+        self.console
+            .debug(format!("mistral response status={}", status.as_u16()));
+        let body_text = response
+            .text()
             .await
             .map_err(|error| LlmCallError::Permanent {
-                message: "failed to parse Mistral response JSON".to_string(),
+                message: "failed to read Mistral response body".to_string(),
                 source: Box::new(error),
             })?;
+        self.console
+            .debug(format!("mistral response body\n{body_text}"));
+        let body = serde_json::from_str::<serde_json::Value>(&body_text).map_err(|error| {
+            LlmCallError::Permanent {
+                message: "failed to parse Mistral response JSON".to_string(),
+                source: Box::new(error),
+            }
+        })?;
 
         if status.is_success() {
             MistralResponseParser::parse_success(&body)
         } else {
             Err(MistralResponseParser::parse_error(status.as_u16(), &body))
         }
+    }
+}
+
+fn format_json_debug(label: &str, value: &serde_json::Value) -> String {
+    match serde_json::to_string_pretty(value) {
+        Ok(json) => format!("{label}\n{json}"),
+        Err(error) => format!("{label} <failed to serialize JSON: {error}>"),
     }
 }
 
@@ -499,7 +525,7 @@ mod tests {
     fn provider_from_env_fails_when_api_key_is_missing() {
         let name = "PEER_TEST_MISSING_MISTRAL_PROVIDER_API_KEY_92F4A1C8D3";
 
-        let error = MistralProvider::from_env(name, None).unwrap_err();
+        let error = MistralProvider::from_env(name, None, Console::default()).unwrap_err();
 
         assert!(matches!(error, LlmCallError::Permanent { .. }));
         assert!(error.to_string().contains(name));
