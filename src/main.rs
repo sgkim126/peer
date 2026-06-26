@@ -38,7 +38,48 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Command::Review { .. } => unimplemented!(),
+        Command::Review { target, format: _ } => {
+            let cwd = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(err) => {
+                    eprintln!("cannot determine current directory.");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let (config, project_root) = match discover(&cwd) {
+                Ok((config, project_root)) => (config, project_root),
+                Err(err) => {
+                    eprintln!("{err}");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+
+            let review_target = match review::resolve_target(&target, &project_root, console).await
+            {
+                Ok(target) => target,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(err) = review::validate_target(
+                &review_target,
+                config.review.max_commits,
+                &project_root,
+                console,
+            )
+            .await
+            {
+                eprintln!("error: {err}");
+                console.debug(format!("{err:?}"));
+                return ExitCode::FAILURE;
+            }
+
+            unimplemented!()
+        }
         Command::Extract { command } => {
             let cwd = match std::env::current_dir() {
                 Ok(cwd) => cwd,

@@ -13,7 +13,6 @@ pub enum ReviewTarget {
     },
 }
 
-#[allow(dead_code)]
 pub async fn resolve_target(
     target: &str,
     project_root: &Path,
@@ -51,7 +50,6 @@ pub async fn resolve_target(
     })
 }
 
-#[allow(dead_code)]
 pub async fn validate_target(
     target: &ReviewTarget,
     max_commits: u32,
