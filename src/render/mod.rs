@@ -3,26 +3,35 @@ use std::fmt::Write;
 use std::io::IsTerminal;
 
 use crate::cli::OutputFormat;
+use crate::console::Console;
 use crate::llm::checks::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
 use crate::llm::result::{CheckResult, CheckTarget, Finding, Severity};
 use owo_colors::Style;
 
-pub fn render(input: &str, format: OutputFormat) -> Result<String, RenderError> {
-    render_impl(input, format, std::io::stdout().is_terminal())
+pub fn render(input: &str, format: OutputFormat, console: Console) -> Result<String, RenderError> {
+    render_impl(input, format, console, std::io::stdout().is_terminal())
 }
 
-fn render_impl(input: &str, format: OutputFormat, use_color: bool) -> Result<String, RenderError> {
+fn render_impl(
+    input: &str,
+    format: OutputFormat,
+    console: Console,
+    use_color: bool,
+) -> Result<String, RenderError> {
     let envelope: CheckCommandOutput =
         serde_json::from_str(input).map_err(RenderError::InvalidEnvelope)?;
 
-    render_check_output_impl(&envelope, format, use_color)
+    render_check_output_impl(&envelope, format, console, use_color)
 }
 
 fn render_check_output_impl(
     output: &CheckCommandOutput,
     format: OutputFormat,
+    console: Console,
     use_color: bool,
 ) -> Result<String, RenderError> {
+    log_usage(output, console);
+
     match format {
         OutputFormat::Json => render_json(output),
         OutputFormat::Terminal => Ok(render_terminal(output, use_color)),
@@ -30,32 +39,75 @@ fn render_check_output_impl(
     }
 }
 
+pub fn render_check_output(
+    output: &CheckCommandOutput,
+    format: OutputFormat,
+    console: Console,
+) -> Result<String, RenderError> {
+    render_check_output_impl(output, format, console, std::io::stdout().is_terminal())
+}
+
 pub fn render_check_result(
     result: &CheckResult,
     format: OutputFormat,
+    console: Console,
 ) -> Result<String, RenderError> {
-    render_check_result_impl(result, format, std::io::stdout().is_terminal())
+    render_check_result_impl(result, format, console, std::io::stdout().is_terminal())
 }
 
 fn render_check_result_impl(
     result: &CheckResult,
     format: OutputFormat,
+    console: Console,
     use_color: bool,
 ) -> Result<String, RenderError> {
     match format {
         OutputFormat::Json => render_check_output_impl(
             &CheckCommandOutput::success(result.clone()),
             OutputFormat::Json,
+            console,
             use_color,
         ),
-        OutputFormat::Terminal => Ok(render_terminal_result(result, use_color)),
-        OutputFormat::Markdown => Ok(render_markdown_result(result)),
+        OutputFormat::Terminal => {
+            log_result_usage(result, console);
+            Ok(render_terminal_result(result, use_color))
+        }
+        OutputFormat::Markdown => {
+            log_result_usage(result, console);
+            Ok(render_markdown_result(result))
+        }
     }
 }
 
 fn render_json(output: &CheckCommandOutput) -> Result<String, RenderError> {
-    let value = serde_json::to_value(output).map_err(RenderError::Serialization)?;
+    let mut value = serde_json::to_value(output).map_err(RenderError::Serialization)?;
+    remove_usage(&mut value);
     serde_json::to_string_pretty(&value).map_err(RenderError::Serialization)
+}
+
+fn remove_usage(value: &mut serde_json::Value) {
+    if let Some(data) = value
+        .get_mut("data")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        data.remove("usage");
+    }
+}
+
+fn log_usage(output: &CheckCommandOutput, console: Console) {
+    if let Ok(result) = output.as_result() {
+        log_result_usage(result, console);
+    }
+}
+
+fn log_result_usage(result: &CheckResult, console: Console) {
+    console.verbose(format!(
+        "Usage: {} input, {} output, ${:.6} ({})",
+        result.usage.input_tokens,
+        result.usage.output_tokens,
+        result.usage.cost_usd,
+        result.usage.model
+    ));
 }
 
 fn render_terminal(output: &CheckCommandOutput, use_color: bool) -> String {
@@ -123,23 +175,13 @@ fn render_terminal_result(result: &CheckResult, use_color: bool) -> String {
     }
 
     writeln!(output).unwrap();
-    writeln!(
+    write!(
         output,
         "{} {:.0}% | {} {}",
         terminal_label("Confidence:", use_color),
         result.confidence.as_f64() * 100.0,
         terminal_label("Iterations:", use_color),
         result.iterations
-    )
-    .unwrap();
-    write!(
-        output,
-        "{} {} input, {} output, ${:.6} ({})",
-        terminal_label("Usage:", use_color),
-        result.usage.input_tokens,
-        result.usage.output_tokens,
-        result.usage.cost_usd,
-        result.usage.model
     )
     .unwrap();
 
@@ -210,15 +252,6 @@ fn render_markdown_result(result: &CheckResult) -> String {
     )
     .unwrap();
     writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
-    writeln!(
-        output,
-        "- **Usage:** {} input, {} output, ${:.6} ({})",
-        result.usage.input_tokens,
-        result.usage.output_tokens,
-        result.usage.cost_usd,
-        result.usage.model
-    )
-    .unwrap();
 
     output.trim_end().to_string()
 }
@@ -405,6 +438,12 @@ mod tests {
         envelope
     }
 
+    fn success_envelope_without_usage() -> Value {
+        let mut envelope = success_envelope();
+        envelope["data"].as_object_mut().unwrap().remove("usage");
+        envelope
+    }
+
     fn success_result() -> CheckResult {
         serde_json::from_value(success_envelope()["data"].clone()).unwrap()
     }
@@ -413,16 +452,20 @@ mod tests {
         serde_json::from_value(success_envelope_with_finding()["data"].clone()).unwrap()
     }
 
+    fn console() -> Console {
+        Console::default()
+    }
+
     #[test]
     fn renders_check_envelope_as_pretty_json() {
         let input = serde_json::to_string(&success_envelope()).unwrap();
 
-        let rendered = render(&input, OutputFormat::Json).unwrap();
+        let rendered = render(&input, OutputFormat::Json, console()).unwrap();
 
         assert!(rendered.contains('\n'));
         assert_eq!(
             serde_json::from_str::<Value>(&rendered).unwrap(),
-            success_envelope()
+            success_envelope_without_usage()
         );
     }
 
@@ -430,7 +473,7 @@ mod tests {
     fn renders_successful_check_for_terminal() {
         let input = success_envelope_with_finding().to_string();
 
-        let rendered = render_impl(&input, OutputFormat::Terminal, false).unwrap();
+        let rendered = render_impl(&input, OutputFormat::Terminal, console(), false).unwrap();
 
         assert_eq!(
             rendered,
@@ -444,16 +487,26 @@ A critical issue was found.
 Findings:
 - [critical] User input reaches a shell command. (abc1234 src/main.rs:42)
 
-Confidence: 85% | Iterations: 2
-Usage: 100 input, 20 output, $0.001000 (test-model)"
+Confidence: 85% | Iterations: 2"
         );
+    }
+
+    #[test]
+    fn omits_usage_from_terminal_output() {
+        let input = success_envelope_with_finding().to_string();
+
+        let rendered = render_impl(&input, OutputFormat::Terminal, console(), false).unwrap();
+
+        assert!(!rendered.contains("Usage:"));
+        assert!(!rendered.contains("test-model"));
     }
 
     #[test]
     fn renders_check_result_for_terminal() {
         let result = success_result_with_finding();
 
-        let rendered = render_check_result_impl(&result, OutputFormat::Terminal, false).unwrap();
+        let rendered =
+            render_check_result_impl(&result, OutputFormat::Terminal, console(), false).unwrap();
 
         assert!(rendered.contains("Check: size"));
         assert!(rendered.contains("Status: issue"));
@@ -464,10 +517,10 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
     fn renders_check_result_as_pretty_json_envelope() {
         let result = success_result();
 
-        let rendered = render_check_result(&result, OutputFormat::Json).unwrap();
+        let rendered = render_check_result(&result, OutputFormat::Json, console()).unwrap();
         let value: Value = serde_json::from_str(&rendered).unwrap();
 
-        assert_eq!(value, success_envelope());
+        assert_eq!(value, success_envelope_without_usage());
     }
 
     #[test]
@@ -498,6 +551,7 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
         let rendered = render_impl(
             &success_envelope().to_string(),
             OutputFormat::Terminal,
+            console(),
             false,
         )
         .unwrap();
@@ -512,7 +566,13 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
         envelope["data"]["is_exhausted"] = json!(true);
         envelope["data"]["exhaustion_reason"] = json!("max_iterations");
 
-        let rendered = render_impl(&envelope.to_string(), OutputFormat::Terminal, false).unwrap();
+        let rendered = render_impl(
+            &envelope.to_string(),
+            OutputFormat::Terminal,
+            console(),
+            false,
+        )
+        .unwrap();
 
         assert!(rendered.contains("Warning: agent loop exhausted (max_iterations)"));
     }
@@ -528,7 +588,13 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
             }
         });
 
-        let rendered = render_impl(&envelope.to_string(), OutputFormat::Terminal, false).unwrap();
+        let rendered = render_impl(
+            &envelope.to_string(),
+            OutputFormat::Terminal,
+            console(),
+            false,
+        )
+        .unwrap();
 
         assert_eq!(rendered, "error: config_invalid — invalid config");
     }
@@ -538,6 +604,7 @@ Usage: 100 input, 20 output, $0.001000 (test-model)"
         let rendered = render(
             &success_envelope_with_finding().to_string(),
             OutputFormat::Markdown,
+            console(),
         )
         .unwrap();
 
@@ -558,8 +625,7 @@ A critical issue was found.
 ### Metadata
 
 - **Confidence:** 85%
-- **Iterations:** 2
-- **Usage:** 100 input, 20 output, $0.001000 (test-model)"
+- **Iterations:** 2"
         );
     }
 
@@ -567,7 +633,7 @@ A critical issue was found.
     fn renders_check_result_for_markdown() {
         let result = success_result_with_finding();
 
-        let rendered = render_check_result(&result, OutputFormat::Markdown).unwrap();
+        let rendered = render_check_result(&result, OutputFormat::Markdown, console()).unwrap();
 
         assert!(rendered.contains("## Check: size"));
         assert!(rendered.contains("- **Status:** issue"));
@@ -580,7 +646,7 @@ A critical issue was found.
         envelope["data"]["is_exhausted"] = json!(true);
         envelope["data"]["exhaustion_reason"] = json!("max_iterations");
 
-        let rendered = render(&envelope.to_string(), OutputFormat::Markdown).unwrap();
+        let rendered = render(&envelope.to_string(), OutputFormat::Markdown, console()).unwrap();
 
         assert!(rendered.contains("> [!WARNING]\n> Agent loop exhausted: `max_iterations`"));
     }
@@ -596,14 +662,14 @@ A critical issue was found.
             }
         });
 
-        let rendered = render(&envelope.to_string(), OutputFormat::Markdown).unwrap();
+        let rendered = render(&envelope.to_string(), OutputFormat::Markdown, console()).unwrap();
 
         assert_eq!(rendered, "> [!CAUTION]\n> `config_invalid`: invalid config");
     }
 
     #[test]
     fn rejects_malformed_json() {
-        let error = render("{", OutputFormat::Json).unwrap_err();
+        let error = render("{", OutputFormat::Json, console()).unwrap_err();
 
         assert!(matches!(error, RenderError::InvalidEnvelope(_)));
     }
@@ -614,7 +680,7 @@ A critical issue was found.
             "data": success_envelope()["data"]
         });
 
-        let error = render(&input.to_string(), OutputFormat::Json).unwrap_err();
+        let error = render(&input.to_string(), OutputFormat::Json, console()).unwrap_err();
 
         assert!(matches!(error, RenderError::InvalidEnvelope(_)));
     }
@@ -626,7 +692,7 @@ A critical issue was found.
             "data": {}
         });
 
-        let error = render(&input.to_string(), OutputFormat::Json).unwrap_err();
+        let error = render(&input.to_string(), OutputFormat::Json, console()).unwrap_err();
 
         assert!(matches!(error, RenderError::InvalidEnvelope(_)));
     }

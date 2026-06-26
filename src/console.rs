@@ -16,7 +16,6 @@ impl Console {
         }
     }
 
-    #[allow(dead_code)]
     pub fn verbose<M: Display>(&self, msg: M) {
         if self.verbose {
             eprintln!("[verbose] {msg}");

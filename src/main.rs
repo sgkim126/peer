@@ -92,7 +92,7 @@ async fn main() -> ExitCode {
             let rendered = result
                 .checks
                 .iter()
-                .map(|check| render::render_check_result(check, format))
+                .map(|check| render::render_check_result(check, format, console))
                 .collect::<Result<Vec<_>, _>>();
             match rendered {
                 Ok(rendered) => {
@@ -155,7 +155,7 @@ async fn main() -> ExitCode {
             if let Err(error) = &result {
                 console.debug(format!("{error:?}"));
             }
-            print_check_result(result)
+            print_check_result(result, console)
         }
         Command::Render { format } => {
             let mut input = String::new();
@@ -164,7 +164,7 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            match render::render(&input, format) {
+            match render::render(&input, format, console) {
                 Ok(output) => {
                     println!("{output}");
                 }
@@ -179,7 +179,10 @@ async fn main() -> ExitCode {
     }
 }
 
-fn print_check_result(result: Result<CheckResult, CheckCommandError>) -> ExitCode {
+fn print_check_result(
+    result: Result<CheckResult, CheckCommandError>,
+    console: Console,
+) -> ExitCode {
     let exit_code = if result.is_ok() {
         ExitCode::SUCCESS
     } else {
@@ -187,7 +190,7 @@ fn print_check_result(result: Result<CheckResult, CheckCommandError>) -> ExitCod
     };
     let output = CheckCommandOutput::from(result);
 
-    match serde_json::to_string_pretty(&output) {
+    match render::render_check_output(&output, cli::OutputFormat::Json, console) {
         Ok(json) => {
             println!("{json}");
             exit_code

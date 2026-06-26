@@ -3,9 +3,9 @@ use std::process::{Command, Stdio};
 
 use serde_json::json;
 
-fn run_render(format: &str, input: &str) -> std::process::Output {
+fn run_render_with_args(args: &[&str], input: &str) -> std::process::Output {
     let mut child = Command::new(env!("CARGO_BIN_EXE_peer"))
-        .args(["render", "--format", format])
+        .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -18,6 +18,14 @@ fn run_render(format: &str, input: &str) -> std::process::Output {
         .write_all(input.as_bytes())
         .unwrap();
     child.wait_with_output().unwrap()
+}
+
+fn run_render(format: &str, input: &str) -> std::process::Output {
+    run_render_with_args(&["render", "--format", format], input)
+}
+
+fn run_render_verbose(format: &str, input: &str) -> std::process::Output {
+    run_render_with_args(&["--verbose", "render", "--format", format], input)
 }
 
 fn success_envelope() -> serde_json::Value {
@@ -60,21 +68,58 @@ The commit is appropriately sized.
 Findings: none
 
 Confidence: 90% | Iterations: 1
-Usage: 100 input, 20 output, $0.001000 (test-model)
 "
     );
 }
 
 #[test]
+fn renders_usage_from_stdin_with_verbose() {
+    let output = run_render_verbose("terminal", &success_envelope().to_string());
+
+    assert!(output.status.success());
+    assert!(
+        String::from_utf8(output.stdout)
+            .unwrap()
+            .contains("Confidence: 90% | Iterations: 1")
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("[verbose] Usage: 100 input, 20 output, $0.001000 (test-model)")
+    );
+}
+
+#[test]
 fn renders_pretty_json_from_stdin() {
-    let envelope = success_envelope();
-    let output = run_render("json", &envelope.to_string());
+    let input = success_envelope();
+    let mut expected = input.clone();
+    expected["data"].as_object_mut().unwrap().remove("usage");
+    let output = run_render("json", &input.to_string());
 
     assert!(output.status.success());
     assert!(output.stderr.is_empty());
     assert_eq!(
         serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
-        envelope
+        expected
+    );
+}
+
+#[test]
+fn renders_usage_in_json_from_stdin_with_verbose() {
+    let input = success_envelope();
+    let mut expected = input.clone();
+    expected["data"].as_object_mut().unwrap().remove("usage");
+    let output = run_render_verbose("json", &input.to_string());
+
+    assert!(output.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap(),
+        expected
+    );
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("[verbose] Usage: 100 input, 20 output, $0.001000 (test-model)")
     );
 }
 
