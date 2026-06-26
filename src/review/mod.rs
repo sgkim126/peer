@@ -13,6 +13,54 @@ pub enum ReviewTarget {
     },
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewPlan {
+    pub checks: Vec<ReviewCheck>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewCheck {
+    Size { revision: String },
+    Intent { revision: String },
+    Quality { revision: String },
+    Security { revision: String },
+    Coherence { range: String },
+}
+
+pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
+    let mut checks = Vec::new();
+
+    match target {
+        ReviewTarget::Commit(commit) => {
+            append_commit_checks(&mut checks, commit);
+        }
+        ReviewTarget::Range { revision, commits } => {
+            for commit in commits {
+                append_commit_checks(&mut checks, commit);
+            }
+            checks.push(ReviewCheck::Coherence {
+                range: revision.clone(),
+            });
+        }
+    }
+
+    ReviewPlan { checks }
+}
+
+fn append_commit_checks(checks: &mut Vec<ReviewCheck>, commit: &CommitHash) {
+    let revision = commit.to_string();
+    checks.push(ReviewCheck::Size {
+        revision: revision.clone(),
+    });
+    checks.push(ReviewCheck::Intent {
+        revision: revision.clone(),
+    });
+    checks.push(ReviewCheck::Quality {
+        revision: revision.clone(),
+    });
+    checks.push(ReviewCheck::Security { revision });
+}
+
 pub async fn resolve_target(
     target: &str,
     project_root: &Path,
@@ -337,5 +385,82 @@ mod tests {
             error,
             ReviewTargetError::MergeCommit(commit) if commit == merge
         ));
+    }
+
+    #[test]
+    fn plans_single_commit_checks() {
+        let commit_hash = "abc1234";
+        let commit = CommitHash::new(commit_hash).unwrap();
+        let target = ReviewTarget::Commit(commit);
+
+        let plan = plan_checks(&target);
+
+        assert_eq!(
+            plan,
+            ReviewPlan {
+                checks: vec![
+                    ReviewCheck::Size {
+                        revision: commit_hash.to_string()
+                    },
+                    ReviewCheck::Intent {
+                        revision: commit_hash.to_string()
+                    },
+                    ReviewCheck::Quality {
+                        revision: commit_hash.to_string()
+                    },
+                    ReviewCheck::Security {
+                        revision: commit_hash.to_string()
+                    },
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn plans_range_checks() {
+        let first_commit_hash = "abc1234";
+        let second_commit_hash = "def5678";
+        let first = CommitHash::new(first_commit_hash).unwrap();
+        let second = CommitHash::new(second_commit_hash).unwrap();
+        let revision = "main..HEAD".to_string();
+        let target = ReviewTarget::Range {
+            revision: revision.clone(),
+            commits: vec![first, second],
+        };
+
+        let plan = plan_checks(&target);
+
+        assert_eq!(
+            plan,
+            ReviewPlan {
+                checks: vec![
+                    ReviewCheck::Size {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Intent {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Quality {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Security {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Size {
+                        revision: second_commit_hash.to_string()
+                    },
+                    ReviewCheck::Intent {
+                        revision: second_commit_hash.to_string()
+                    },
+                    ReviewCheck::Quality {
+                        revision: second_commit_hash.to_string()
+                    },
+                    ReviewCheck::Security {
+                        revision: second_commit_hash.to_string()
+                    },
+                    ReviewCheck::Coherence { range: revision },
+                ]
+            }
+        );
     }
 }

@@ -78,6 +78,9 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
+            let plan = review::plan_checks(&review_target);
+            console.debug(format!("{plan:?}"));
+
             unimplemented!()
         }
         Command::Extract { command } => {
