@@ -6,6 +6,7 @@ use crate::cli::OutputFormat;
 use crate::console::Console;
 use crate::llm::checks::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
 use crate::llm::result::{CheckResult, CheckTarget, Finding, Severity};
+use crate::review::ReviewResult;
 use owo_colors::Style;
 
 pub fn render(input: &str, format: OutputFormat, console: Console) -> Result<String, RenderError> {
@@ -47,12 +48,12 @@ pub fn render_check_output(
     render_check_output_impl(output, format, console, std::io::stdout().is_terminal())
 }
 
-pub fn render_check_result(
-    result: &CheckResult,
+pub fn render_review_result(
+    result: &ReviewResult,
     format: OutputFormat,
     console: Console,
 ) -> Result<String, RenderError> {
-    render_check_result_impl(result, format, console, std::io::stdout().is_terminal())
+    render_review_result_impl(result, format, console, std::io::stdout().is_terminal())
 }
 
 fn render_check_result_impl(
@@ -79,9 +80,34 @@ fn render_check_result_impl(
     }
 }
 
+fn render_review_result_impl(
+    result: &ReviewResult,
+    format: OutputFormat,
+    console: Console,
+    use_color: bool,
+) -> Result<String, RenderError> {
+    match format {
+        OutputFormat::Json => render_review_json(result, console),
+        OutputFormat::Terminal | OutputFormat::Markdown => result
+            .checks
+            .iter()
+            .map(|check| render_check_result_impl(check, format, console, use_color))
+            .collect::<Result<Vec<_>, _>>()
+            .map(|rendered| rendered.join("\n\n")),
+    }
+}
+
 fn render_json(output: &CheckCommandOutput) -> Result<String, RenderError> {
     let mut value = serde_json::to_value(output).map_err(RenderError::Serialization)?;
     remove_usage(&mut value);
+    serde_json::to_string_pretty(&value).map_err(RenderError::Serialization)
+}
+
+fn render_review_json(result: &ReviewResult, console: Console) -> Result<String, RenderError> {
+    log_review_usage(result, console);
+
+    let mut value = serde_json::to_value(result).map_err(RenderError::Serialization)?;
+    remove_review_usage(&mut value);
     serde_json::to_string_pretty(&value).map_err(RenderError::Serialization)
 }
 
@@ -94,9 +120,30 @@ fn remove_usage(value: &mut serde_json::Value) {
     }
 }
 
+fn remove_review_usage(value: &mut serde_json::Value) {
+    let Some(checks) = value
+        .get_mut("checks")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+
+    for check in checks {
+        if let Some(check) = check.as_object_mut() {
+            check.remove("usage");
+        }
+    }
+}
+
 fn log_usage(output: &CheckCommandOutput, console: Console) {
     if let Ok(result) = output.as_result() {
         log_result_usage(result, console);
+    }
+}
+
+fn log_review_usage(result: &ReviewResult, console: Console) {
+    for check in &result.checks {
+        log_result_usage(check, console);
     }
 }
 
@@ -452,6 +499,17 @@ mod tests {
         serde_json::from_value(success_envelope_with_finding()["data"].clone()).unwrap()
     }
 
+    fn success_review_result() -> ReviewResult {
+        let mut size = success_result();
+        size.check = "size".to_string();
+        let mut intent = success_result_with_finding();
+        intent.check = "intent".to_string();
+
+        ReviewResult {
+            checks: vec![size, intent],
+        }
+    }
+
     fn console() -> Console {
         Console::default()
     }
@@ -517,10 +575,50 @@ Confidence: 85% | Iterations: 2"
     fn renders_check_result_as_pretty_json_envelope() {
         let result = success_result();
 
-        let rendered = render_check_result(&result, OutputFormat::Json, console()).unwrap();
+        let rendered =
+            render_check_result_impl(&result, OutputFormat::Json, console(), false).unwrap();
         let value: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(value, success_envelope_without_usage());
+    }
+
+    #[test]
+    fn renders_review_result_as_single_json_document() {
+        let result = success_review_result();
+
+        let rendered = render_review_result(&result, OutputFormat::Json, console()).unwrap();
+        let value: Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(value["checks"].as_array().unwrap().len(), 2);
+        assert_eq!(value["checks"][0]["check"], "size");
+        assert_eq!(value["checks"][1]["check"], "intent");
+        assert!(value["checks"][0].get("usage").is_none());
+        assert!(value["checks"][1].get("usage").is_none());
+    }
+
+    #[test]
+    fn renders_review_result_for_terminal() {
+        let result = success_review_result();
+
+        let rendered =
+            render_review_result_impl(&result, OutputFormat::Terminal, console(), false).unwrap();
+
+        assert!(rendered.contains("Check: size"));
+        assert!(rendered.contains("Check: intent"));
+        assert!(rendered.contains("\n\nCheck: intent"));
+        assert!(!rendered.contains("Usage:"));
+    }
+
+    #[test]
+    fn renders_review_result_for_markdown() {
+        let result = success_review_result();
+
+        let rendered = render_review_result(&result, OutputFormat::Markdown, console()).unwrap();
+
+        assert!(rendered.contains("## Check: size"));
+        assert!(rendered.contains("## Check: intent"));
+        assert!(rendered.contains("\n\n## Check: intent"));
+        assert!(!rendered.contains("**Usage:**"));
     }
 
     #[test]
@@ -633,7 +731,8 @@ A critical issue was found.
     fn renders_check_result_for_markdown() {
         let result = success_result_with_finding();
 
-        let rendered = render_check_result(&result, OutputFormat::Markdown, console()).unwrap();
+        let rendered =
+            render_check_result_impl(&result, OutputFormat::Markdown, console(), false).unwrap();
 
         assert!(rendered.contains("## Check: size"));
         assert!(rendered.contains("- **Status:** issue"));

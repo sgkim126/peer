@@ -89,14 +89,10 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let rendered = result
-                .checks
-                .iter()
-                .map(|check| render::render_check_result(check, format, console))
-                .collect::<Result<Vec<_>, _>>();
+            let rendered = render::render_review_result(&result, format, console);
             match rendered {
                 Ok(rendered) => {
-                    println!("{}", rendered.join("\n\n"));
+                    println!("{rendered}");
                     ExitCode::SUCCESS
                 }
                 Err(err) => {
