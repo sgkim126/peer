@@ -1,9 +1,14 @@
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::cli::CheckCommand;
+use crate::config::Config;
 use crate::console::Console;
 use crate::git::{CommitHash, GitError, run_git};
+use crate::llm::checks::{self, CheckCommandError};
+use crate::llm::result::CheckResult;
+
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {
@@ -17,6 +22,11 @@ pub enum ReviewTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewPlan {
     pub checks: Vec<ReviewCheck>,
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct ReviewResult {
+    pub checks: Vec<CheckResult>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -72,6 +82,23 @@ fn append_commit_checks(checks: &mut Vec<ReviewCheck>, commit: &CommitHash) {
         revision: revision.clone(),
     });
     checks.push(ReviewCheck::Security { revision });
+}
+
+#[allow(dead_code)]
+pub async fn run(
+    plan: ReviewPlan,
+    console: Console,
+    config: &Config,
+    project_root: PathBuf,
+) -> Result<ReviewResult, CheckCommandError> {
+    let mut results = Vec::with_capacity(plan.checks.len());
+
+    for check in plan.checks {
+        let command = CheckCommand::from(check);
+        results.push(checks::handler(console, command, config, project_root.clone()).await?);
+    }
+
+    Ok(ReviewResult { checks: results })
 }
 
 pub async fn resolve_target(
@@ -196,6 +223,8 @@ mod tests {
 
     use super::*;
     use crate::git::run_git;
+    use crate::llm::confidence::Confidence;
+    use crate::llm::result::{CheckTarget, CheckUsage};
 
     struct Repo {
         _tmp: TempDir,
@@ -238,6 +267,25 @@ mod tests {
                 .unwrap();
 
             CommitHash::new(hash.trim()).unwrap()
+        }
+    }
+
+    fn check_result() -> CheckResult {
+        CheckResult {
+            check: "size".to_string(),
+            target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            summary: "summary".to_string(),
+            findings: Vec::new(),
+            confidence: Confidence::try_from(0.9).unwrap(),
+            iterations: 1,
+            is_exhausted: false,
+            exhaustion_reason: None,
+            usage: CheckUsage {
+                input_tokens: 10,
+                output_tokens: 20,
+                cost_usd: 0.001,
+                model: "test-model".to_string(),
+            },
         }
     }
 
@@ -519,5 +567,27 @@ mod tests {
                 range: "main..HEAD".to_string()
             }
         );
+    }
+
+    #[test]
+    fn creates_review_result_from_check_results() {
+        let check = check_result();
+
+        let result = ReviewResult {
+            checks: vec![check.clone()],
+        };
+
+        assert_eq!(result.checks, vec![check]);
+    }
+
+    #[test]
+    fn serializes_review_result() {
+        let result = ReviewResult {
+            checks: vec![check_result()],
+        };
+
+        let value = serde_json::to_value(result).unwrap();
+
+        assert_eq!(value["checks"][0]["check"], "size");
     }
 }
