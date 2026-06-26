@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::Path;
 
+use crate::cli::CheckCommand;
 use crate::console::Console;
 use crate::git::{CommitHash, GitError, run_git};
 
@@ -25,6 +26,18 @@ pub enum ReviewCheck {
     Quality { revision: String },
     Security { revision: String },
     Coherence { range: String },
+}
+
+impl From<ReviewCheck> for CheckCommand {
+    fn from(check: ReviewCheck) -> Self {
+        match check {
+            ReviewCheck::Size { revision } => Self::Size { revision },
+            ReviewCheck::Intent { revision } => Self::Intent { revision },
+            ReviewCheck::Quality { revision } => Self::Quality { revision },
+            ReviewCheck::Security { revision } => Self::Security { revision },
+            ReviewCheck::Coherence { range } => Self::Coherence { range },
+        }
+    }
 }
 
 pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
@@ -460,6 +473,50 @@ mod tests {
                     },
                     ReviewCheck::Coherence { range: revision },
                 ]
+            }
+        );
+    }
+
+    #[test]
+    fn converts_review_check_to_check_command() {
+        assert_eq!(
+            CheckCommand::from(ReviewCheck::Size {
+                revision: "abc1234".to_string()
+            }),
+            CheckCommand::Size {
+                revision: "abc1234".to_string()
+            }
+        );
+        assert_eq!(
+            CheckCommand::from(ReviewCheck::Intent {
+                revision: "abc1234".to_string()
+            }),
+            CheckCommand::Intent {
+                revision: "abc1234".to_string()
+            }
+        );
+        assert_eq!(
+            CheckCommand::from(ReviewCheck::Quality {
+                revision: "abc1234".to_string()
+            }),
+            CheckCommand::Quality {
+                revision: "abc1234".to_string()
+            }
+        );
+        assert_eq!(
+            CheckCommand::from(ReviewCheck::Security {
+                revision: "abc1234".to_string()
+            }),
+            CheckCommand::Security {
+                revision: "abc1234".to_string()
+            }
+        );
+        assert_eq!(
+            CheckCommand::from(ReviewCheck::Coherence {
+                range: "main..HEAD".to_string()
+            }),
+            CheckCommand::Coherence {
+                range: "main..HEAD".to_string()
             }
         );
     }
