@@ -1,6 +1,7 @@
 mod debug;
 mod error;
 mod mistral;
+mod openai;
 mod request;
 mod response;
 
@@ -18,12 +19,14 @@ pub trait LlmProvider {
 
 enum Provider {
     Mistral(mistral::MistralProvider),
+    OpenAi(openai::OpenAiProvider),
 }
 
 impl LlmProvider for Provider {
     async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
         match self {
             Self::Mistral(provider) => provider.send(request).await,
+            Self::OpenAi(provider) => provider.send(request).await,
         }
     }
 }
@@ -38,6 +41,10 @@ pub fn create_provider(
         "mistral" => Ok(
             mistral::MistralProvider::from_env(api_key_env, base_url, console)
                 .map(Provider::Mistral)?,
+        ),
+        "openai" => Ok(
+            openai::OpenAiProvider::from_env(api_key_env, base_url, console)
+                .map(Provider::OpenAi)?,
         ),
         _ => Err(ProviderCreationError::Unsupported {
             name: name.to_string(),
@@ -97,6 +104,18 @@ mod tests {
         let name = "PEER_TEST_MISSING_MISTRAL_FACTORY_API_KEY_7A2C9D4E1B";
 
         let Err(error) = create_provider("mistral", name, None, Console::default()) else {
+            panic!("expected provider initialization error");
+        };
+
+        assert!(matches!(error, ProviderCreationError::Initialization(_)));
+        assert!(error.to_string().contains(name));
+    }
+
+    #[test]
+    fn factory_supports_openai_provider() {
+        let name = "PEER_TEST_MISSING_OPENAI_FACTORY_API_KEY_7A2C9D4E1B";
+
+        let Err(error) = create_provider("openai", name, None, Console::default()) else {
             panic!("expected provider initialization error");
         };
 
