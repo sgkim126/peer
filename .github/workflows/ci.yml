@@ -20,6 +20,17 @@ jobs:
         with:
           components: rustfmt, clippy
 
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
       - name: Check formatting
         run: cargo fmt -- --check
 
