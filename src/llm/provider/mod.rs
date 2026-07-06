@@ -1,4 +1,5 @@
 mod error;
+mod http;
 mod request;
 mod response;
 
