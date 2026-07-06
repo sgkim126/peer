@@ -7,7 +7,7 @@ use super::{
     ToolCall, ToolSpec,
 };
 use crate::console::Console;
-use crate::llm::provider::debug::format_headers_debug;
+use crate::llm::provider::debug::{format_headers_debug, format_json_debug};
 use crate::llm::result::CheckOutput;
 use crate::secret::Secret;
 
@@ -114,13 +114,6 @@ impl LlmProvider for MistralProvider {
         } else {
             Err(MistralResponseParser::parse_error(status.as_u16(), &body))
         }
-    }
-}
-
-fn format_json_debug(label: &str, value: &serde_json::Value) -> String {
-    match serde_json::to_string_pretty(value) {
-        Ok(json) => format!("{label}\n{json}"),
-        Err(error) => format!("{label} <failed to serialize JSON: {error}>"),
     }
 }
 

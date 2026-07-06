@@ -1,5 +1,12 @@
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
+pub fn format_json_debug(label: &str, value: &serde_json::Value) -> String {
+    match serde_json::to_string_pretty(value) {
+        Ok(json) => format!("{label}\n{json}"),
+        Err(error) => format!("{label} <failed to serialize JSON: {error}>"),
+    }
+}
+
 pub fn format_headers_debug(label: &str, headers: &HeaderMap) -> String {
     let mut output = String::from(label);
     for (name, value) in headers {
