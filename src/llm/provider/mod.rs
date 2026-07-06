@@ -2,6 +2,7 @@ mod anthropic;
 mod debug;
 mod error;
 mod gemini;
+mod http;
 mod mistral;
 mod openai;
 mod request;

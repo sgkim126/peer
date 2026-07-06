@@ -7,7 +7,7 @@ use super::{
     ToolCall, ToolSpec,
 };
 use crate::console::Console;
-use crate::llm::provider::debug::{format_headers_debug, format_json_debug};
+use crate::llm::provider::http::ProviderHttpClient;
 use crate::llm::result::CheckOutput;
 use crate::secret::Secret;
 
@@ -26,9 +26,8 @@ pub struct MistralHttpRequest {
 
 #[derive(Debug, Clone)]
 pub struct MistralProvider {
-    client: reqwest::Client,
+    client: ProviderHttpClient,
     request_builder: MistralRequestBuilder,
-    console: Console,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,9 +53,8 @@ impl MistralProvider {
             })?;
 
         Ok(Self {
-            client,
+            client: ProviderHttpClient::new(client, console, "mistral", "Mistral"),
             request_builder,
-            console,
         })
     }
 }
@@ -64,70 +62,19 @@ impl MistralProvider {
 impl LlmProvider for MistralProvider {
     async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
         let http = self.request_builder.build(request)?;
-        self.console
-            .debug(format_json_debug("mistral request", &http.body));
         let request = self
             .client
             .post(&http.url)
-            .bearer_auth(http.bearer_token.expose_secret())
-            .json(&http.body)
-            .build()
-            .map_err(|error| LlmCallError::Permanent {
-                message: "failed to build Mistral HTTP request".to_string(),
-                source: Box::new(error),
-            })?;
-        self.console.debug(format_headers_debug(
-            "mistral request headers",
-            request.headers(),
-        ));
-        let response = self
-            .client
-            .execute(request)
-            .await
-            .map_err(map_transport_error)?;
+            .bearer_auth(http.bearer_token.expose_secret());
+        let response = self.client.send_json(request, &http.body).await?;
 
-        let status = response.status();
-        self.console
-            .debug(format!("mistral response status={}", status.as_u16()));
-        self.console.debug(format_headers_debug(
-            "mistral response headers",
-            response.headers(),
-        ));
-        let body_text = response
-            .text()
-            .await
-            .map_err(|error| LlmCallError::Permanent {
-                message: "failed to read Mistral response body".to_string(),
-                source: Box::new(error),
-            })?;
-        self.console
-            .debug(format!("mistral response body\n{body_text}"));
-        let body = serde_json::from_str::<serde_json::Value>(&body_text).map_err(|error| {
-            LlmCallError::Permanent {
-                message: "failed to parse Mistral response JSON".to_string(),
-                source: Box::new(error),
-            }
-        })?;
-
-        if status.is_success() {
-            MistralResponseParser::parse_success(&body)
+        if response.status.is_success() {
+            MistralResponseParser::parse_success(&response.body)
         } else {
-            Err(MistralResponseParser::parse_error(status.as_u16(), &body))
-        }
-    }
-}
-
-fn map_transport_error(error: reqwest::Error) -> LlmCallError {
-    let message = error.to_string();
-    if error.is_timeout() || error.is_connect() {
-        LlmCallError::Transient {
-            message,
-            source: Box::new(error),
-        }
-    } else {
-        LlmCallError::Permanent {
-            message,
-            source: Box::new(error),
+            Err(MistralResponseParser::parse_error(
+                response.status.as_u16(),
+                &response.body,
+            ))
         }
     }
 }

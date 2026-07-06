@@ -7,7 +7,7 @@ use super::{
     ToolCall, ToolSpec,
 };
 use crate::console::Console;
-use crate::llm::provider::debug::{format_headers_debug, format_json_debug};
+use crate::llm::provider::http::ProviderHttpClient;
 use crate::llm::result::CheckOutput;
 use crate::secret::Secret;
 
@@ -26,9 +26,8 @@ pub struct AnthropicHttpRequest {
 
 #[derive(Debug, Clone)]
 pub struct AnthropicProvider {
-    client: reqwest::Client,
+    client: ProviderHttpClient,
     request_builder: AnthropicRequestBuilder,
-    console: Console,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,9 +55,8 @@ impl AnthropicProvider {
             })?;
 
         Ok(Self {
-            client,
+            client: ProviderHttpClient::new(client, console, "anthropic", "Anthropic"),
             request_builder,
-            console,
         })
     }
 }
@@ -66,71 +64,20 @@ impl AnthropicProvider {
 impl LlmProvider for AnthropicProvider {
     async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
         let http = self.request_builder.build(request)?;
-        self.console
-            .debug(format_json_debug("anthropic request", &http.body));
         let request = self
             .client
             .post(&http.url)
             .header("x-api-key", http.api_key.expose_secret())
-            .header("anthropic-version", ANTHROPIC_VERSION)
-            .json(&http.body)
-            .build()
-            .map_err(|error| LlmCallError::Permanent {
-                message: "failed to build Anthropic HTTP request".to_string(),
-                source: Box::new(error),
-            })?;
-        self.console.debug(format_headers_debug(
-            "anthropic request headers",
-            request.headers(),
-        ));
-        let response = self
-            .client
-            .execute(request)
-            .await
-            .map_err(map_transport_error)?;
+            .header("anthropic-version", ANTHROPIC_VERSION);
+        let response = self.client.send_json(request, &http.body).await?;
 
-        let status = response.status();
-        self.console
-            .debug(format!("anthropic response status={}", status.as_u16()));
-        self.console.debug(format_headers_debug(
-            "anthropic response headers",
-            response.headers(),
-        ));
-        let body_text = response
-            .text()
-            .await
-            .map_err(|error| LlmCallError::Permanent {
-                message: "failed to read Anthropic response body".to_string(),
-                source: Box::new(error),
-            })?;
-        self.console
-            .debug(format!("anthropic response body\n{body_text}"));
-        let body = serde_json::from_str::<serde_json::Value>(&body_text).map_err(|error| {
-            LlmCallError::Permanent {
-                message: "failed to parse Anthropic response JSON".to_string(),
-                source: Box::new(error),
-            }
-        })?;
-
-        if status.is_success() {
-            AnthropicResponseParser::parse_success(&body)
+        if response.status.is_success() {
+            AnthropicResponseParser::parse_success(&response.body)
         } else {
-            Err(AnthropicResponseParser::parse_error(status.as_u16(), &body))
-        }
-    }
-}
-
-fn map_transport_error(error: reqwest::Error) -> LlmCallError {
-    let message = error.to_string();
-    if error.is_timeout() || error.is_connect() {
-        LlmCallError::Transient {
-            message,
-            source: Box::new(error),
-        }
-    } else {
-        LlmCallError::Permanent {
-            message,
-            source: Box::new(error),
+            Err(AnthropicResponseParser::parse_error(
+                response.status.as_u16(),
+                &response.body,
+            ))
         }
     }
 }
