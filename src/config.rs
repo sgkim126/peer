@@ -224,16 +224,48 @@ mod tests {
                     confidence_threshold: 0.8,
                     max_iterations: 5,
                 },
-                providers: vec![ProviderConfig {
-                    name: "mistral".into(),
-                    api_key_env: "MISTRAL_API_KEY".into(),
-                    base_url: None,
-                    models: vec![ModelConfig {
-                        name: "mistral-large-latest".into(),
-                        input_per_1m_usd: 2.0,
-                        output_per_1m_usd: 6.0,
-                    }]
-                }],
+                providers: vec![
+                    ProviderConfig {
+                        name: "mistral".into(),
+                        api_key_env: "MISTRAL_API_KEY".into(),
+                        base_url: None,
+                        models: vec![ModelConfig {
+                            name: "mistral-large-latest".into(),
+                            input_per_1m_usd: 2.0,
+                            output_per_1m_usd: 6.0,
+                        }],
+                    },
+                    ProviderConfig {
+                        name: "openai".into(),
+                        api_key_env: "OPENAI_API_KEY".into(),
+                        base_url: None,
+                        models: vec![ModelConfig {
+                            name: "gpt-5.4-mini".into(),
+                            input_per_1m_usd: 0.75,
+                            output_per_1m_usd: 4.5,
+                        }],
+                    },
+                    ProviderConfig {
+                        name: "anthropic".into(),
+                        api_key_env: "ANTHROPIC_API_KEY".into(),
+                        base_url: None,
+                        models: vec![ModelConfig {
+                            name: "claude-sonnet-5".into(),
+                            input_per_1m_usd: 2.0,
+                            output_per_1m_usd: 10.0,
+                        }],
+                    },
+                    ProviderConfig {
+                        name: "gemini".into(),
+                        api_key_env: "GEMINI_API_KEY".into(),
+                        base_url: None,
+                        models: vec![ModelConfig {
+                            name: "gemini-3.5-flash".into(),
+                            input_per_1m_usd: 1.5,
+                            output_per_1m_usd: 9.0,
+                        }],
+                    }
+                ],
             }
         );
     }

@@ -78,13 +78,16 @@ fn init_fails_when_peer_already_exists() {
 }
 
 #[test]
-fn default_config_contains_mistral_provider_and_pricing() {
+fn default_config_contains_provider_examples_and_pricing() {
     let (mut cmd, tmp) = peer_in_tmp();
     git_init(tmp.path());
     cmd.arg("init").output().unwrap().assert_success();
 
     let content = std::fs::read_to_string(tmp.path().join(".peer").join("config.toml")).unwrap();
     assert!(content.contains("mistral"), "provider name missing");
+    assert!(content.contains("openai"), "provider name missing");
+    assert!(content.contains("anthropic"), "provider name missing");
+    assert!(content.contains("gemini"), "provider name missing");
     assert!(
         content.contains("mistral-large-latest"),
         "model name missing"

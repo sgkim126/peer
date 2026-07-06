@@ -17,3 +17,30 @@ api_key_env = "MISTRAL_API_KEY"
   name = "mistral-large-latest"
   input_per_1m_usd = 2.0
   output_per_1m_usd = 6.0
+
+[[providers]]
+name = "openai"
+api_key_env = "OPENAI_API_KEY"
+
+  [[providers.models]]
+  name = "gpt-5.4-mini"
+  input_per_1m_usd = 0.75
+  output_per_1m_usd = 4.5
+
+[[providers]]
+name = "anthropic"
+api_key_env = "ANTHROPIC_API_KEY"
+
+  [[providers.models]]
+  name = "claude-sonnet-5"
+  input_per_1m_usd = 2.0
+  output_per_1m_usd = 10.0
+
+[[providers]]
+name = "gemini"
+api_key_env = "GEMINI_API_KEY"
+
+  [[providers.models]]
+  name = "gemini-3.5-flash"
+  input_per_1m_usd = 1.5
+  output_per_1m_usd = 9.0
