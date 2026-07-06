@@ -7,6 +7,7 @@ use super::{
     ToolCall, ToolSpec,
 };
 use crate::console::Console;
+use crate::llm::provider::debug::format_headers_debug;
 use crate::llm::result::CheckOutput;
 use crate::secret::Secret;
 
@@ -65,18 +66,33 @@ impl LlmProvider for MistralProvider {
         let http = self.request_builder.build(request)?;
         self.console
             .debug(format_json_debug("mistral request", &http.body));
-        let response = self
+        let request = self
             .client
             .post(&http.url)
             .bearer_auth(http.bearer_token.expose_secret())
             .json(&http.body)
-            .send()
+            .build()
+            .map_err(|error| LlmCallError::Permanent {
+                message: "failed to build Mistral HTTP request".to_string(),
+                source: Box::new(error),
+            })?;
+        self.console.debug(format_headers_debug(
+            "mistral request headers",
+            request.headers(),
+        ));
+        let response = self
+            .client
+            .execute(request)
             .await
             .map_err(map_transport_error)?;
 
         let status = response.status();
         self.console
             .debug(format!("mistral response status={}", status.as_u16()));
+        self.console.debug(format_headers_debug(
+            "mistral response headers",
+            response.headers(),
+        ));
         let body_text = response
             .text()
             .await

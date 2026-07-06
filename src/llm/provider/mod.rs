@@ -1,3 +1,4 @@
+mod debug;
 mod error;
 mod mistral;
 mod request;
