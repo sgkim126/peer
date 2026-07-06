@@ -351,17 +351,20 @@ models = [{{ name = "another-model", input_per_1m_usd = 1.0, output_per_1m_usd =
         let tmp = init_dir(&format!(
             r#"{DEFAULT_CONFIG_TOML}
 
-[[providers.models]]
-name = "mistral-large-latest"
-input_per_1m_usd = 3.0
-output_per_1m_usd = 7.0
+[[providers]]
+name = "duplicate-model-test"
+api_key_env = "DUPLICATE_MODEL_TEST_API_KEY"
+models = [
+    {{ name = "same-model", input_per_1m_usd = 1.0, output_per_1m_usd = 2.0 }},
+    {{ name = "same-model", input_per_1m_usd = 3.0, output_per_1m_usd = 4.0 }},
+]
 "#
         ));
 
         let error = discover(tmp.path()).unwrap_err();
         assert_eq!(
             error.to_string(),
-            "provider 'mistral' configures model 'mistral-large-latest' more than once"
+            "provider 'duplicate-model-test' configures model 'same-model' more than once"
         );
     }
 
@@ -381,7 +384,7 @@ output_per_1m_usd = 7.0
     #[test]
     fn fails_when_default_model_is_not_configured_for_default_provider() {
         let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace(
-            "default_model = \"mistral-large-latest\"",
+            "default_model = \"mistral-large-2512\"",
             "default_model = \"missing\"",
         ));
 
@@ -404,20 +407,90 @@ output_per_1m_usd = 7.0
                 },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
-                    default_model: "mistral-large-latest".into(),
+                    default_model: "mistral-large-2512".into(),
                     confidence_threshold: 0.8,
                     max_iterations: NonZeroU32::new(5).unwrap(),
                 },
-                providers: vec![ProviderConfig {
-                    name: "mistral".into(),
-                    api_key_env: "MISTRAL_API_KEY".into(),
-                    base_url: None,
-                    models: vec![ModelConfig {
-                        name: "mistral-large-latest".into(),
-                        input_per_1m_usd: 2.0,
-                        output_per_1m_usd: 6.0,
-                    }]
-                }],
+                providers: vec![
+                    ProviderConfig {
+                        name: "mistral".into(),
+                        api_key_env: "MISTRAL_API_KEY".into(),
+                        base_url: None,
+                        models: vec![
+                            ModelConfig {
+                                name: "mistral-large-2512".into(),
+                                input_per_1m_usd: 0.5,
+                                output_per_1m_usd: 1.5,
+                            },
+                            ModelConfig {
+                                name: "mistral-medium-3-5".into(),
+                                input_per_1m_usd: 1.5,
+                                output_per_1m_usd: 7.5,
+                            },
+                            ModelConfig {
+                                name: "mistral-small-2603".into(),
+                                input_per_1m_usd: 0.15,
+                                output_per_1m_usd: 0.6,
+                            },
+                        ],
+                    },
+                    ProviderConfig {
+                        name: "openai".into(),
+                        api_key_env: "OPENAI_API_KEY".into(),
+                        base_url: None,
+                        models: vec![
+                            ModelConfig {
+                                name: "gpt-5.5".into(),
+                                input_per_1m_usd: 5.0,
+                                output_per_1m_usd: 30.0,
+                            },
+                            ModelConfig {
+                                name: "gpt-5.4".into(),
+                                input_per_1m_usd: 2.5,
+                                output_per_1m_usd: 15.0,
+                            },
+                            ModelConfig {
+                                name: "gpt-5.4-mini".into(),
+                                input_per_1m_usd: 0.75,
+                                output_per_1m_usd: 4.5,
+                            },
+                        ],
+                    },
+                    ProviderConfig {
+                        name: "anthropic".into(),
+                        api_key_env: "ANTHROPIC_API_KEY".into(),
+                        base_url: None,
+                        models: vec![
+                            ModelConfig {
+                                name: "claude-sonnet-5".into(),
+                                input_per_1m_usd: 2.0,
+                                output_per_1m_usd: 10.0,
+                            },
+                            ModelConfig {
+                                name: "claude-opus-4-8".into(),
+                                input_per_1m_usd: 5.0,
+                                output_per_1m_usd: 25.0,
+                            },
+                        ],
+                    },
+                    ProviderConfig {
+                        name: "gemini".into(),
+                        api_key_env: "GEMINI_API_KEY".into(),
+                        base_url: None,
+                        models: vec![
+                            ModelConfig {
+                                name: "gemini-3.5-flash".into(),
+                                input_per_1m_usd: 1.5,
+                                output_per_1m_usd: 9.0,
+                            },
+                            ModelConfig {
+                                name: "gemini-3.1-pro-preview".into(),
+                                input_per_1m_usd: 2.0,
+                                output_per_1m_usd: 12.0,
+                            },
+                        ],
+                    }
+                ],
             }
         );
     }
