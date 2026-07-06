@@ -1,6 +1,7 @@
 mod anthropic;
 mod debug;
 mod error;
+mod gemini;
 mod mistral;
 mod openai;
 mod request;
@@ -20,6 +21,7 @@ pub trait LlmProvider {
 
 enum Provider {
     Anthropic(anthropic::AnthropicProvider),
+    Gemini(gemini::GeminiProvider),
     Mistral(mistral::MistralProvider),
     OpenAi(openai::OpenAiProvider),
 }
@@ -28,6 +30,7 @@ impl LlmProvider for Provider {
     async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
         match self {
             Self::Anthropic(provider) => provider.send(request).await,
+            Self::Gemini(provider) => provider.send(request).await,
             Self::Mistral(provider) => provider.send(request).await,
             Self::OpenAi(provider) => provider.send(request).await,
         }
@@ -44,6 +47,10 @@ pub fn create_provider(
         "anthropic" => Ok(
             anthropic::AnthropicProvider::from_env(api_key_env, base_url, console)
                 .map(Provider::Anthropic)?,
+        ),
+        "gemini" => Ok(
+            gemini::GeminiProvider::from_env(api_key_env, base_url, console)
+                .map(Provider::Gemini)?,
         ),
         "mistral" => Ok(
             mistral::MistralProvider::from_env(api_key_env, base_url, console)
@@ -135,6 +142,18 @@ mod tests {
         let name = "PEER_TEST_MISSING_ANTHROPIC_FACTORY_API_KEY_7A2C9D4E1B";
 
         let Err(error) = create_provider("anthropic", name, None, Console::default()) else {
+            panic!("expected provider initialization error");
+        };
+
+        assert!(matches!(error, ProviderCreationError::Initialization(_)));
+        assert!(error.to_string().contains(name));
+    }
+
+    #[test]
+    fn factory_supports_gemini_provider() {
+        let name = "PEER_TEST_MISSING_GEMINI_FACTORY_API_KEY_7A2C9D4E1B";
+
+        let Err(error) = create_provider("gemini", name, None, Console::default()) else {
             panic!("expected provider initialization error");
         };
 

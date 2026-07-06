@@ -32,7 +32,13 @@ fn display_header_value(name: &HeaderName, value: &HeaderValue) -> String {
 fn is_sensitive_header(name: &HeaderName) -> bool {
     matches!(
         name.as_str().to_ascii_lowercase().as_str(),
-        "authorization" | "proxy-authorization" | "x-api-key" | "api-key" | "cookie" | "set-cookie"
+        "authorization"
+            | "proxy-authorization"
+            | "x-api-key"
+            | "x-goog-api-key"
+            | "api-key"
+            | "cookie"
+            | "set-cookie"
     )
 }
 
@@ -79,6 +85,10 @@ mod tests {
             HeaderValue::from_static("session=secret"),
         );
         headers.insert(
+            HeaderName::from_static("x-goog-api-key"),
+            HeaderValue::from_static("secret"),
+        );
+        headers.insert(
             HeaderName::from_static("set-cookie"),
             HeaderValue::from_static("session=secret"),
         );
@@ -90,6 +100,7 @@ mod tests {
         assert!(formatted.contains("x-api-key: <redacted>"));
         assert!(formatted.contains("api-key: <redacted>"));
         assert!(formatted.contains("cookie: <redacted>"));
+        assert!(formatted.contains("x-goog-api-key: <redacted>"));
         assert!(formatted.contains("set-cookie: <redacted>"));
         assert!(!formatted.contains("secret"));
     }
