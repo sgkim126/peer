@@ -1,11 +1,9 @@
-#[cfg(test)]
 use crate::llm::context::ReviewComment;
 use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)]
 enum ReviewContextSummaryKind {
     Body,
     Comments,
@@ -25,7 +23,6 @@ impl ReviewContextSummaryInput {
         }
     }
 
-    #[cfg(test)]
     fn comments(comments: &[ReviewComment]) -> Self {
         Self {
             kind: ReviewContextSummaryKind::Comments,
@@ -81,6 +78,23 @@ where
     summarize_impl(provider, model, ReviewContextSummaryInput::body(body)).await
 }
 
+#[allow(dead_code)]
+async fn summarize_comments<P>(
+    provider: &P,
+    model: &str,
+    comments: &[ReviewComment],
+) -> Result<ReviewContextSummaryOutput, LlmCallError>
+where
+    P: LlmProvider,
+{
+    summarize_impl(
+        provider,
+        model,
+        ReviewContextSummaryInput::comments(comments),
+    )
+    .await
+}
+
 async fn summarize_impl<P>(
     provider: &P,
     model: &str,
@@ -127,7 +141,6 @@ impl std::fmt::Display for ReviewContextSummaryError {
     }
 }
 
-#[cfg(test)]
 fn format_comments(comments: &[ReviewComment]) -> String {
     comments
         .iter()
@@ -137,7 +150,6 @@ fn format_comments(comments: &[ReviewComment]) -> String {
         .join("\n\n")
 }
 
-#[cfg(test)]
 fn format_comment(index: usize, comment: &ReviewComment) -> String {
     let mut output = format!("Comment {index}:");
 
@@ -262,6 +274,55 @@ mod tests {
             error
                 .to_string()
                 .contains("review context summary was expected")
+        );
+    }
+
+    #[tokio::test]
+    async fn summarize_comments_sends_text_request() {
+        let provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::Text("comment summary".to_string()),
+            usage: RawUsage {
+                input_tokens: 20,
+                output_tokens: 8,
+            },
+        })]);
+        let comments = [ReviewComment {
+            body: "Please cover this branch.".to_string(),
+            commit: Some(CommitHash::new("abc1234").unwrap()),
+            location: Some(ReviewCommentLocation {
+                path: "src/lib.rs".to_string(),
+                line: 42,
+            }),
+        }];
+
+        let output = summarize_comments(&provider, "test-model", &comments)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            output,
+            ReviewContextSummaryOutput {
+                summary: "comment summary".to_string(),
+                usage: RawUsage {
+                    input_tokens: 20,
+                    output_tokens: 8,
+                },
+            }
+        );
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0].model, "test-model");
+        assert_eq!(requests[0].output_mode, RecordedLlmOutputMode::Text);
+        assert_eq!(
+            requests[0].conversation,
+            vec![
+                ConversationTurn::System(
+                    system_prompt(ReviewContextSummaryKind::Comments).to_string()
+                ),
+                ConversationTurn::User(
+                    "Pull request comments:\nComment 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nBody:\nPlease cover this branch.".to_string()
+                ),
+            ]
         );
     }
 }
