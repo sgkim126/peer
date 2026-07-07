@@ -1,4 +1,4 @@
-use crate::llm::context::ReviewComment;
+use crate::llm::context::{ReviewComment, ReviewContext, ReviewContextInput};
 use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
 };
@@ -39,9 +39,15 @@ impl ReviewContextSummaryInput {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ReviewContextSummaryOutput {
-    pub summary: String,
+pub struct PreparedReviewContext {
+    pub context: ReviewContext,
     pub usage: RawUsage,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct ReviewContextSummaryOutput {
+    summary: String,
+    usage: RawUsage,
 }
 
 fn system_prompt(kind: ReviewContextSummaryKind) -> &'static str {
@@ -66,7 +72,6 @@ fn user_prompt(kind: ReviewContextSummaryKind, content: &str) -> String {
     }
 }
 
-#[allow(dead_code)]
 async fn summarize_body<P>(
     provider: &P,
     model: &str,
@@ -78,7 +83,6 @@ where
     summarize_impl(provider, model, ReviewContextSummaryInput::body(body)).await
 }
 
-#[allow(dead_code)]
 async fn summarize_comments<P>(
     provider: &P,
     model: &str,
@@ -139,6 +143,41 @@ impl std::fmt::Display for ReviewContextSummaryError {
             Self::UnexpectedResponse => f.write_str("unexpected review context summary response"),
         }
     }
+}
+
+#[allow(dead_code)]
+pub async fn prepare_review_context<P>(
+    provider: &P,
+    model: &str,
+    input: ReviewContextInput,
+) -> Result<PreparedReviewContext, LlmCallError>
+where
+    P: LlmProvider,
+{
+    let mut usage = RawUsage::default();
+    let body_summary = if let Some(body) = input.body {
+        let output = summarize_body(provider, model, &body).await?;
+        usage += output.usage;
+        Some(output.summary)
+    } else {
+        None
+    };
+    let comments_summary = if input.comments.is_empty() {
+        None
+    } else {
+        let output = summarize_comments(provider, model, &input.comments).await?;
+        usage += output.usage;
+        Some(output.summary)
+    };
+
+    Ok(PreparedReviewContext {
+        context: ReviewContext {
+            title: input.title,
+            body_summary,
+            comments_summary,
+        },
+        usage,
+    })
 }
 
 fn format_comments(comments: &[ReviewComment]) -> String {
@@ -324,5 +363,117 @@ mod tests {
                 ),
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn prepares_title_only_context_without_llm_call() {
+        let provider = MockProvider::new([]);
+
+        let prepared = prepare_review_context(
+            &provider,
+            "test-model",
+            ReviewContextInput {
+                title: Some("Add parser".to_string()),
+                body: None,
+                comments: Vec::new(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            prepared,
+            PreparedReviewContext {
+                context: ReviewContext {
+                    title: Some("Add parser".to_string()),
+                    body_summary: None,
+                    comments_summary: None,
+                },
+                usage: RawUsage::default(),
+            }
+        );
+        assert!(provider.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn prepares_context_with_body_and_comments_summaries() {
+        let provider = MockProvider::new([
+            Ok(LlmCallResult {
+                response: LlmResponse::Text("body summary".to_string()),
+                usage: RawUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                },
+            }),
+            Ok(LlmCallResult {
+                response: LlmResponse::Text("comments summary".to_string()),
+                usage: RawUsage {
+                    input_tokens: 20,
+                    output_tokens: 8,
+                },
+            }),
+        ]);
+
+        let prepared = prepare_review_context(
+            &provider,
+            "test-model",
+            ReviewContextInput {
+                title: Some("Add parser".to_string()),
+                body: Some("Long PR body".to_string()),
+                comments: vec![ReviewComment {
+                    body: "Please cover this branch.".to_string(),
+                    commit: None,
+                    location: None,
+                }],
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            prepared,
+            PreparedReviewContext {
+                context: ReviewContext {
+                    title: Some("Add parser".to_string()),
+                    body_summary: Some("body summary".to_string()),
+                    comments_summary: Some("comments summary".to_string()),
+                },
+                usage: RawUsage {
+                    input_tokens: 30,
+                    output_tokens: 13,
+                },
+            }
+        );
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        assert_eq!(
+            requests
+                .iter()
+                .map(|request| request.output_mode.clone())
+                .collect::<Vec<_>>(),
+            vec![RecordedLlmOutputMode::Text, RecordedLlmOutputMode::Text]
+        );
+    }
+
+    #[tokio::test]
+    async fn prepare_context_propagates_summary_error() {
+        let provider = MockProvider::new([Err(LlmCallError::Transient {
+            message: "timeout".to_string(),
+            source: Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout")),
+        })]);
+
+        let error = prepare_review_context(
+            &provider,
+            "test-model",
+            ReviewContextInput {
+                title: None,
+                body: Some("Long PR body".to_string()),
+                comments: Vec::new(),
+            },
+        )
+        .await
+        .unwrap_err();
+
+        assert!(matches!(error, LlmCallError::Transient { .. }));
     }
 }
