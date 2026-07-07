@@ -1,4 +1,5 @@
 use crate::extract::{CommitDiff, CommitFiles, CommitMessage, ExtractError, Extractor};
+use crate::git::CommitHash;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
@@ -16,12 +17,14 @@ Use the required commit data supplied by the user. Use tools only when additiona
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SizeCheck {
-    revision: String,
+    commit: CommitHash,
 }
 
 impl SizeCheck {
-    pub fn new(revision: String) -> Self {
-        Self { revision }
+    pub async fn try_new(revision: String, extractor: &Extractor) -> Result<Self, ExtractError> {
+        Ok(Self {
+            commit: extractor.resolve_commit(&revision).await?,
+        })
     }
 }
 
@@ -35,10 +38,9 @@ impl CheckDefinition for SizeCheck {
         extractor: &Extractor,
         review_context: &ReviewContext,
     ) -> Result<PreparedCheck, ExtractError> {
-        let message = extractor.commit_message(&self.revision).await?;
-        let target = message.hash.clone();
-        let diff = extractor.commit_diff(target.as_ref()).await?;
-        let files = extractor.commit_files(target.as_ref()).await?;
+        let message = extractor.commit_message(self.commit.as_ref()).await?;
+        let diff = extractor.commit_diff(self.commit.as_ref()).await?;
+        let files = extractor.commit_files(self.commit.as_ref()).await?;
 
         Ok(build_prepared_check(message, diff, files, review_context))
     }
@@ -78,7 +80,6 @@ fn build_prepared_check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::CommitHash;
     use crate::llm::result::{CheckOutput, CheckTarget};
 
     fn hash(value: &str) -> CommitHash {
@@ -111,7 +112,11 @@ mod tests {
 
     #[test]
     fn name_is_size() {
-        assert_eq!(SizeCheck::new("HEAD".to_string()).name(), "size");
+        let check = SizeCheck {
+            commit: hash("abc1234"),
+        };
+
+        assert_eq!(check.name(), "size");
     }
 
     #[test]

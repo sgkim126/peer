@@ -65,6 +65,12 @@ impl From<CheckRunError> for CheckCommandError {
     }
 }
 
+impl From<ExtractError> for CheckCommandError {
+    fn from(err: ExtractError) -> Self {
+        Self::Run(CheckRunError::Preparation(err))
+    }
+}
+
 impl fmt::Display for CheckCommandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -94,70 +100,6 @@ pub async fn handler(
     project_root: PathBuf,
     review_context: &ReviewContext,
 ) -> Result<CheckResult, CheckCommandError> {
-    match command {
-        CheckCommand::Size { revision } => {
-            run_definition(
-                SizeCheck::new(revision),
-                console,
-                config,
-                project_root,
-                review_context,
-            )
-            .await
-        }
-        CheckCommand::Intent { revision } => {
-            run_definition(
-                IntentCheck::new(revision),
-                console,
-                config,
-                project_root,
-                review_context,
-            )
-            .await
-        }
-        CheckCommand::Quality { revision } => {
-            run_definition(
-                QualityCheck::new(revision),
-                console,
-                config,
-                project_root,
-                review_context,
-            )
-            .await
-        }
-        CheckCommand::Security { revision } => {
-            run_definition(
-                SecurityCheck::new(revision),
-                console,
-                config,
-                project_root,
-                review_context,
-            )
-            .await
-        }
-        CheckCommand::Coherence { range } => {
-            run_definition(
-                CoherenceCheck::new(range),
-                console,
-                config,
-                project_root,
-                review_context,
-            )
-            .await
-        }
-    }
-}
-
-async fn run_definition<C>(
-    check: C,
-    console: Console,
-    config: &Config,
-    project_root: PathBuf,
-    review_context: &ReviewContext,
-) -> Result<CheckResult, CheckCommandError>
-where
-    C: CheckDefinition,
-{
     let (provider_config, _) =
         config.resolve_provider(&config.llm.default_provider, &config.llm.default_model)?;
 
@@ -170,16 +112,68 @@ where
     let extractor = Extractor::new(project_root.clone(), console);
     let tool_executor = PeerToolExecutor::new(Extractor::new(project_root, console));
 
-    run_definition_with(
-        check,
-        console,
-        config,
-        &extractor,
-        &provider,
-        &tool_executor,
-        review_context,
-    )
-    .await
+    match command {
+        CheckCommand::Size { revision } => {
+            run_definition_with(
+                SizeCheck::try_new(revision, &extractor).await?,
+                console,
+                config,
+                &extractor,
+                &provider,
+                &tool_executor,
+                review_context,
+            )
+            .await
+        }
+        CheckCommand::Intent { revision } => {
+            run_definition_with(
+                IntentCheck::try_new(revision, &extractor).await?,
+                console,
+                config,
+                &extractor,
+                &provider,
+                &tool_executor,
+                review_context,
+            )
+            .await
+        }
+        CheckCommand::Quality { revision } => {
+            run_definition_with(
+                QualityCheck::try_new(revision, &extractor).await?,
+                console,
+                config,
+                &extractor,
+                &provider,
+                &tool_executor,
+                review_context,
+            )
+            .await
+        }
+        CheckCommand::Security { revision } => {
+            run_definition_with(
+                SecurityCheck::try_new(revision, &extractor).await?,
+                console,
+                config,
+                &extractor,
+                &provider,
+                &tool_executor,
+                review_context,
+            )
+            .await
+        }
+        CheckCommand::Coherence { range } => {
+            run_definition_with(
+                CoherenceCheck::try_new(range, &extractor).await?,
+                console,
+                config,
+                &extractor,
+                &provider,
+                &tool_executor,
+                review_context,
+            )
+            .await
+        }
+    }
 }
 
 async fn run_definition_with<C, P, E>(
@@ -540,11 +534,13 @@ mod tests {
         })])
     }
 
-    async fn run_with_injected_dependencies<C>(check: C) -> (CheckResult, MockProvider)
+    async fn run_check_with_repository<C>(
+        repository: &tempfile::TempDir,
+        check: C,
+    ) -> (CheckResult, MockProvider)
     where
         C: CheckDefinition,
     {
-        let repository = init_repository().await;
         let console = Console::default();
         let provider = successful_provider();
         let tool_executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
@@ -567,8 +563,12 @@ mod tests {
 
     #[tokio::test]
     async fn runs_size_check_with_injected_dependencies() {
-        let (result, provider) =
-            run_with_injected_dependencies(SizeCheck::new("HEAD".to_string())).await;
+        let repository = init_repository().await;
+        let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
+        let check = SizeCheck::try_new("HEAD".to_string(), &extractor)
+            .await
+            .unwrap();
+        let (result, provider) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "size");
         assert_eq!(result.summary, "done");
@@ -579,32 +579,48 @@ mod tests {
 
     #[tokio::test]
     async fn runs_intent_check_with_injected_dependencies() {
-        let (result, _) =
-            run_with_injected_dependencies(IntentCheck::new("HEAD".to_string())).await;
+        let repository = init_repository().await;
+        let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
+        let check = IntentCheck::try_new("HEAD".to_string(), &extractor)
+            .await
+            .unwrap();
+        let (result, _) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "intent");
     }
 
     #[tokio::test]
     async fn runs_quality_check_with_injected_dependencies() {
-        let (result, _) =
-            run_with_injected_dependencies(QualityCheck::new("HEAD".to_string())).await;
+        let repository = init_repository().await;
+        let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
+        let check = QualityCheck::try_new("HEAD".to_string(), &extractor)
+            .await
+            .unwrap();
+        let (result, _) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "quality");
     }
 
     #[tokio::test]
     async fn runs_security_check_with_injected_dependencies() {
-        let (result, _) =
-            run_with_injected_dependencies(SecurityCheck::new("HEAD".to_string())).await;
+        let repository = init_repository().await;
+        let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
+        let check = SecurityCheck::try_new("HEAD".to_string(), &extractor)
+            .await
+            .unwrap();
+        let (result, _) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "security");
     }
 
     #[tokio::test]
     async fn runs_coherence_check_with_injected_dependencies() {
-        let (result, _) =
-            run_with_injected_dependencies(CoherenceCheck::new("HEAD~1..HEAD".to_string())).await;
+        let repository = init_repository().await;
+        let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
+        let check = CoherenceCheck::try_new("HEAD~1..HEAD".to_string(), &extractor)
+            .await
+            .unwrap();
+        let (result, _) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "coherence");
     }
@@ -642,9 +658,12 @@ mod tests {
         ]);
         let tool_executor = FakeToolExecutor::new([Ok(json!("diff"))]);
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
+        let check = IntentCheck::try_new("HEAD".to_string(), &extractor)
+            .await
+            .unwrap();
 
         let result = run_definition_with(
-            IntentCheck::new("HEAD".to_string()),
+            check,
             console,
             &test_config(),
             &extractor,
@@ -666,9 +685,12 @@ mod tests {
         let provider = MockProvider::new([Err(error)]);
         let tool_executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
+        let check = SizeCheck::try_new("HEAD".to_string(), &extractor)
+            .await
+            .unwrap();
 
         run_definition_with(
-            SizeCheck::new("HEAD".to_string()),
+            check,
             console,
             &test_config(),
             &extractor,
@@ -730,9 +752,12 @@ mod tests {
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
         let mut config = test_config();
         config.llm.max_iterations = 1;
+        let check = SecurityCheck::try_new("HEAD".to_string(), &extractor)
+            .await
+            .unwrap();
 
         let result = run_definition_with(
-            SecurityCheck::new("HEAD".to_string()),
+            check,
             console,
             &config,
             &extractor,

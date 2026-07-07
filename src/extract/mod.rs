@@ -18,6 +18,7 @@ pub use self::file_content::FileContent;
 use crate::cli::ExtractCommand;
 use crate::config::Config;
 use crate::console::Console;
+use crate::git::{CommitHash, GitError};
 
 /// Provides the programmatic entry point to repository extraction.
 pub struct Extractor {
@@ -31,6 +32,10 @@ impl Extractor {
             project_root,
             console,
         }
+    }
+
+    pub async fn resolve_commit(&self, revision: &str) -> Result<CommitHash, GitError> {
+        CommitHash::resolve(revision, &self.project_root, self.console).await
     }
 }
 

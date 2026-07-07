@@ -17,12 +17,14 @@ The required commit list is ordered from oldest to newest. Findings must referen
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoherenceCheck {
-    range: String,
+    commit_list: CommitList,
 }
 
 impl CoherenceCheck {
-    pub fn new(range: String) -> Self {
-        Self { range }
+    pub async fn try_new(range: String, extractor: &Extractor) -> Result<Self, ExtractError> {
+        Ok(Self {
+            commit_list: extractor.commit_list(&range).await?,
+        })
     }
 }
 
@@ -36,14 +38,17 @@ impl CheckDefinition for CoherenceCheck {
         extractor: &Extractor,
         review_context: &ReviewContext,
     ) -> Result<PreparedCheck, ExtractError> {
-        let commit_list = extractor.commit_list(&self.range).await?;
-        let mut messages = Vec::with_capacity(commit_list.commits.len());
+        let mut messages = Vec::with_capacity(self.commit_list.commits.len());
 
-        for commit in &commit_list.commits {
+        for commit in &self.commit_list.commits {
             messages.push(extractor.commit_message(commit.as_ref()).await?);
         }
 
-        Ok(build_prepared_check(commit_list, messages, review_context))
+        Ok(build_prepared_check(
+            self.commit_list.clone(),
+            messages,
+            review_context,
+        ))
     }
 }
 
@@ -126,10 +131,14 @@ mod tests {
 
     #[test]
     fn name_is_coherence() {
-        assert_eq!(
-            CoherenceCheck::new("HEAD~2..HEAD".to_string()).name(),
-            "coherence"
-        );
+        let check = CoherenceCheck {
+            commit_list: CommitList {
+                range: "HEAD~2..HEAD".to_string(),
+                commits: vec![hash("abc1234"), hash("def5678")],
+            },
+        };
+
+        assert_eq!(check.name(), "coherence");
     }
 
     #[test]

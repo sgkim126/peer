@@ -7,7 +7,7 @@ use crate::git::{CommitHash, run_git};
 
 use super::{ExtractError, Extractor};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CommitList {
     pub range: String,
     pub commits: Vec<CommitHash>,

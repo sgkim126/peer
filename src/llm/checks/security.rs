@@ -1,4 +1,5 @@
 use crate::extract::{CommitDiff, CommitFiles, ExtractError, Extractor};
+use crate::git::CommitHash;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
@@ -17,12 +18,14 @@ Trace attacker-controlled inputs to sensitive operations. Distinguish exploitabl
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityCheck {
-    revision: String,
+    commit: CommitHash,
 }
 
 impl SecurityCheck {
-    pub fn new(revision: String) -> Self {
-        Self { revision }
+    pub async fn try_new(revision: String, extractor: &Extractor) -> Result<Self, ExtractError> {
+        Ok(Self {
+            commit: extractor.resolve_commit(&revision).await?,
+        })
     }
 }
 
@@ -36,8 +39,8 @@ impl CheckDefinition for SecurityCheck {
         extractor: &Extractor,
         review_context: &ReviewContext,
     ) -> Result<PreparedCheck, ExtractError> {
-        let diff = extractor.commit_diff(&self.revision).await?;
-        let files = extractor.commit_files(diff.hash.as_ref()).await?;
+        let diff = extractor.commit_diff(self.commit.as_ref()).await?;
+        let files = extractor.commit_files(self.commit.as_ref()).await?;
 
         Ok(build_prepared_check(diff, files, review_context))
     }
@@ -75,7 +78,6 @@ fn build_prepared_check(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::CommitHash;
     use crate::llm::result::{CheckOutput, CheckTarget};
 
     fn hash(value: &str) -> CommitHash {
@@ -104,7 +106,11 @@ mod tests {
 
     #[test]
     fn name_is_security() {
-        assert_eq!(SecurityCheck::new("HEAD".to_string()).name(), "security");
+        let check = SecurityCheck {
+            commit: hash("abc1234"),
+        };
+
+        assert_eq!(check.name(), "security");
     }
 
     #[test]
