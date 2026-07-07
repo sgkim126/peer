@@ -100,6 +100,32 @@ pub struct ReviewContext {
     pub comments_summary: Option<String>,
 }
 
+impl ReviewContext {
+    pub fn append_to_prompt(&self, prompt: &mut String) {
+        if self.is_empty() {
+            return;
+        }
+
+        prompt.push_str("\n\nReview context:");
+        if let Some(title) = &self.title {
+            prompt.push_str("\nTitle:\n");
+            prompt.push_str(title);
+        }
+        if let Some(body_summary) = &self.body_summary {
+            prompt.push_str("\nBody summary:\n");
+            prompt.push_str(body_summary);
+        }
+        if let Some(comments_summary) = &self.comments_summary {
+            prompt.push_str("\nComments summary:\n");
+            prompt.push_str(comments_summary);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.title.is_none() && self.body_summary.is_none() && self.comments_summary.is_none()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ReviewComment {
     pub body: String,
@@ -283,5 +309,32 @@ mod tests {
             error,
             ReviewContextInputError::ParseComments { .. }
         ));
+    }
+
+    #[test]
+    fn empty_review_context_does_not_change_prompt() {
+        let original_prompt = "Review the following required commit data.";
+        let mut prompt = original_prompt.to_string();
+
+        ReviewContext::default().append_to_prompt(&mut prompt);
+
+        assert_eq!(prompt, original_prompt);
+    }
+
+    #[test]
+    fn appends_review_context_prompt_section() {
+        let mut prompt = "Review the following required commit data.".to_string();
+
+        ReviewContext {
+            title: Some("Add review context".to_string()),
+            body_summary: Some("Adds PR context support.".to_string()),
+            comments_summary: Some("Reviewer asked for better error handling.".to_string()),
+        }
+        .append_to_prompt(&mut prompt);
+
+        assert!(prompt.contains("Review context:"));
+        assert!(prompt.contains("Title:\nAdd review context"));
+        assert!(prompt.contains("Body summary:\nAdds PR context support."));
+        assert!(prompt.contains("Comments summary:\nReviewer asked for better error handling."));
     }
 }

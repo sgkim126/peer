@@ -1,4 +1,5 @@
 use crate::extract::{CommitDiff, CommitFiles, ExtractError, Extractor};
+use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
 use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, all_tools, output_schema};
@@ -33,31 +34,37 @@ impl CheckDefinition for QualityCheck {
     async fn prepare(
         &self,
         extractor: &Extractor,
-        _review_context: &crate::llm::context::ReviewContext,
+        review_context: &ReviewContext,
     ) -> Result<PreparedCheck, ExtractError> {
         let diff = extractor.commit_diff(&self.revision).await?;
         let files = extractor.commit_files(diff.hash.as_ref()).await?;
 
-        Ok(build_prepared_check(diff, files))
+        Ok(build_prepared_check(diff, files, review_context))
     }
 }
 
-fn build_prepared_check(diff: CommitDiff, files: CommitFiles) -> PreparedCheck {
+fn build_prepared_check(
+    diff: CommitDiff,
+    files: CommitFiles,
+    review_context: &ReviewContext,
+) -> PreparedCheck {
     let target = diff.hash.clone();
     let required_data = serde_json::json!({
         "target_commit": target,
         "changed_files": files.files,
         "diff": diff.diff,
     });
+    let mut user_prompt = format!(
+        "Review the following required commit data:\n{}",
+        serde_json::to_string_pretty(&required_data)
+            .expect("serializing quality check input cannot fail")
+    );
+    review_context.append_to_prompt(&mut user_prompt);
 
     PreparedCheck {
         conversation: vec![
             ConversationTurn::System(SYSTEM_PROMPT.to_string()),
-            ConversationTurn::User(format!(
-                "Review the following required commit data:\n{}",
-                serde_json::to_string_pretty(&required_data)
-                    .expect("serializing quality check input cannot fail")
-            )),
+            ConversationTurn::User(user_prompt),
         ],
         tools: all_tools(),
         output_schema: output_schema(),
@@ -91,6 +98,7 @@ mod tests {
                 }]))
                 .unwrap(),
             },
+            &ReviewContext::default(),
         )
     }
 
@@ -114,6 +122,34 @@ mod tests {
         assert!(user.contains("\"target_commit\": \"abc1234\""));
         assert!(user.contains("\"path\": \"src/lib.rs\""));
         assert!(user.contains("unwrap_input"));
+        assert!(!user.contains("Review context:"));
+    }
+
+    #[test]
+    fn prepared_conversation_contains_review_context_when_present() {
+        let target = hash("abc1234");
+        let prepared = build_prepared_check(
+            CommitDiff {
+                hash: target.clone(),
+                diff: "diff --git a/src/lib.rs b/src/lib.rs\n+unwrap_input();".to_string(),
+            },
+            CommitFiles {
+                hash: target,
+                files: serde_json::from_value(serde_json::json!([])).unwrap(),
+            },
+            &ReviewContext {
+                title: Some("Improve input handling".to_string()),
+                body_summary: Some("Touches parser error paths.".to_string()),
+                comments_summary: None,
+            },
+        );
+
+        let ConversationTurn::User(user) = &prepared.conversation[1] else {
+            panic!("expected required data");
+        };
+        assert!(user.contains("Review context:"));
+        assert!(user.contains("Title:\nImprove input handling"));
+        assert!(user.contains("Body summary:\nTouches parser error paths."));
     }
 
     #[test]

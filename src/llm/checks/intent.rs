@@ -1,4 +1,5 @@
 use crate::extract::{CommitDiff, CommitMessage, ExtractError, Extractor};
+use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
 use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, all_tools, output_schema};
@@ -32,31 +33,37 @@ impl CheckDefinition for IntentCheck {
     async fn prepare(
         &self,
         extractor: &Extractor,
-        _review_context: &crate::llm::context::ReviewContext,
+        review_context: &ReviewContext,
     ) -> Result<PreparedCheck, ExtractError> {
         let message = extractor.commit_message(&self.revision).await?;
         let diff = extractor.commit_diff(message.hash.as_ref()).await?;
 
-        Ok(build_prepared_check(message, diff))
+        Ok(build_prepared_check(message, diff, review_context))
     }
 }
 
-fn build_prepared_check(message: CommitMessage, diff: CommitDiff) -> PreparedCheck {
+fn build_prepared_check(
+    message: CommitMessage,
+    diff: CommitDiff,
+    review_context: &ReviewContext,
+) -> PreparedCheck {
     let target = message.hash.clone();
     let required_data = serde_json::json!({
         "target_commit": target,
         "commit_message": message.message,
         "diff": diff.diff,
     });
+    let mut user_prompt = format!(
+        "Review the following required commit data:\n{}",
+        serde_json::to_string_pretty(&required_data)
+            .expect("serializing intent check input cannot fail")
+    );
+    review_context.append_to_prompt(&mut user_prompt);
 
     PreparedCheck {
         conversation: vec![
             ConversationTurn::System(SYSTEM_PROMPT.to_string()),
-            ConversationTurn::User(format!(
-                "Review the following required commit data:\n{}",
-                serde_json::to_string_pretty(&required_data)
-                    .expect("serializing intent check input cannot fail")
-            )),
+            ConversationTurn::User(user_prompt),
         ],
         tools: all_tools(),
         output_schema: output_schema(),
@@ -86,6 +93,7 @@ mod tests {
                 diff: "diff --git a/src/config.rs b/src/config.rs\n+validate_api_key();"
                     .to_string(),
             },
+            &ReviewContext::default(),
         )
     }
 
@@ -109,6 +117,36 @@ mod tests {
         assert!(user.contains("\"target_commit\": \"abc1234\""));
         assert!(user.contains("\"commit_message\": \"Reject empty API keys\""));
         assert!(user.contains("validate_api_key"));
+        assert!(!user.contains("Review context:"));
+    }
+
+    #[test]
+    fn prepared_conversation_contains_review_context_when_present() {
+        let target = hash("abc1234");
+        let prepared = build_prepared_check(
+            CommitMessage {
+                hash: target.clone(),
+                message: "Reject empty API keys".to_string(),
+            },
+            CommitDiff {
+                hash: target,
+                diff: "diff --git a/src/config.rs b/src/config.rs\n+validate_api_key();"
+                    .to_string(),
+            },
+            &ReviewContext {
+                title: Some("Reject invalid config".to_string()),
+                body_summary: Some("Adds validation to config loading.".to_string()),
+                comments_summary: Some("Reviewer asked about empty API keys.".to_string()),
+            },
+        );
+
+        let ConversationTurn::User(user) = &prepared.conversation[1] else {
+            panic!("expected required data");
+        };
+        assert!(user.contains("Review context:"));
+        assert!(user.contains("Title:\nReject invalid config"));
+        assert!(user.contains("Body summary:\nAdds validation to config loading."));
+        assert!(user.contains("Comments summary:\nReviewer asked about empty API keys."));
     }
 
     #[test]

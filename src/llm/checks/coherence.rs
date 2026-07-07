@@ -1,4 +1,5 @@
 use crate::extract::{CommitList, CommitMessage, ExtractError, Extractor};
+use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
 use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, all_tools, output_schema};
@@ -33,7 +34,7 @@ impl CheckDefinition for CoherenceCheck {
     async fn prepare(
         &self,
         extractor: &Extractor,
-        _review_context: &crate::llm::context::ReviewContext,
+        review_context: &ReviewContext,
     ) -> Result<PreparedCheck, ExtractError> {
         let commit_list = extractor.commit_list(&self.range).await?;
         let mut messages = Vec::with_capacity(commit_list.commits.len());
@@ -42,11 +43,15 @@ impl CheckDefinition for CoherenceCheck {
             messages.push(extractor.commit_message(commit.as_ref()).await?);
         }
 
-        Ok(build_prepared_check(commit_list, messages))
+        Ok(build_prepared_check(commit_list, messages, review_context))
     }
 }
 
-fn build_prepared_check(commit_list: CommitList, messages: Vec<CommitMessage>) -> PreparedCheck {
+fn build_prepared_check(
+    commit_list: CommitList,
+    messages: Vec<CommitMessage>,
+    review_context: &ReviewContext,
+) -> PreparedCheck {
     let commits = commit_list.commits;
     let ordered_commits = messages
         .into_iter()
@@ -61,14 +66,16 @@ fn build_prepared_check(commit_list: CommitList, messages: Vec<CommitMessage>) -
         })
         .collect::<Vec<_>>()
         .join("\n\n");
+    let mut user_prompt = format!(
+        "Review range {}.\n\nCommits (oldest to newest):\n{}",
+        commit_list.range, ordered_commits
+    );
+    review_context.append_to_prompt(&mut user_prompt);
 
     PreparedCheck {
         conversation: vec![
             ConversationTurn::System(SYSTEM_PROMPT.to_string()),
-            ConversationTurn::User(format!(
-                "Review range {}.\n\nCommits (oldest to newest):\n{}",
-                commit_list.range, ordered_commits
-            )),
+            ConversationTurn::User(user_prompt),
         ],
         tools: all_tools(),
         output_schema: output_schema(),
@@ -113,6 +120,7 @@ mod tests {
                     message: "Fix parser edge case".to_string(),
                 },
             ],
+            &ReviewContext::default(),
         )
     }
 
@@ -141,6 +149,39 @@ mod tests {
         assert!(first < second);
         assert!(user.contains("Add parser"));
         assert!(user.contains("Fix parser edge case"));
+        assert!(!user.contains("Review context:"));
+    }
+
+    #[test]
+    fn prepared_conversation_contains_review_context_when_present() {
+        let prepared = build_prepared_check(
+            CommitList {
+                range: "base123..tip4567".to_string(),
+                commits: vec![hash("abc1234"), hash("def5678")],
+            },
+            vec![
+                CommitMessage {
+                    hash: hash("abc1234"),
+                    message: "Add parser".to_string(),
+                },
+                CommitMessage {
+                    hash: hash("def5678"),
+                    message: "Fix parser edge case".to_string(),
+                },
+            ],
+            &ReviewContext {
+                title: Some("Parser cleanup series".to_string()),
+                body_summary: Some("Series should remain bisectable.".to_string()),
+                comments_summary: None,
+            },
+        );
+
+        let ConversationTurn::User(user) = &prepared.conversation[1] else {
+            panic!("expected required data");
+        };
+        assert!(user.contains("Review context:"));
+        assert!(user.contains("Title:\nParser cleanup series"));
+        assert!(user.contains("Body summary:\nSeries should remain bisectable."));
     }
 
     #[test]
