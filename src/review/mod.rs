@@ -6,6 +6,7 @@ use crate::config::Config;
 use crate::console::Console;
 use crate::git::{CommitHash, GitError, run_git};
 use crate::llm::checks::{self, CheckCommandError};
+use crate::llm::context::ReviewContext;
 use crate::llm::result::CheckResult;
 
 use serde::{Deserialize, Serialize};
@@ -122,10 +123,10 @@ pub async fn run(
     console: Console,
     config: &Config,
     project_root: PathBuf,
+    review_context: &ReviewContext,
 ) -> ReviewResult {
     let mut results = Vec::with_capacity(plan.checks.len());
     let mut errors = Vec::new();
-    let review_context = crate::llm::context::ReviewContext::default();
 
     for check in plan.checks {
         let command = CheckCommand::from(check.clone());
@@ -134,7 +135,7 @@ pub async fn run(
             command,
             config,
             project_root.clone(),
-            &review_context,
+            review_context,
         )
         .await
         {

@@ -16,7 +16,7 @@ use crate::cli::{Cli, Command};
 use crate::config::discover;
 use crate::console::Console;
 use crate::llm::checks::{CheckCommandError, CheckCommandOutput};
-use crate::llm::result::CheckResult;
+use crate::llm::result::{CheckResult, CheckUsage};
 
 use std::io::Read;
 use std::process::ExitCode;
@@ -54,7 +54,7 @@ async fn main() -> ExitCode {
             if comments_file.is_none() {
                 eprintln!("warning: review comments file was not provided.");
             }
-            let _review_context_input = match llm::context::ReviewContextInput::load(
+            let review_context_input = match llm::context::ReviewContextInput::load(
                 title,
                 body_file.as_deref(),
                 comments_file.as_deref(),
@@ -109,7 +109,58 @@ async fn main() -> ExitCode {
             let plan = review::plan_checks(&review_target);
             console.debug(format!("{plan:?}"));
 
-            let result = review::run(plan, console, &config, project_root).await;
+            let (provider_config, model_config) = match config
+                .resolve_provider(&config.llm.default_provider, &config.llm.default_model)
+            {
+                Ok(resolved) => resolved,
+                Err(err) => {
+                    eprintln!("{err}");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let provider = match llm::provider::create_provider(
+                &provider_config.name,
+                &provider_config.api_key_env,
+                provider_config.base_url.as_deref(),
+                console,
+            ) {
+                Ok(provider) => provider,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let prepared_review_context = match llm::tools::prepare_review_context(
+                &provider,
+                &model_config.name,
+                review_context_input,
+            )
+            .await
+            {
+                Ok(context) => context,
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    console.debug(format!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let review_context_usage = CheckUsage::from_raw_usage(
+                prepared_review_context.usage,
+                model_config.name.clone(),
+                model_config.input_per_1m_usd,
+                model_config.output_per_1m_usd,
+            );
+            console.verbose(format!(
+                "Review context usage: {} input, {} output, ${:.6} ({})",
+                review_context_usage.input_tokens,
+                review_context_usage.output_tokens,
+                review_context_usage.cost_usd,
+                review_context_usage.model
+            ));
+            let review_context = prepared_review_context.context;
+            let result = review::run(plan, console, &config, project_root, &review_context).await;
             for error in &result.errors {
                 eprintln!("error: {error}");
                 console.debug(format!("{error:?}"));

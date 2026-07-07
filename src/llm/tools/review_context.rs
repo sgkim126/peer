@@ -145,7 +145,6 @@ impl std::fmt::Display for ReviewContextSummaryError {
     }
 }
 
-#[allow(dead_code)]
 pub async fn prepare_review_context<P>(
     provider: &P,
     model: &str,
