@@ -1,4 +1,4 @@
-use std::fmt::Display;
+use std::fmt::Arguments;
 
 use crate::cli::Cli;
 
@@ -18,14 +18,14 @@ impl Console {
     }
 
     #[allow(dead_code)]
-    pub fn verbose<M: Display>(&self, msg: M) {
+    pub fn verbose(&self, msg: Arguments<'_>) {
         if self.verbose {
             eprintln!("[verbose] {msg}");
         }
     }
 
     #[allow(dead_code)]
-    pub fn debug<M: Display>(&self, msg: M) {
+    pub fn debug(&self, msg: Arguments<'_>) {
         if self.debug {
             eprintln!("[debug] {msg}");
         }
