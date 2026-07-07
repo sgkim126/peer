@@ -4,6 +4,7 @@ use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::agent::{AgentRequest, ToolExecutor, run_agent};
 use crate::llm::confidence::Confidence;
+use crate::llm::context::ReviewContext;
 use crate::llm::provider::{LlmCallError, LlmProvider};
 use crate::llm::result::{CheckOutput, CheckResult};
 
@@ -60,13 +61,14 @@ pub async fn run_check<C, P, E>(
     provider: &P,
     tool_executor: &E,
     config: CheckRunConfig<'_>,
+    review_context: &ReviewContext,
 ) -> Result<CheckResult, CheckRunError>
 where
     C: CheckDefinition,
     P: LlmProvider,
     E: ToolExecutor,
 {
-    let prepared = check.prepare(extractor).await?;
+    let prepared = check.prepare(extractor, review_context).await?;
     let validate_output = |output: &CheckOutput| prepared.validate_output(output);
     let outcome = run_agent(
         provider,
@@ -117,7 +119,11 @@ mod tests {
             "test"
         }
 
-        async fn prepare(&self, _extractor: &Extractor) -> Result<PreparedCheck, ExtractError> {
+        async fn prepare(
+            &self,
+            _extractor: &Extractor,
+            _review_context: &ReviewContext,
+        ) -> Result<PreparedCheck, ExtractError> {
             Ok(PreparedCheck {
                 conversation: vec![ConversationTurn::System("review the commit".to_string())],
                 tools: Vec::new(),
@@ -173,9 +179,16 @@ mod tests {
             target: CommitHash::new("abc1234").unwrap(),
         };
 
-        let result = run_check(&check, &extractor(), &provider, &executor, config())
-            .await
-            .unwrap();
+        let result = run_check(
+            &check,
+            &extractor(),
+            &provider,
+            &executor,
+            config(),
+            &ReviewContext::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.check, "test");
         assert_eq!(result.summary, "summary");
@@ -203,9 +216,16 @@ mod tests {
             target: CommitHash::new("abc1234").unwrap(),
         };
 
-        let result = run_check(&check, &extractor(), &provider, &executor, config())
-            .await
-            .unwrap();
+        let result = run_check(
+            &check,
+            &extractor(),
+            &provider,
+            &executor,
+            config(),
+            &ReviewContext::default(),
+        )
+        .await
+        .unwrap();
 
         assert!(result.is_exhausted);
         assert_eq!(result.confidence.as_f64(), 0.7);
@@ -227,9 +247,16 @@ mod tests {
             target: CommitHash::new("abc1234").unwrap(),
         };
 
-        let result = run_check(&check, &extractor(), &provider, &executor, config())
-            .await
-            .unwrap();
+        let result = run_check(
+            &check,
+            &extractor(),
+            &provider,
+            &executor,
+            config(),
+            &ReviewContext::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             result.findings[0].commit,

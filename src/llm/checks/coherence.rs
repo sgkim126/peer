@@ -30,7 +30,11 @@ impl CheckDefinition for CoherenceCheck {
         "coherence"
     }
 
-    async fn prepare(&self, extractor: &Extractor) -> Result<PreparedCheck, ExtractError> {
+    async fn prepare(
+        &self,
+        extractor: &Extractor,
+        _review_context: &crate::llm::context::ReviewContext,
+    ) -> Result<PreparedCheck, ExtractError> {
         let commit_list = extractor.commit_list(&self.range).await?;
         let mut messages = Vec::with_capacity(commit_list.commits.len());
 

@@ -29,7 +29,11 @@ impl CheckDefinition for SizeCheck {
         "size"
     }
 
-    async fn prepare(&self, extractor: &Extractor) -> Result<PreparedCheck, ExtractError> {
+    async fn prepare(
+        &self,
+        extractor: &Extractor,
+        _review_context: &crate::llm::context::ReviewContext,
+    ) -> Result<PreparedCheck, ExtractError> {
         let message = extractor.commit_message(&self.revision).await?;
         let target = message.hash.clone();
         let diff = extractor.commit_diff(target.as_ref()).await?;

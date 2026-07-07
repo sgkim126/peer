@@ -6,7 +6,6 @@ use serde::Deserialize;
 use crate::git::CommitHash;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct ReviewContextInput {
     pub title: Option<String>,
     pub body: Option<String>,
@@ -95,7 +94,6 @@ impl std::error::Error for ReviewContextInputError {
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-#[allow(dead_code)]
 pub struct ReviewContext {
     pub title: Option<String>,
     pub body_summary: Option<String>,

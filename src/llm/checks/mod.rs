@@ -24,6 +24,7 @@ use crate::llm::checks::runner::{CheckRunConfig, CheckRunError, run_check};
 use crate::llm::checks::security::SecurityCheck;
 use crate::llm::checks::size::SizeCheck;
 use crate::llm::confidence::{Confidence, ConfidenceError};
+use crate::llm::context::ReviewContext;
 use crate::llm::provider::{
     ConversationTurn, LlmProvider, ProviderCreationError, ToolSpec, create_provider,
 };
@@ -91,22 +92,58 @@ pub async fn handler(
     command: CheckCommand,
     config: &Config,
     project_root: PathBuf,
+    review_context: &ReviewContext,
 ) -> Result<CheckResult, CheckCommandError> {
     match command {
         CheckCommand::Size { revision } => {
-            run_definition(SizeCheck::new(revision), console, config, project_root).await
+            run_definition(
+                SizeCheck::new(revision),
+                console,
+                config,
+                project_root,
+                review_context,
+            )
+            .await
         }
         CheckCommand::Intent { revision } => {
-            run_definition(IntentCheck::new(revision), console, config, project_root).await
+            run_definition(
+                IntentCheck::new(revision),
+                console,
+                config,
+                project_root,
+                review_context,
+            )
+            .await
         }
         CheckCommand::Quality { revision } => {
-            run_definition(QualityCheck::new(revision), console, config, project_root).await
+            run_definition(
+                QualityCheck::new(revision),
+                console,
+                config,
+                project_root,
+                review_context,
+            )
+            .await
         }
         CheckCommand::Security { revision } => {
-            run_definition(SecurityCheck::new(revision), console, config, project_root).await
+            run_definition(
+                SecurityCheck::new(revision),
+                console,
+                config,
+                project_root,
+                review_context,
+            )
+            .await
         }
         CheckCommand::Coherence { range } => {
-            run_definition(CoherenceCheck::new(range), console, config, project_root).await
+            run_definition(
+                CoherenceCheck::new(range),
+                console,
+                config,
+                project_root,
+                review_context,
+            )
+            .await
         }
     }
 }
@@ -116,6 +153,7 @@ async fn run_definition<C>(
     console: Console,
     config: &Config,
     project_root: PathBuf,
+    review_context: &ReviewContext,
 ) -> Result<CheckResult, CheckCommandError>
 where
     C: CheckDefinition,
@@ -139,6 +177,7 @@ where
         &extractor,
         &provider,
         &tool_executor,
+        review_context,
     )
     .await
 }
@@ -150,6 +189,7 @@ async fn run_definition_with<C, P, E>(
     extractor: &Extractor,
     provider: &P,
     tool_executor: &E,
+    review_context: &ReviewContext,
 ) -> Result<CheckResult, CheckCommandError>
 where
     C: CheckDefinition,
@@ -169,7 +209,15 @@ where
         console,
     };
 
-    Ok(run_check(&check, extractor, provider, tool_executor, run_config).await?)
+    Ok(run_check(
+        &check,
+        extractor,
+        provider,
+        tool_executor,
+        run_config,
+        review_context,
+    )
+    .await?)
 }
 
 /// Inputs prepared before the agent loop starts.
@@ -215,7 +263,11 @@ pub trait CheckDefinition {
     fn name(&self) -> &'static str;
 
     /// Loads required data and builds the initial agent inputs.
-    async fn prepare(&self, extractor: &Extractor) -> Result<PreparedCheck, ExtractError>;
+    async fn prepare(
+        &self,
+        extractor: &Extractor,
+        review_context: &ReviewContext,
+    ) -> Result<PreparedCheck, ExtractError>;
 }
 
 fn all_tools() -> Vec<ToolSpec> {
@@ -366,7 +418,11 @@ mod tests {
             "test"
         }
 
-        async fn prepare(&self, _extractor: &Extractor) -> Result<PreparedCheck, ExtractError> {
+        async fn prepare(
+            &self,
+            _extractor: &Extractor,
+            _review_context: &ReviewContext,
+        ) -> Result<PreparedCheck, ExtractError> {
             Ok(PreparedCheck {
                 conversation: vec![
                     ConversationTurn::System(format!("Review commit {}.", self.target)),
@@ -501,6 +557,7 @@ mod tests {
             &extractor,
             &provider,
             &tool_executor,
+            &ReviewContext::default(),
         )
         .await
         .unwrap();
@@ -593,6 +650,7 @@ mod tests {
             &extractor,
             &provider,
             &tool_executor,
+            &ReviewContext::default(),
         )
         .await
         .unwrap();
@@ -616,6 +674,7 @@ mod tests {
             &extractor,
             &provider,
             &tool_executor,
+            &ReviewContext::default(),
         )
         .await
         .unwrap_err()
@@ -679,6 +738,7 @@ mod tests {
             &extractor,
             &provider,
             &tool_executor,
+            &ReviewContext::default(),
         )
         .await
         .unwrap();
@@ -703,7 +763,10 @@ mod tests {
 
         assert_eq!(check.name(), "test");
 
-        let prepared = check.prepare(&extractor).await.unwrap();
+        let prepared = check
+            .prepare(&extractor, &ReviewContext::default())
+            .await
+            .unwrap();
         assert_eq!(
             prepared.conversation,
             vec![

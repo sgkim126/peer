@@ -125,10 +125,19 @@ pub async fn run(
 ) -> ReviewResult {
     let mut results = Vec::with_capacity(plan.checks.len());
     let mut errors = Vec::new();
+    let review_context = crate::llm::context::ReviewContext::default();
 
     for check in plan.checks {
         let command = CheckCommand::from(check.clone());
-        match checks::handler(console, command, config, project_root.clone()).await {
+        match checks::handler(
+            console,
+            command,
+            config,
+            project_root.clone(),
+            &review_context,
+        )
+        .await
+        {
             Ok(result) => results.push(result),
             Err(error) => errors.push(ReviewCheckError { check, error }),
         }

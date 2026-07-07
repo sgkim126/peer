@@ -30,7 +30,11 @@ impl CheckDefinition for QualityCheck {
         "quality"
     }
 
-    async fn prepare(&self, extractor: &Extractor) -> Result<PreparedCheck, ExtractError> {
+    async fn prepare(
+        &self,
+        extractor: &Extractor,
+        _review_context: &crate::llm::context::ReviewContext,
+    ) -> Result<PreparedCheck, ExtractError> {
         let diff = extractor.commit_diff(&self.revision).await?;
         let files = extractor.commit_files(diff.hash.as_ref()).await?;
 
