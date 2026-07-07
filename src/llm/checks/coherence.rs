@@ -24,9 +24,9 @@ pub struct CoherenceCheck {
 }
 
 impl CoherenceCheck {
-    pub async fn try_new(range: String, extractor: &Extractor) -> Result<Self, ExtractError> {
+    pub async fn try_new(range: &str, extractor: &Extractor) -> Result<Self, ExtractError> {
         Ok(Self {
-            commit_list: extractor.commit_list(&range).await?,
+            commit_list: extractor.commit_list(range).await?,
         })
     }
 }

@@ -117,19 +117,19 @@ pub async fn handler(
 
     let check = match command {
         CheckCommand::Size { revision } => {
-            ResolvedCheck::Size(SizeCheck::try_new(revision, &extractor).await?)
+            ResolvedCheck::Size(SizeCheck::try_new(&revision, &extractor).await?)
         }
         CheckCommand::Intent { revision } => {
-            ResolvedCheck::Intent(IntentCheck::try_new(revision, &extractor).await?)
+            ResolvedCheck::Intent(IntentCheck::try_new(&revision, &extractor).await?)
         }
         CheckCommand::Quality { revision } => {
-            ResolvedCheck::Quality(QualityCheck::try_new(revision, &extractor).await?)
+            ResolvedCheck::Quality(QualityCheck::try_new(&revision, &extractor).await?)
         }
         CheckCommand::Security { revision } => {
-            ResolvedCheck::Security(SecurityCheck::try_new(revision, &extractor).await?)
+            ResolvedCheck::Security(SecurityCheck::try_new(&revision, &extractor).await?)
         }
         CheckCommand::Coherence { range } => {
-            ResolvedCheck::Coherence(CoherenceCheck::try_new(range, &extractor).await?)
+            ResolvedCheck::Coherence(CoherenceCheck::try_new(&range, &extractor).await?)
         }
     };
 
@@ -619,9 +619,7 @@ mod tests {
     async fn runs_size_check_with_injected_dependencies() {
         let repository = init_repository().await;
         let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
-        let check = SizeCheck::try_new("HEAD".to_string(), &extractor)
-            .await
-            .unwrap();
+        let check = SizeCheck::try_new("HEAD", &extractor).await.unwrap();
         let (result, provider) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "size");
@@ -635,9 +633,7 @@ mod tests {
     async fn runs_intent_check_with_injected_dependencies() {
         let repository = init_repository().await;
         let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
-        let check = IntentCheck::try_new("HEAD".to_string(), &extractor)
-            .await
-            .unwrap();
+        let check = IntentCheck::try_new("HEAD", &extractor).await.unwrap();
         let (result, _) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "intent");
@@ -647,9 +643,7 @@ mod tests {
     async fn runs_quality_check_with_injected_dependencies() {
         let repository = init_repository().await;
         let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
-        let check = QualityCheck::try_new("HEAD".to_string(), &extractor)
-            .await
-            .unwrap();
+        let check = QualityCheck::try_new("HEAD", &extractor).await.unwrap();
         let (result, _) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "quality");
@@ -659,9 +653,7 @@ mod tests {
     async fn runs_security_check_with_injected_dependencies() {
         let repository = init_repository().await;
         let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
-        let check = SecurityCheck::try_new("HEAD".to_string(), &extractor)
-            .await
-            .unwrap();
+        let check = SecurityCheck::try_new("HEAD", &extractor).await.unwrap();
         let (result, _) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "security");
@@ -671,7 +663,7 @@ mod tests {
     async fn runs_coherence_check_with_injected_dependencies() {
         let repository = init_repository().await;
         let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
-        let check = CoherenceCheck::try_new("HEAD~1..HEAD".to_string(), &extractor)
+        let check = CoherenceCheck::try_new("HEAD~1..HEAD", &extractor)
             .await
             .unwrap();
         let (result, _) = run_check_with_repository(&repository, check).await;
@@ -712,9 +704,7 @@ mod tests {
         ]);
         let tool_executor = FakeToolExecutor::new([Ok(json!("diff"))]);
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
-        let check = IntentCheck::try_new("HEAD".to_string(), &extractor)
-            .await
-            .unwrap();
+        let check = IntentCheck::try_new("HEAD", &extractor).await.unwrap();
 
         let result = run_definition_with(
             check,
@@ -743,9 +733,7 @@ mod tests {
         let provider = MockProvider::new([Err(error)]);
         let tool_executor = FakeToolExecutor::default();
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
-        let check = SizeCheck::try_new("HEAD".to_string(), &extractor)
-            .await
-            .unwrap();
+        let check = SizeCheck::try_new("HEAD", &extractor).await.unwrap();
 
         run_definition_with(
             check,
@@ -814,9 +802,7 @@ mod tests {
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
         let mut config = test_config();
         config.llm.max_iterations = 1;
-        let check = SecurityCheck::try_new("HEAD".to_string(), &extractor)
-            .await
-            .unwrap();
+        let check = SecurityCheck::try_new("HEAD", &extractor).await.unwrap();
 
         let result = run_definition_with(
             check,

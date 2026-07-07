@@ -24,9 +24,9 @@ pub struct IntentCheck {
 }
 
 impl IntentCheck {
-    pub async fn try_new(revision: String, extractor: &Extractor) -> Result<Self, ExtractError> {
+    pub async fn try_new(revision: &str, extractor: &Extractor) -> Result<Self, ExtractError> {
         Ok(Self {
-            commit: extractor.resolve_commit(&revision).await?,
+            commit: extractor.resolve_commit(revision).await?,
         })
     }
 }
