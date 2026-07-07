@@ -5,7 +5,7 @@ use crate::git::GitError;
 #[derive(Debug)]
 pub enum ExtractError {
     Git(GitError),
-    InvalidRange(String),
+    InvalidTwoDotRange(String),
     InvalidRevision(String),
 }
 
@@ -15,7 +15,7 @@ impl fmt::Display for ExtractError {
             Self::Git(source) => {
                 write!(f, "cannot run git ({source})")
             }
-            Self::InvalidRange(range) => {
+            Self::InvalidTwoDotRange(range) => {
                 write!(f, "{range} is not a two-dots range")
             }
             Self::InvalidRevision(rev) => {
@@ -29,7 +29,7 @@ impl std::error::Error for ExtractError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Git(source) => Some(source),
-            Self::InvalidRange(_) => None,
+            Self::InvalidTwoDotRange(_) => None,
             Self::InvalidRevision(_) => None,
         }
     }

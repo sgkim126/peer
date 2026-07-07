@@ -25,12 +25,12 @@ async fn commit_list(
     console: Console,
 ) -> Result<CommitList, ExtractError> {
     if range.contains("...") || !range.contains("..") {
-        return Err(ExtractError::InvalidRange(range.to_string()));
+        return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
     }
 
     let (from, to) = range.split_once("..").unwrap();
     if from.is_empty() || to.is_empty() {
-        return Err(ExtractError::InvalidRange(range.to_string()));
+        return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
     }
 
     CommitHash::resolve(from, project_root, console)
@@ -138,7 +138,7 @@ mod tests {
         let err = commit_list(&range, &repo.path, Console::default())
             .await
             .unwrap_err();
-        assert!(matches!(err, ExtractError::InvalidRange(value) if value == range));
+        assert!(matches!(err, ExtractError::InvalidTwoDotRange(value) if value == range));
     }
 
     #[tokio::test]
@@ -148,7 +148,7 @@ mod tests {
         let err = commit_list(hash1.as_ref(), &repo.path, Console::default())
             .await
             .unwrap_err();
-        assert!(matches!(err, ExtractError::InvalidRange(value) if value == hash1.as_ref()));
+        assert!(matches!(err, ExtractError::InvalidTwoDotRange(value) if value == hash1.as_ref()));
     }
 
     #[tokio::test]

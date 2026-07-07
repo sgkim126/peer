@@ -89,7 +89,7 @@ fn check_run_error_classification(error: &CheckRunError) -> (ErrorCode, bool) {
 fn extract_error_classification(error: &ExtractError) -> (ErrorCode, bool) {
     match error {
         ExtractError::Git(_) => (ErrorCode::GitCommandFailed, false),
-        ExtractError::InvalidRange(_) | ExtractError::InvalidRevision(_) => {
+        ExtractError::InvalidTwoDotRange(_) | ExtractError::InvalidRevision(_) => {
             (ErrorCode::InvalidArgument, false)
         }
     }
@@ -270,9 +270,9 @@ mod tests {
 
     #[test]
     fn invalid_preparation_input_uses_invalid_argument_code() {
-        let error = CheckCommandError::Run(CheckRunError::Preparation(ExtractError::InvalidRange(
-            "HEAD".to_string(),
-        )));
+        let error = CheckCommandError::Run(CheckRunError::Preparation(
+            ExtractError::InvalidTwoDotRange("HEAD".to_string()),
+        ));
 
         let output = CheckCommandErrorOutput::from(error);
 
