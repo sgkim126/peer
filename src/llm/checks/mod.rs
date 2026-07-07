@@ -112,68 +112,34 @@ pub async fn handler(
     let extractor = Extractor::new(project_root.clone(), console);
     let tool_executor = PeerToolExecutor::new(Extractor::new(project_root, console));
 
-    match command {
+    let check = match command {
         CheckCommand::Size { revision } => {
-            run_definition_with(
-                SizeCheck::try_new(revision, &extractor).await?,
-                console,
-                config,
-                &extractor,
-                &provider,
-                &tool_executor,
-                review_context,
-            )
-            .await
+            ResolvedCheck::Size(SizeCheck::try_new(revision, &extractor).await?)
         }
         CheckCommand::Intent { revision } => {
-            run_definition_with(
-                IntentCheck::try_new(revision, &extractor).await?,
-                console,
-                config,
-                &extractor,
-                &provider,
-                &tool_executor,
-                review_context,
-            )
-            .await
+            ResolvedCheck::Intent(IntentCheck::try_new(revision, &extractor).await?)
         }
         CheckCommand::Quality { revision } => {
-            run_definition_with(
-                QualityCheck::try_new(revision, &extractor).await?,
-                console,
-                config,
-                &extractor,
-                &provider,
-                &tool_executor,
-                review_context,
-            )
-            .await
+            ResolvedCheck::Quality(QualityCheck::try_new(revision, &extractor).await?)
         }
         CheckCommand::Security { revision } => {
-            run_definition_with(
-                SecurityCheck::try_new(revision, &extractor).await?,
-                console,
-                config,
-                &extractor,
-                &provider,
-                &tool_executor,
-                review_context,
-            )
-            .await
+            ResolvedCheck::Security(SecurityCheck::try_new(revision, &extractor).await?)
         }
         CheckCommand::Coherence { range } => {
-            run_definition_with(
-                CoherenceCheck::try_new(range, &extractor).await?,
-                console,
-                config,
-                &extractor,
-                &provider,
-                &tool_executor,
-                review_context,
-            )
-            .await
+            ResolvedCheck::Coherence(CoherenceCheck::try_new(range, &extractor).await?)
         }
-    }
+    };
+
+    run_definition_with(
+        check,
+        console,
+        config,
+        &extractor,
+        &provider,
+        &tool_executor,
+        review_context,
+    )
+    .await
 }
 
 async fn run_definition_with<C, P, E>(
@@ -262,6 +228,40 @@ pub trait CheckDefinition {
         extractor: &Extractor,
         review_context: &ReviewContext,
     ) -> Result<PreparedCheck, ExtractError>;
+}
+
+enum ResolvedCheck {
+    Size(SizeCheck),
+    Intent(IntentCheck),
+    Quality(QualityCheck),
+    Security(SecurityCheck),
+    Coherence(CoherenceCheck),
+}
+
+impl CheckDefinition for ResolvedCheck {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::Size(check) => check.name(),
+            Self::Intent(check) => check.name(),
+            Self::Quality(check) => check.name(),
+            Self::Security(check) => check.name(),
+            Self::Coherence(check) => check.name(),
+        }
+    }
+
+    async fn prepare(
+        &self,
+        extractor: &Extractor,
+        review_context: &ReviewContext,
+    ) -> Result<PreparedCheck, ExtractError> {
+        match self {
+            Self::Size(check) => check.prepare(extractor, review_context).await,
+            Self::Intent(check) => check.prepare(extractor, review_context).await,
+            Self::Quality(check) => check.prepare(extractor, review_context).await,
+            Self::Security(check) => check.prepare(extractor, review_context).await,
+            Self::Coherence(check) => check.prepare(extractor, review_context).await,
+        }
+    }
 }
 
 fn all_tools() -> Vec<ToolSpec> {
