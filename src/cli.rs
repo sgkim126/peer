@@ -68,7 +68,7 @@ pub enum ExtractCommand {
     FileContent {
         revision: String,
         #[arg(long)]
-        path: String,
+        path: PathBuf,
     },
 }
 
@@ -252,7 +252,7 @@ mod tests {
             Command::Extract {
                 command: ExtractCommand::FileContent {
                     revision: "abc123".into(),
-                    path: "src/foo.rs".into(),
+                    path: PathBuf::from("src/foo.rs"),
                 },
             }
         );

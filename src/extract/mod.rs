@@ -5,7 +5,7 @@ mod commit_message;
 mod error;
 mod file_content;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
@@ -71,7 +71,7 @@ pub async fn handler(
             ExtractData::CommitMessage(extractor.commit_message(revision).await?)
         }
         ExtractCommand::FileContent { path, revision } => {
-            ExtractData::FileContent(extractor.file_content(Path::new(path), revision).await?)
+            ExtractData::FileContent(extractor.file_content(path, revision).await?)
         }
     })
 }
