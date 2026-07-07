@@ -61,6 +61,7 @@ impl GeminiProvider {
 
 impl LlmProvider for GeminiProvider {
     async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
+        let output_mode = request.output_mode;
         let http = self.request_builder.build(request)?;
         let request = self
             .client
@@ -69,7 +70,7 @@ impl LlmProvider for GeminiProvider {
         let response = self.client.send_json(request, &http.body).await?;
 
         if response.status.is_success() {
-            GeminiResponseParser::parse_success(&response.body)
+            GeminiResponseParser::parse_success(&response.body, output_mode)
         } else {
             Err(GeminiResponseParser::parse_error(
                 response.status.as_u16(),
@@ -119,13 +120,16 @@ impl GeminiRequestBuilder {
 }
 
 impl GeminiResponseParser {
-    pub fn parse_success(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+    pub fn parse_success(
+        body: &serde_json::Value,
+        output_mode: LlmOutputMode<'_>,
+    ) -> Result<LlmCallResult, LlmCallError> {
         let parts = body
             .pointer("/candidates/0/content/parts")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| permanent_parse_error("missing candidates[0].content.parts"))?;
         let usage = parse_usage(body)?;
-        let response = parse_response(parts)?;
+        let response = parse_response(parts, output_mode)?;
 
         Ok(LlmCallResult { response, usage })
     }
@@ -155,7 +159,17 @@ fn parse_usage(body: &serde_json::Value) -> Result<RawUsage, LlmCallError> {
     })
 }
 
-fn parse_response(parts: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
+fn parse_response(
+    parts: &[serde_json::Value],
+    output_mode: LlmOutputMode<'_>,
+) -> Result<LlmResponse, LlmCallError> {
+    match output_mode {
+        LlmOutputMode::Check { .. } => parse_check_response(parts),
+        LlmOutputMode::Text => parse_text_response(parts),
+    }
+}
+
+fn parse_check_response(parts: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
     let tool_calls = parts
         .iter()
         .filter_map(|part| part.get("functionCall"))
@@ -181,6 +195,10 @@ fn parse_response(parts: &[serde_json::Value]) -> Result<LlmResponse, LlmCallErr
     })?;
 
     Ok(LlmResponse::CheckOutput(parse_check_output(value)?))
+}
+
+fn parse_text_response(_parts: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
+    unimplemented!()
 }
 
 fn parse_tool_call(index: usize, value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
@@ -310,6 +328,9 @@ fn request_body(
                 "responseMimeType": "application/json"
             }
         }),
+        LlmOutputMode::Text => {
+            unimplemented!()
+        }
     }
 }
 
@@ -444,6 +465,17 @@ mod tests {
             },
             "required": ["summary"]
         })
+    }
+
+    fn parse_success_check(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+        let schema = output_schema();
+        GeminiResponseParser::parse_success(
+            body,
+            LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
+        )
     }
 
     #[test]
@@ -635,7 +667,7 @@ mod tests {
             }
         });
 
-        let result = GeminiResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         assert_eq!(result.usage.input_tokens, 100);
         assert_eq!(result.usage.output_tokens, 25);
@@ -671,7 +703,7 @@ mod tests {
             }
         });
 
-        let result = GeminiResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         assert_eq!(result.usage.input_tokens, 80);
         assert_eq!(result.usage.output_tokens, 40);
@@ -699,7 +731,7 @@ mod tests {
             }
         });
 
-        let result = GeminiResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         let LlmResponse::CheckOutput(output) = result.response else {
             panic!("expected check output");
@@ -725,7 +757,7 @@ mod tests {
             }
         });
 
-        let error = GeminiResponseParser::parse_success(&body).unwrap_err();
+        let error = parse_success_check(&body).unwrap_err();
 
         assert!(matches!(error, LlmCallError::Permanent { .. }));
         assert!(error.to_string().contains("assistant text"));

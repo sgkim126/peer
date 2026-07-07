@@ -61,6 +61,7 @@ impl MistralProvider {
 
 impl LlmProvider for MistralProvider {
     async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
+        let output_mode = request.output_mode;
         let http = self.request_builder.build(request)?;
         let request = self
             .client
@@ -69,7 +70,7 @@ impl LlmProvider for MistralProvider {
         let response = self.client.send_json(request, &http.body).await?;
 
         if response.status.is_success() {
-            MistralResponseParser::parse_success(&response.body)
+            MistralResponseParser::parse_success(&response.body, output_mode)
         } else {
             Err(MistralResponseParser::parse_error(
                 response.status.as_u16(),
@@ -109,12 +110,15 @@ impl MistralRequestBuilder {
 }
 
 impl MistralResponseParser {
-    pub fn parse_success(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+    pub fn parse_success(
+        body: &serde_json::Value,
+        output_mode: LlmOutputMode<'_>,
+    ) -> Result<LlmCallResult, LlmCallError> {
         let message = body
             .pointer("/choices/0/message")
             .ok_or_else(|| permanent_parse_error("missing choices[0].message"))?;
         let usage = parse_usage(body)?;
-        let response = parse_response(message)?;
+        let response = parse_response(message, output_mode)?;
 
         Ok(LlmCallResult { response, usage })
     }
@@ -144,7 +148,17 @@ fn parse_usage(body: &serde_json::Value) -> Result<RawUsage, LlmCallError> {
     })
 }
 
-fn parse_response(message: &serde_json::Value) -> Result<LlmResponse, LlmCallError> {
+fn parse_response(
+    message: &serde_json::Value,
+    output_mode: LlmOutputMode<'_>,
+) -> Result<LlmResponse, LlmCallError> {
+    match output_mode {
+        LlmOutputMode::Check { .. } => parse_check_response(message),
+        LlmOutputMode::Text => parse_text_response(message),
+    }
+}
+
+fn parse_check_response(message: &serde_json::Value) -> Result<LlmResponse, LlmCallError> {
     if let Some(tool_calls) = message
         .get("tool_calls")
         .and_then(serde_json::Value::as_array)
@@ -172,6 +186,10 @@ fn parse_response(message: &serde_json::Value) -> Result<LlmResponse, LlmCallErr
     let check_output = parse_check_output(value)?;
 
     Ok(LlmResponse::CheckOutput(check_output))
+}
+
+fn parse_text_response(_message: &serde_json::Value) -> Result<LlmResponse, LlmCallError> {
+    unimplemented!()
 }
 
 fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
@@ -297,6 +315,9 @@ fn request_body(request: LlmRequest<'_>) -> Result<serde_json::Value, LlmCallErr
                 "type": "json_object"
             },
         }),
+        LlmOutputMode::Text => {
+            unimplemented!()
+        }
     })
 }
 
@@ -395,6 +416,17 @@ mod tests {
             },
             "required": ["summary"]
         })
+    }
+
+    fn parse_success_check(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+        let schema = output_schema();
+        MistralResponseParser::parse_success(
+            body,
+            LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
+        )
     }
 
     #[test]
@@ -553,7 +585,7 @@ mod tests {
             }
         });
 
-        let result = MistralResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         assert_eq!(result.usage.input_tokens, 100);
         assert_eq!(result.usage.output_tokens, 25);
@@ -588,7 +620,7 @@ mod tests {
             }
         });
 
-        let result = MistralResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         assert_eq!(result.usage.input_tokens, 80);
         assert_eq!(result.usage.output_tokens, 40);
@@ -615,7 +647,7 @@ mod tests {
             }
         });
 
-        let result = MistralResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         let LlmResponse::CheckOutput(output) = result.response else {
             panic!("expected check output");
@@ -647,7 +679,7 @@ mod tests {
             }
         });
 
-        let error = MistralResponseParser::parse_success(&body).unwrap_err();
+        let error = parse_success_check(&body).unwrap_err();
 
         assert!(matches!(error, LlmCallError::Permanent { .. }));
         assert!(error.to_string().contains("tool call arguments"));

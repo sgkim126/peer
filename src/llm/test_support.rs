@@ -20,6 +20,7 @@ pub enum RecordedLlmOutputMode {
         tools: Vec<ToolSpec>,
         output_schema: serde_json::Value,
     },
+    Text,
 }
 
 #[derive(Debug)]
@@ -73,6 +74,7 @@ impl LlmProvider for MockProvider {
                     tools: tools.to_vec(),
                     output_schema: output_schema.clone(),
                 },
+                LlmOutputMode::Text => RecordedLlmOutputMode::Text,
             },
         });
 
@@ -190,6 +192,29 @@ mod tests {
                 tools: tools.to_vec(),
                 output_schema: schema,
             }
+        );
+    }
+
+    #[tokio::test]
+    async fn records_text_requests() {
+        let provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::Text("summary".to_string()),
+            usage: RawUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+        })]);
+        let request = LlmRequest {
+            model: "test-model",
+            conversation: &[],
+            output_mode: LlmOutputMode::Text,
+        };
+
+        provider.send(request).await.unwrap();
+
+        assert_eq!(
+            provider.requests()[0].output_mode,
+            RecordedLlmOutputMode::Text
         );
     }
 

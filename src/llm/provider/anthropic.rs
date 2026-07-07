@@ -63,6 +63,7 @@ impl AnthropicProvider {
 
 impl LlmProvider for AnthropicProvider {
     async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError> {
+        let output_mode = request.output_mode;
         let http = self.request_builder.build(request)?;
         let request = self
             .client
@@ -72,7 +73,7 @@ impl LlmProvider for AnthropicProvider {
         let response = self.client.send_json(request, &http.body).await?;
 
         if response.status.is_success() {
-            AnthropicResponseParser::parse_success(&response.body)
+            AnthropicResponseParser::parse_success(&response.body, output_mode)
         } else {
             Err(AnthropicResponseParser::parse_error(
                 response.status.as_u16(),
@@ -114,13 +115,16 @@ impl AnthropicRequestBuilder {
 }
 
 impl AnthropicResponseParser {
-    pub fn parse_success(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+    pub fn parse_success(
+        body: &serde_json::Value,
+        output_mode: LlmOutputMode<'_>,
+    ) -> Result<LlmCallResult, LlmCallError> {
         let content = body
             .get("content")
             .and_then(serde_json::Value::as_array)
             .ok_or_else(|| permanent_parse_error("missing content array"))?;
         let usage = parse_usage(body)?;
-        let response = parse_response(content)?;
+        let response = parse_response(content, output_mode)?;
 
         Ok(LlmCallResult { response, usage })
     }
@@ -150,7 +154,17 @@ fn parse_usage(body: &serde_json::Value) -> Result<RawUsage, LlmCallError> {
     })
 }
 
-fn parse_response(content: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
+fn parse_response(
+    content: &[serde_json::Value],
+    output_mode: LlmOutputMode<'_>,
+) -> Result<LlmResponse, LlmCallError> {
+    match output_mode {
+        LlmOutputMode::Check { .. } => parse_check_response(content),
+        LlmOutputMode::Text => parse_text_response(content),
+    }
+}
+
+fn parse_check_response(content: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
     let tool_calls = content
         .iter()
         .filter(|block| block.get("type").and_then(serde_json::Value::as_str) == Some("tool_use"))
@@ -177,6 +191,10 @@ fn parse_response(content: &[serde_json::Value]) -> Result<LlmResponse, LlmCallE
     })?;
 
     Ok(LlmResponse::CheckOutput(parse_check_output(value)?))
+}
+
+fn parse_text_response(_content: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
+    unimplemented!()
 }
 
 fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
@@ -310,6 +328,9 @@ fn request_body(
                 "type": "auto"
             },
         }),
+        LlmOutputMode::Text => {
+            unimplemented!()
+        }
     }
 }
 
@@ -409,6 +430,17 @@ mod tests {
             },
             "required": ["summary"]
         })
+    }
+
+    fn parse_success_check(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+        let schema = output_schema();
+        AnthropicResponseParser::parse_success(
+            body,
+            LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
+        )
     }
 
     #[test]
@@ -570,7 +602,7 @@ mod tests {
             }
         });
 
-        let result = AnthropicResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         assert_eq!(result.usage.input_tokens, 100);
         assert_eq!(result.usage.output_tokens, 25);
@@ -602,7 +634,7 @@ mod tests {
             }
         });
 
-        let result = AnthropicResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         assert_eq!(result.usage.input_tokens, 80);
         assert_eq!(result.usage.output_tokens, 40);
@@ -627,7 +659,7 @@ mod tests {
             }
         });
 
-        let result = AnthropicResponseParser::parse_success(&body).unwrap();
+        let result = parse_success_check(&body).unwrap();
 
         let LlmResponse::CheckOutput(output) = result.response else {
             panic!("expected check output");
@@ -650,7 +682,7 @@ mod tests {
             }
         });
 
-        let error = AnthropicResponseParser::parse_success(&body).unwrap_err();
+        let error = parse_success_check(&body).unwrap_err();
 
         assert!(matches!(error, LlmCallError::Permanent { .. }));
         assert!(error.to_string().contains("assistant text"));

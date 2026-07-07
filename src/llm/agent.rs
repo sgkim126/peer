@@ -151,6 +151,13 @@ where
                     });
                 }
             }
+            LlmResponse::Text(_) => {
+                return Err(LlmCallError::Permanent {
+                    message: "LLM returned text response while check output was expected"
+                        .to_string(),
+                    source: Box::new(AgentError::UnexpectedTextResponse),
+                });
+            }
         }
     }
 
@@ -197,12 +204,14 @@ fn tool_result_json(result: ToolExecutionResult) -> serde_json::Value {
 #[derive(Debug)]
 enum AgentError {
     LoopExhausted,
+    UnexpectedTextResponse,
 }
 
 impl fmt::Display for AgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::LoopExhausted => f.write_str("agent loop exhausted"),
+            Self::UnexpectedTextResponse => f.write_str("unexpected text response"),
         }
     }
 }
