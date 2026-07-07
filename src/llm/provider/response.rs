@@ -11,7 +11,6 @@ pub struct ToolCall {
 pub enum LlmResponse {
     CheckOutput(CheckOutput),
     ToolCalls(Vec<ToolCall>),
-    #[allow(dead_code)]
     Text(String),
 }
 

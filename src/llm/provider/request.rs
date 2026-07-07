@@ -40,6 +40,5 @@ pub enum LlmOutputMode<'a> {
         tools: &'a [ToolSpec],
         output_schema: &'a serde_json::Value,
     },
-    #[allow(dead_code)]
     Text,
 }
