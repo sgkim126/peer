@@ -220,7 +220,7 @@ where
 }
 
 fn safe_segment(segment: &str) -> String {
-    segment
+    let safe = segment
         .chars()
         .map(|ch| {
             if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
@@ -229,7 +229,13 @@ fn safe_segment(segment: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect::<String>();
+
+    if matches!(safe.as_str(), "." | "..") {
+        "_".to_string()
+    } else {
+        safe
+    }
 }
 
 #[cfg(test)]
@@ -306,6 +312,31 @@ mod tests {
                 .join("tool_name")
                 .join("provider_name")
                 .join("model_name")
+                .join(prefix)
+                .join(format!("{}.json", key.params_hash))
+        );
+    }
+
+    #[test]
+    fn sanitizes_current_and_parent_directory_segments() {
+        let store = CacheStore::new(Path::new(".peer/cache"), Console::default());
+        let key = CacheKey::from_params(
+            ".",
+            "..",
+            ".",
+            &Value {
+                value: "test".to_string(),
+            },
+        )
+        .unwrap();
+        let prefix = &key.params_hash[..2];
+
+        assert_eq!(
+            store.path_for(&key),
+            Path::new(".peer/cache")
+                .join("_")
+                .join("_")
+                .join("_")
                 .join(prefix)
                 .join(format!("{}.json", key.params_hash))
         );
