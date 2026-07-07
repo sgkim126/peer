@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
 #[command(name = "peer", about = "LLM-based code review CLI")]
@@ -19,6 +20,15 @@ pub enum Command {
 
     Review {
         target: String,
+
+        #[arg(long)]
+        title: Option<String>,
+
+        #[arg(long)]
+        body_file: Option<PathBuf>,
+
+        #[arg(long)]
+        comments_file: Option<PathBuf>,
 
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
@@ -104,6 +114,9 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD~3..HEAD".into(),
+                title: None,
+                body_file: None,
+                comments_file: None,
                 format: OutputFormat::Terminal,
             }
         );
@@ -117,6 +130,9 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "abc123".into(),
+                title: None,
+                body_file: None,
+                comments_file: None,
                 format: OutputFormat::Json,
             }
         );
@@ -130,7 +146,36 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "main".into(),
+                title: None,
+                body_file: None,
+                comments_file: None,
                 format: OutputFormat::Markdown,
+            }
+        );
+    }
+
+    #[test]
+    fn review_with_context_options() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "HEAD",
+            "--title",
+            "Add review context",
+            "--body-file",
+            "body.md",
+            "--comments-file",
+            "comments.json",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD".into(),
+                title: Some("Add review context".into()),
+                body_file: Some(PathBuf::from("body.md")),
+                comments_file: Some(PathBuf::from("comments.json")),
+                format: OutputFormat::Terminal,
             }
         );
     }
