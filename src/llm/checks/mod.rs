@@ -11,6 +11,7 @@ pub use output::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
 use std::fmt;
 use std::path::PathBuf;
 
+use crate::cache::{CacheKey, CacheStore};
 use crate::cli::CheckCommand;
 use crate::config::Config;
 use crate::console::Console;
@@ -102,6 +103,7 @@ pub async fn handler(
 ) -> Result<CheckResult, CheckCommandError> {
     let (provider_config, _) =
         config.resolve_provider(&config.llm.default_provider, &config.llm.default_model)?;
+    let provider_name = provider_config.name.clone();
 
     let provider = create_provider(
         &provider_config.name,
@@ -110,6 +112,7 @@ pub async fn handler(
         console,
     )?;
     let extractor = Extractor::new(project_root.clone(), console);
+    let cache_store = CacheStore::new(project_root.join(".peer/cache"), console);
     let tool_executor = PeerToolExecutor::new(Extractor::new(project_root, console));
 
     let check = match command {
@@ -132,50 +135,64 @@ pub async fn handler(
 
     run_definition_with(
         check,
-        console,
-        config,
-        &extractor,
-        &provider,
-        &tool_executor,
-        review_context,
+        CheckExecution {
+            console,
+            config,
+            provider_name: &provider_name,
+            cache: Some(&cache_store),
+            extractor: &extractor,
+            provider: &provider,
+            tool_executor: &tool_executor,
+            review_context,
+        },
     )
     .await
 }
 
+struct CheckExecution<'a, P, E> {
+    console: Console,
+    config: &'a Config,
+    provider_name: &'a str,
+    cache: Option<&'a CacheStore>,
+    extractor: &'a Extractor,
+    provider: &'a P,
+    tool_executor: &'a E,
+    review_context: &'a ReviewContext,
+}
+
 async fn run_definition_with<C, P, E>(
     check: C,
-    console: Console,
-    config: &Config,
-    extractor: &Extractor,
-    provider: &P,
-    tool_executor: &E,
-    review_context: &ReviewContext,
+    execution: CheckExecution<'_, P, E>,
 ) -> Result<CheckResult, CheckCommandError>
 where
     C: CheckDefinition,
     P: LlmProvider,
     E: ToolExecutor,
 {
-    let confidence_threshold = Confidence::try_from(config.llm.confidence_threshold)?;
-    let max_iterations = config.llm.max_iterations;
-    let (_, model_config) =
-        config.resolve_provider(&config.llm.default_provider, &config.llm.default_model)?;
+    let confidence_threshold = Confidence::try_from(execution.config.llm.confidence_threshold)?;
+    let max_iterations = execution.config.llm.max_iterations;
+    let (_, model_config) = execution.config.resolve_provider(
+        &execution.config.llm.default_provider,
+        &execution.config.llm.default_model,
+    )?;
     let run_config = CheckRunConfig {
+        provider: execution.provider_name,
         model: &model_config.name,
         confidence_threshold,
         max_iterations,
         input_per_1m_usd: model_config.input_per_1m_usd,
         output_per_1m_usd: model_config.output_per_1m_usd,
-        console,
+        console: execution.console,
+        cache: execution.cache,
     };
 
     Ok(run_check(
         &check,
-        extractor,
-        provider,
-        tool_executor,
+        execution.extractor,
+        execution.provider,
+        execution.tool_executor,
         run_config,
-        review_context,
+        execution.review_context,
     )
     .await?)
 }
@@ -222,6 +239,9 @@ pub trait CheckDefinition {
     /// Returns the stable name written to `CheckResult::check`.
     fn name(&self) -> &'static str;
 
+    /// Returns the stable cache key for this resolved check target.
+    fn cache_key(&self, provider: &str, model: &str, review_context: &ReviewContext) -> CacheKey;
+
     /// Loads required data and builds the initial agent inputs.
     async fn prepare(
         &self,
@@ -246,6 +266,16 @@ impl CheckDefinition for ResolvedCheck {
             Self::Quality(check) => check.name(),
             Self::Security(check) => check.name(),
             Self::Coherence(check) => check.name(),
+        }
+    }
+
+    fn cache_key(&self, provider: &str, model: &str, review_context: &ReviewContext) -> CacheKey {
+        match self {
+            Self::Size(check) => check.cache_key(provider, model, review_context),
+            Self::Intent(check) => check.cache_key(provider, model, review_context),
+            Self::Quality(check) => check.cache_key(provider, model, review_context),
+            Self::Security(check) => check.cache_key(provider, model, review_context),
+            Self::Coherence(check) => check.cache_key(provider, model, review_context),
         }
     }
 
@@ -412,6 +442,21 @@ mod tests {
             "test"
         }
 
+        fn cache_key(
+            &self,
+            provider: &str,
+            model: &str,
+            review_context: &ReviewContext,
+        ) -> CacheKey {
+            let params = TestCheckCacheParams {
+                commit: &self.target,
+                review_context,
+            };
+
+            CacheKey::from_params(self.name(), provider, model, &params)
+                .expect("serializing test check cache params cannot fail")
+        }
+
         async fn prepare(
             &self,
             _extractor: &Extractor,
@@ -441,6 +486,12 @@ mod tests {
                 target: PreparedCheckTarget::Commit(self.target.clone()),
             })
         }
+    }
+
+    #[derive(Debug, serde::Serialize)]
+    struct TestCheckCacheParams<'a> {
+        commit: &'a CommitHash,
+        review_context: &'a ReviewContext,
     }
 
     fn output(commit: &str) -> CheckOutput {
@@ -548,12 +599,16 @@ mod tests {
 
         let result = run_definition_with(
             check,
-            console,
-            &test_config(),
-            &extractor,
-            &provider,
-            &tool_executor,
-            &ReviewContext::default(),
+            CheckExecution {
+                console,
+                config: &test_config(),
+                provider_name: "test",
+                cache: None,
+                extractor: &extractor,
+                provider: &provider,
+                tool_executor: &tool_executor,
+                review_context: &ReviewContext::default(),
+            },
         )
         .await
         .unwrap();
@@ -664,12 +719,16 @@ mod tests {
 
         let result = run_definition_with(
             check,
-            console,
-            &test_config(),
-            &extractor,
-            &provider,
-            &tool_executor,
-            &ReviewContext::default(),
+            CheckExecution {
+                console,
+                config: &test_config(),
+                provider_name: "test",
+                cache: None,
+                extractor: &extractor,
+                provider: &provider,
+                tool_executor: &tool_executor,
+                review_context: &ReviewContext::default(),
+            },
         )
         .await
         .unwrap();
@@ -691,12 +750,16 @@ mod tests {
 
         run_definition_with(
             check,
-            console,
-            &test_config(),
-            &extractor,
-            &provider,
-            &tool_executor,
-            &ReviewContext::default(),
+            CheckExecution {
+                console,
+                config: &test_config(),
+                provider_name: "test",
+                cache: None,
+                extractor: &extractor,
+                provider: &provider,
+                tool_executor: &tool_executor,
+                review_context: &ReviewContext::default(),
+            },
         )
         .await
         .unwrap_err()
@@ -758,12 +821,16 @@ mod tests {
 
         let result = run_definition_with(
             check,
-            console,
-            &config,
-            &extractor,
-            &provider,
-            &tool_executor,
-            &ReviewContext::default(),
+            CheckExecution {
+                console,
+                config: &config,
+                provider_name: "test",
+                cache: None,
+                extractor: &extractor,
+                provider: &provider,
+                tool_executor: &tool_executor,
+                review_context: &ReviewContext::default(),
+            },
         )
         .await
         .unwrap();

@@ -1,22 +1,25 @@
 use std::fmt;
 
+use crate::cache::CacheStore;
 use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::agent::{AgentRequest, ToolExecutor, run_agent};
 use crate::llm::confidence::Confidence;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::{LlmCallError, LlmProvider};
-use crate::llm::result::{CheckOutput, CheckResult};
+use crate::llm::result::{CheckOutput, CheckResult, CheckUsage};
 
 use super::CheckDefinition;
 
 pub struct CheckRunConfig<'a> {
+    pub provider: &'a str,
     pub model: &'a str,
     pub confidence_threshold: Confidence,
     pub max_iterations: u32,
     pub input_per_1m_usd: f64,
     pub output_per_1m_usd: f64,
     pub console: Console,
+    pub cache: Option<&'a CacheStore>,
 }
 
 #[derive(Debug)]
@@ -68,6 +71,19 @@ where
     P: LlmProvider,
     E: ToolExecutor,
 {
+    let cache_key = check.cache_key(config.provider, config.model, review_context);
+    if let Some(cache) = config.cache
+        && let Ok(Some(mut result)) = cache.read_json::<CheckResult>(&cache_key)
+    {
+        result.usage = CheckUsage {
+            input_tokens: 0,
+            output_tokens: 0,
+            cost_usd: 0.0,
+            model: config.model.to_string(),
+        };
+        return Ok(result);
+    }
+
     let prepared = check.prepare(extractor, review_context).await?;
     let validate_output = |output: &CheckOutput| prepared.validate_output(output);
     let outcome = run_agent(
@@ -86,23 +102,30 @@ where
     )
     .await?;
 
-    Ok(CheckResult::from_agent_outcome(
-        check.name().to_string(),
+    let result = CheckResult::from_agent_outcome(
+        check.name(),
         prepared.result_target(),
         outcome,
-        config.model.to_string(),
+        config.model,
         config.input_per_1m_usd,
         config.output_per_1m_usd,
-    ))
+    );
+    if let Some(cache) = config.cache {
+        let _ = cache.write_json(&cache_key, &result);
+    }
+
+    Ok(result)
 }
 
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
 
+    use serde::Serialize;
     use serde_json::json;
 
     use super::*;
+    use crate::cache::CacheKey;
     use crate::git::CommitHash;
     use crate::llm::agent::ToolExecutionResult;
     use crate::llm::checks::{PreparedCheck, PreparedCheckTarget};
@@ -119,6 +142,21 @@ mod tests {
             "test"
         }
 
+        fn cache_key(
+            &self,
+            provider: &str,
+            model: &str,
+            review_context: &ReviewContext,
+        ) -> CacheKey {
+            let params = TestCheckCacheParams {
+                commit: &self.target,
+                review_context,
+            };
+
+            CacheKey::from_params(self.name(), provider, model, &params)
+                .expect("serializing test check cache params cannot fail")
+        }
+
         async fn prepare(
             &self,
             _extractor: &Extractor,
@@ -131,6 +169,12 @@ mod tests {
                 target: PreparedCheckTarget::Commit(self.target.clone()),
             })
         }
+    }
+
+    #[derive(Debug, Serialize)]
+    struct TestCheckCacheParams<'a> {
+        commit: &'a CommitHash,
+        review_context: &'a ReviewContext,
     }
 
     fn output(commit: &str, confidence: f64) -> CheckOutput {
@@ -158,12 +202,27 @@ mod tests {
 
     fn config() -> CheckRunConfig<'static> {
         CheckRunConfig {
+            provider: "test",
             model: "test-model",
             confidence_threshold: Confidence::try_from(0.8).unwrap(),
             max_iterations: 2,
             input_per_1m_usd: 2.0,
             output_per_1m_usd: 6.0,
             console: Console::default(),
+            cache: None,
+        }
+    }
+
+    fn config_with_cache<'a>(cache: &'a CacheStore) -> CheckRunConfig<'a> {
+        CheckRunConfig {
+            provider: "test",
+            model: "test-model",
+            confidence_threshold: Confidence::try_from(0.8).unwrap(),
+            max_iterations: 2,
+            input_per_1m_usd: 2.0,
+            output_per_1m_usd: 6.0,
+            console: Console::default(),
+            cache: Some(cache),
         }
     }
 
@@ -263,5 +322,47 @@ mod tests {
             CommitHash::new("abc1234").unwrap()
         );
         assert_eq!(result.iterations, 2);
+    }
+
+    #[tokio::test]
+    async fn returns_cached_check_result_without_calling_provider() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = CacheStore::new(tmp.path().join("cache"), Console::default());
+        let executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let check = TestCheck {
+            target: CommitHash::new("abc1234").unwrap(),
+        };
+        let first_provider = MockProvider::new([Ok(response(output("abc1234", 0.9)))]);
+
+        let first = run_check(
+            &check,
+            &extractor(),
+            &first_provider,
+            &executor,
+            config_with_cache(&cache),
+            &ReviewContext::default(),
+        )
+        .await
+        .unwrap();
+
+        let second_provider = MockProvider::new(Vec::<Result<LlmCallResult, LlmCallError>>::new());
+        let second = run_check(
+            &check,
+            &extractor(),
+            &second_provider,
+            &executor,
+            config_with_cache(&cache),
+            &ReviewContext::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first_provider.requests().len(), 1);
+        assert_eq!(second_provider.requests().len(), 0);
+        assert_eq!(second.summary, first.summary);
+        assert_eq!(second.findings, first.findings);
+        assert_eq!(second.usage.input_tokens, 0);
+        assert_eq!(second.usage.output_tokens, 0);
+        assert_eq!(second.usage.cost_usd, 0.0);
     }
 }

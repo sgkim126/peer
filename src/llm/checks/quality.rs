@@ -1,3 +1,6 @@
+use serde::Serialize;
+
+use crate::cache::CacheKey;
 use crate::extract::{CommitDiff, CommitFiles, ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::context::ReviewContext;
@@ -34,6 +37,16 @@ impl CheckDefinition for QualityCheck {
         "quality"
     }
 
+    fn cache_key(&self, provider: &str, model: &str, review_context: &ReviewContext) -> CacheKey {
+        let params = QualityCheckCacheParams {
+            commit: &self.commit,
+            review_context,
+        };
+
+        CacheKey::from_params(self.name(), provider, model, &params)
+            .expect("serializing quality check cache params cannot fail")
+    }
+
     async fn prepare(
         &self,
         extractor: &Extractor,
@@ -44,6 +57,12 @@ impl CheckDefinition for QualityCheck {
 
         Ok(build_prepared_check(diff, files, review_context))
     }
+}
+
+#[derive(Debug, Serialize)]
+struct QualityCheckCacheParams<'a> {
+    commit: &'a CommitHash,
+    review_context: &'a ReviewContext,
 }
 
 fn build_prepared_check(

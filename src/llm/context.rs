@@ -1,7 +1,7 @@
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::git::CommitHash;
 
@@ -93,7 +93,7 @@ impl std::error::Error for ReviewContextInputError {
     }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
 pub struct ReviewContext {
     pub title: Option<String>,
     pub body_summary: Option<String>,

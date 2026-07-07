@@ -1,3 +1,6 @@
+use serde::Serialize;
+
+use crate::cache::CacheKey;
 use crate::extract::{CommitDiff, CommitMessage, ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::context::ReviewContext;
@@ -33,6 +36,16 @@ impl CheckDefinition for IntentCheck {
         "intent"
     }
 
+    fn cache_key(&self, provider: &str, model: &str, review_context: &ReviewContext) -> CacheKey {
+        let params = IntentCheckCacheParams {
+            commit: &self.commit,
+            review_context,
+        };
+
+        CacheKey::from_params(self.name(), provider, model, &params)
+            .expect("serializing intent check cache params cannot fail")
+    }
+
     async fn prepare(
         &self,
         extractor: &Extractor,
@@ -43,6 +56,12 @@ impl CheckDefinition for IntentCheck {
 
         Ok(build_prepared_check(message, diff, review_context))
     }
+}
+
+#[derive(Debug, Serialize)]
+struct IntentCheckCacheParams<'a> {
+    commit: &'a CommitHash,
+    review_context: &'a ReviewContext,
 }
 
 fn build_prepared_check(

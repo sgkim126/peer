@@ -1,3 +1,6 @@
+use serde::Serialize;
+
+use crate::cache::CacheKey;
 use crate::extract::{CommitList, CommitMessage, ExtractError, Extractor};
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
@@ -33,6 +36,16 @@ impl CheckDefinition for CoherenceCheck {
         "coherence"
     }
 
+    fn cache_key(&self, provider: &str, model: &str, review_context: &ReviewContext) -> CacheKey {
+        let params = CoherenceCheckCacheParams {
+            commit_list: &self.commit_list,
+            review_context,
+        };
+
+        CacheKey::from_params(self.name(), provider, model, &params)
+            .expect("serializing coherence check cache params cannot fail")
+    }
+
     async fn prepare(
         &self,
         extractor: &Extractor,
@@ -50,6 +63,12 @@ impl CheckDefinition for CoherenceCheck {
             review_context,
         ))
     }
+}
+
+#[derive(Debug, Serialize)]
+struct CoherenceCheckCacheParams<'a> {
+    commit_list: &'a CommitList,
+    review_context: &'a ReviewContext,
 }
 
 fn build_prepared_check(
