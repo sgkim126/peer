@@ -94,7 +94,7 @@ where
         match result.response {
             LlmResponse::CheckOutput(output) => {
                 if let Err(error) = (request.validate_output)(&output) {
-                    request.console.debug(format!(
+                    request.console.debug(format_args!(
                         "llm iteration {iteration}: invalid check output: {error}"
                     ));
                     conversation.push(ConversationTurn::AssistantCheckOutput(output));
@@ -104,7 +104,7 @@ where
                     continue;
                 }
 
-                request.console.debug(format!(
+                request.console.debug(format_args!(
                     "llm iteration {iteration}: check output confidence={} threshold={}",
                     output.confidence.as_f64(),
                     request.confidence_threshold.as_f64()
@@ -129,7 +129,7 @@ where
                 }
             }
             LlmResponse::ToolCalls(tool_calls) => {
-                request.console.debug(format!(
+                request.console.debug(format_args!(
                     "llm iteration {iteration}: {} tool {}",
                     tool_calls.len(),
                     if tool_calls.len() <= 1 {

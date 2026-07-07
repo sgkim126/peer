@@ -14,8 +14,10 @@ pub async fn run_git_bytes(
     current_dir: &Path,
     console: Console,
 ) -> Result<Vec<u8>, GitError> {
-    let commands = format_argv(args);
-    console.debug(&commands);
+    if console.is_debug() {
+        let commands = format_argv(args);
+        console.debug(format_args!("{commands}"));
+    }
 
     let output = Command::new("git")
         .args(args)
@@ -27,7 +29,10 @@ pub async fn run_git_bytes(
     if !output.status.success() {
         let status = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        console.debug(format!("{commands}: ({status}): {stderr}"));
+        if console.is_debug() {
+            let commands = format_argv(args);
+            console.debug(format_args!("{commands}: ({status}): {stderr}"));
+        }
         return Err(GitError::NonZeroExit { status, stderr });
     }
 

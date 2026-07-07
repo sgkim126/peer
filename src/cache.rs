@@ -38,12 +38,12 @@ impl CacheStore {
             Ok(content) => content,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 self.console
-                    .debug(format!("cache miss: {}", path.display()));
+                    .debug(format_args!("cache miss: {}", path.display()));
                 return Ok(None);
             }
             Err(source) => {
                 self.console
-                    .debug(format!("cannot read {}: {source:?}", path.display()));
+                    .debug(format_args!("cannot read {}: {source:?}", path.display()));
                 let error = CacheReadError::Read { path, source };
                 return Err(error);
             }
@@ -51,12 +51,13 @@ impl CacheStore {
 
         match serde_json::from_str(&content) {
             Ok(value) => {
-                self.console.debug(format!("cache hit: {}", path.display()));
+                self.console
+                    .debug(format_args!("cache hit: {}", path.display()));
                 Ok(Some(value))
             }
             Err(source) => {
                 self.console
-                    .debug(format!("cannot read {}: {source:?}", path.display()));
+                    .debug(format_args!("cannot read {}: {source:?}", path.display()));
                 let error = CacheReadError::Deserialize { path, source };
                 Err(error)
             }
@@ -72,7 +73,7 @@ impl CacheStore {
             && let Err(source) = std::fs::create_dir_all(parent)
         {
             self.console
-                .debug(format!("cannot create {}: {source:?}", path.display()));
+                .debug(format_args!("cannot create {}: {source:?}", path.display()));
             let error = CacheWriteError::CreateDir {
                 path: parent.to_path_buf(),
                 source,
@@ -83,19 +84,19 @@ impl CacheStore {
             Ok(content) => content,
             Err(source) => {
                 self.console
-                    .debug(format!("cannot convert cached value: {source:?}"));
+                    .debug(format_args!("cannot convert cached value: {source:?}"));
                 let error = CacheWriteError::Serialize { source };
                 return Err(error);
             }
         };
         if let Err(source) = std::fs::write(&path, content) {
             self.console
-                .debug(format!("cannot write {}: {source:?}", path.display()));
+                .debug(format_args!("cannot write {}: {source:?}", path.display()));
             let error = CacheWriteError::Write { path, source };
             return Err(error);
         }
         self.console
-            .debug(format!("cache write: {}", path.display()));
+            .debug(format_args!("cache write: {}", path.display()));
         Ok(())
     }
 }

@@ -148,7 +148,7 @@ fn log_review_usage(result: &ReviewResult, console: Console) {
 }
 
 fn log_result_usage(result: &CheckResult, console: Console) {
-    console.verbose(format!(
+    console.verbose(format_args!(
         "Usage: {} input, {} output, ${:.6} ({})",
         result.usage.input_tokens,
         result.usage.output_tokens,

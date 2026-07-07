@@ -43,10 +43,12 @@ impl ProviderHttpClient {
         request: reqwest::RequestBuilder,
         body: &Value,
     ) -> Result<JsonHttpResponse, LlmCallError> {
-        self.console.debug(format_json_debug(
-            &format!("{} request", self.provider_label),
-            body,
-        ));
+        if self.console.is_debug() {
+            self.console.debug(format_args!(
+                "{}",
+                format_json_debug(&format!("{} request", self.provider_label), body)
+            ));
+        }
         let request = request
             .json(body)
             .build()
@@ -54,10 +56,15 @@ impl ProviderHttpClient {
                 message: format!("failed to build {} HTTP request", self.provider_name),
                 source: Box::new(error),
             })?;
-        self.console.debug(format_headers_debug(
-            &format!("{} request headers", self.provider_label),
-            request.headers(),
-        ));
+        if self.console.is_debug() {
+            self.console.debug(format_args!(
+                "{}",
+                format_headers_debug(
+                    &format!("{} request headers", self.provider_label),
+                    request.headers()
+                )
+            ));
+        }
         let response = self
             .client
             .execute(request)
@@ -65,15 +72,20 @@ impl ProviderHttpClient {
             .map_err(map_transport_error)?;
 
         let status = response.status();
-        self.console.debug(format!(
+        self.console.debug(format_args!(
             "{} response status={}",
             self.provider_label,
             status.as_u16()
         ));
-        self.console.debug(format_headers_debug(
-            &format!("{} response headers", self.provider_label),
-            response.headers(),
-        ));
+        if self.console.is_debug() {
+            self.console.debug(format_args!(
+                "{}",
+                format_headers_debug(
+                    &format!("{} response headers", self.provider_label),
+                    response.headers()
+                )
+            ));
+        }
         let body_text = response
             .text()
             .await
@@ -81,7 +93,7 @@ impl ProviderHttpClient {
                 message: format!("failed to read {} response body", self.provider_name),
                 source: Box::new(error),
             })?;
-        self.console.debug(format!(
+        self.console.debug(format_args!(
             "{} response body\n{body_text}",
             self.provider_label
         ));

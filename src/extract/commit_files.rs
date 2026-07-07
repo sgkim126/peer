@@ -59,7 +59,9 @@ fn parse_name_status(output: &str, console: Console) -> Vec<RawFileEntry> {
             Some('D') => FileStatus::Deleted,
             Some('T') => FileStatus::TypeChanged,
             _ => {
-                console.debug(format!("skipping unknown git name-status line: {line}"));
+                console.debug(format_args!(
+                    "skipping unknown git name-status line: {line}"
+                ));
                 continue;
             }
         };

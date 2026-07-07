@@ -35,7 +35,7 @@ async fn main() -> ExitCode {
             }
             Err(err) => {
                 eprintln!("error: {err}");
-                console.debug(format!("{err:?}"));
+                console.debug(format_args!("{err:?}"));
                 ExitCode::FAILURE
             }
         },
@@ -63,7 +63,7 @@ async fn main() -> ExitCode {
                 Ok(input) => input,
                 Err(err) => {
                     eprintln!("error: {err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -72,7 +72,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(err) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -80,7 +80,7 @@ async fn main() -> ExitCode {
                 Ok((config, project_root)) => (config, project_root),
                 Err(err) => {
                     eprintln!("{err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -90,7 +90,7 @@ async fn main() -> ExitCode {
                 Ok(target) => target,
                 Err(err) => {
                     eprintln!("error: {err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -103,12 +103,12 @@ async fn main() -> ExitCode {
             .await
             {
                 eprintln!("error: {err}");
-                console.debug(format!("{err:?}"));
+                console.debug(format_args!("{err:?}"));
                 return ExitCode::FAILURE;
             }
 
             let plan = review::plan_checks(&review_target);
-            console.debug(format!("{plan:?}"));
+            console.debug(format_args!("{plan:?}"));
 
             let (provider_config, model_config) = match config
                 .resolve_provider(&config.llm.default_provider, &config.llm.default_model)
@@ -116,7 +116,7 @@ async fn main() -> ExitCode {
                 Ok(resolved) => resolved,
                 Err(err) => {
                     eprintln!("{err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -129,7 +129,7 @@ async fn main() -> ExitCode {
                 Ok(provider) => provider,
                 Err(err) => {
                     eprintln!("error: {err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -146,7 +146,7 @@ async fn main() -> ExitCode {
                 Ok(context) => context,
                 Err(err) => {
                     eprintln!("error: {err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -156,7 +156,7 @@ async fn main() -> ExitCode {
                 model_config.input_per_1m_usd,
                 model_config.output_per_1m_usd,
             );
-            console.verbose(format!(
+            console.verbose(format_args!(
                 "Review context usage: {} input, {} output, ${:.6} ({})",
                 review_context_usage.input_tokens,
                 review_context_usage.output_tokens,
@@ -167,7 +167,7 @@ async fn main() -> ExitCode {
             let result = review::run(plan, console, &config, project_root, &review_context).await;
             for error in &result.errors {
                 eprintln!("error: {error}");
-                console.debug(format!("{error:?}"));
+                console.debug(format_args!("{error:?}"));
             }
 
             let rendered = render::render_review_result(&result, format, console);
@@ -182,7 +182,7 @@ async fn main() -> ExitCode {
                 }
                 Err(err) => {
                     eprintln!("failed to render review output: {err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     ExitCode::FAILURE
                 }
             }
@@ -192,7 +192,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(err) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -200,7 +200,7 @@ async fn main() -> ExitCode {
                 Ok((config, project_root)) => (config, project_root),
                 Err(err) => {
                     eprintln!("{err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -212,7 +212,7 @@ async fn main() -> ExitCode {
                 }
                 Err(err) => {
                     eprintln!("error: {err}");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     ExitCode::FAILURE
                 }
             }
@@ -222,7 +222,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(err) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -241,7 +241,7 @@ async fn main() -> ExitCode {
             };
 
             if let Err(error) = &result {
-                console.debug(format!("{error:?}"));
+                console.debug(format_args!("{error:?}"));
             }
             print_check_result(result, console)
         }
@@ -257,7 +257,7 @@ async fn main() -> ExitCode {
                     println!("{output}");
                 }
                 Err(err) => {
-                    console.debug(format!("{err:?}"));
+                    console.debug(format_args!("{err:?}"));
                     eprintln!("failed to render: {err}");
                     return ExitCode::FAILURE;
                 }
