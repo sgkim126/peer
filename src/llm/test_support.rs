@@ -3,15 +3,23 @@ use std::sync::Mutex;
 
 use super::agent::{ToolExecutionResult, ToolExecutor};
 use super::provider::{
-    ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, ToolCall, ToolSpec,
+    ConversationTurn, LlmCallError, LlmCallResult, LlmOutputMode, LlmProvider, LlmRequest,
+    ToolCall, ToolSpec,
 };
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct RecordedLlmRequest {
     pub model: String,
     pub conversation: Vec<ConversationTurn>,
-    pub tools: Vec<ToolSpec>,
-    pub output_schema: serde_json::Value,
+    pub output_mode: RecordedLlmOutputMode,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum RecordedLlmOutputMode {
+    Check {
+        tools: Vec<ToolSpec>,
+        output_schema: serde_json::Value,
+    },
 }
 
 #[derive(Debug)]
@@ -57,8 +65,15 @@ impl LlmProvider for MockProvider {
         self.requests.lock().unwrap().push(RecordedLlmRequest {
             model: request.model.to_string(),
             conversation: request.conversation.to_vec(),
-            tools: request.tools.to_vec(),
-            output_schema: request.output_schema.clone(),
+            output_mode: match request.output_mode {
+                LlmOutputMode::Check {
+                    tools,
+                    output_schema,
+                } => RecordedLlmOutputMode::Check {
+                    tools: tools.to_vec(),
+                    output_schema: output_schema.clone(),
+                },
+            },
         });
 
         self.responses
@@ -113,14 +128,18 @@ mod tests {
         let first_request = LlmRequest {
             model: "test-model",
             conversation: &[],
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
         let second_request = LlmRequest {
             model: "test-model",
             conversation: &[],
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
 
         let first = provider.send(first_request).await.unwrap();
@@ -153,8 +172,10 @@ mod tests {
         let request = LlmRequest {
             model: "test-model",
             conversation: &conversation,
-            tools: &tools,
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &tools,
+                output_schema: &schema,
+            },
         };
 
         provider.send(request).await.unwrap();
@@ -163,8 +184,13 @@ mod tests {
         assert_eq!(requests.len(), 1);
         assert_eq!(requests[0].model, "test-model");
         assert_eq!(requests[0].conversation, conversation);
-        assert_eq!(requests[0].tools, tools);
-        assert_eq!(requests[0].output_schema, schema);
+        assert_eq!(
+            requests[0].output_mode,
+            RecordedLlmOutputMode::Check {
+                tools: tools.to_vec(),
+                output_schema: schema,
+            }
+        );
     }
 
     #[tokio::test]
@@ -177,8 +203,10 @@ mod tests {
         let request = LlmRequest {
             model: "test-model",
             conversation: &[],
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
 
         let _ = provider.send(request).await;

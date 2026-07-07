@@ -3,8 +3,8 @@ use serde_json::json;
 use std::fmt;
 
 use super::{
-    ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, LlmResponse, RawUsage,
-    ToolCall, ToolSpec,
+    ConversationTurn, LlmCallError, LlmCallResult, LlmOutputMode, LlmProvider, LlmRequest,
+    LlmResponse, RawUsage, ToolCall, ToolSpec,
 };
 use crate::console::Console;
 use crate::llm::provider::http::ProviderHttpClient;
@@ -101,18 +101,7 @@ impl GeminiRequestBuilder {
 
     pub fn build(&self, request: LlmRequest<'_>) -> Result<GeminiHttpRequest, LlmCallError> {
         let (system_instruction, contents) = contents(request.conversation)?;
-        let mut body = json!({
-            "contents": contents,
-            "tools": tools(request.tools, request.output_schema),
-            "toolConfig": {
-                "functionCallingConfig": {
-                    "mode": "AUTO"
-                }
-            },
-            "generationConfig": {
-                "responseMimeType": "application/json"
-            }
-        });
+        let mut body = request_body(request.output_mode, contents);
         if let Some(system_instruction) = system_instruction {
             body["systemInstruction"] = system_instruction;
         }
@@ -301,6 +290,29 @@ impl fmt::Display for GeminiStatusError {
 
 impl std::error::Error for GeminiStatusError {}
 
+fn request_body(
+    output_mode: LlmOutputMode<'_>,
+    contents: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    match output_mode {
+        LlmOutputMode::Check {
+            tools: tool_specs,
+            output_schema,
+        } => json!({
+            "contents": contents,
+            "tools": tools(tool_specs, output_schema),
+            "toolConfig": {
+                "functionCallingConfig": {
+                    "mode": "AUTO"
+                }
+            },
+            "generationConfig": {
+                "responseMimeType": "application/json"
+            }
+        }),
+    }
+}
+
 fn contents(
     conversation: &[ConversationTurn],
 ) -> Result<(Option<serde_json::Value>, Vec<serde_json::Value>), LlmCallError> {
@@ -462,8 +474,10 @@ mod tests {
         let request = LlmRequest {
             model: "gemini-2.5-pro",
             conversation: &conversation,
-            tools: &[extract_tool],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[extract_tool],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();
@@ -526,8 +540,10 @@ mod tests {
         let request = LlmRequest {
             model: "models/gemini-2.5-pro",
             conversation: &conversation,
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();
@@ -584,8 +600,10 @@ mod tests {
         let request = LlmRequest {
             model: "gemini-2.5-pro",
             conversation: &[],
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();

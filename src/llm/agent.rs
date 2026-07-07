@@ -3,8 +3,8 @@ use std::fmt;
 use crate::console::Console;
 use crate::llm::confidence::Confidence;
 use crate::llm::provider::{
-    ConversationTurn, LlmCallError, LlmProvider, LlmRequest, LlmResponse, RawUsage, ToolCall,
-    ToolSpec,
+    ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
+    ToolCall, ToolSpec,
 };
 use crate::llm::result::CheckOutput;
 
@@ -67,8 +67,10 @@ where
             .send(LlmRequest {
                 model: request.model,
                 conversation: &conversation,
-                tools: request.tools,
-                output_schema: request.output_schema,
+                output_mode: LlmOutputMode::Check {
+                    tools: request.tools,
+                    output_schema: request.output_schema,
+                },
             })
             .await
         {

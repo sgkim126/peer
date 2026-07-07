@@ -13,7 +13,7 @@ use std::fmt;
 use crate::console::Console;
 
 pub use error::LlmCallError;
-pub use request::{ConversationTurn, LlmRequest, ToolSpec};
+pub use request::{ConversationTurn, LlmOutputMode, LlmRequest, ToolSpec};
 pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
 
 pub trait LlmProvider {

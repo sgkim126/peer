@@ -3,8 +3,8 @@ use serde_json::json;
 use std::fmt;
 
 use super::{
-    ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, LlmResponse, RawUsage,
-    ToolCall, ToolSpec,
+    ConversationTurn, LlmCallError, LlmCallResult, LlmOutputMode, LlmProvider, LlmRequest,
+    LlmResponse, RawUsage, ToolCall, ToolSpec,
 };
 use crate::console::Console;
 use crate::llm::provider::http::ProviderHttpClient;
@@ -103,13 +103,7 @@ impl OpenAiRequestBuilder {
         Ok(OpenAiHttpRequest {
             url: format!("{}/v1/chat/completions", self.base_url),
             bearer_token: self.api_key.clone(),
-            body: json!({
-                "model": request.model,
-                "messages": messages(request.conversation)?,
-                "tools": tools(request.tools, request.output_schema),
-                "tool_choice": "auto",
-                "response_format": { "type": "json_object" },
-            }),
+            body: request_body(request)?,
         })
     }
 }
@@ -289,6 +283,23 @@ impl fmt::Display for OpenAiStatusError {
 
 impl std::error::Error for OpenAiStatusError {}
 
+fn request_body(request: LlmRequest<'_>) -> Result<serde_json::Value, LlmCallError> {
+    Ok(match request.output_mode {
+        LlmOutputMode::Check {
+            tools: tool_specs,
+            output_schema,
+        } => json!({
+            "model": request.model,
+            "messages": messages(request.conversation)?,
+            "tools": tools(tool_specs, output_schema),
+            "tool_choice": "auto",
+            "response_format": {
+                "type": "json_object"
+            },
+        }),
+    })
+}
+
 fn messages(conversation: &[ConversationTurn]) -> Result<Vec<serde_json::Value>, LlmCallError> {
     conversation.iter().map(message).collect()
 }
@@ -413,8 +424,10 @@ mod tests {
         let request = LlmRequest {
             model: "gpt-4.1",
             conversation: &conversation,
-            tools: &[extract_tool],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[extract_tool],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();
@@ -456,8 +469,10 @@ mod tests {
         let request = LlmRequest {
             model: "gpt-4.1",
             conversation: &conversation,
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();
@@ -500,8 +515,10 @@ mod tests {
         let request = LlmRequest {
             model: "gpt-4.1",
             conversation: &[],
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();

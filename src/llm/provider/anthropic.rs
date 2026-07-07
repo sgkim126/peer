@@ -3,8 +3,8 @@ use serde_json::json;
 use std::fmt;
 
 use super::{
-    ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, LlmResponse, RawUsage,
-    ToolCall, ToolSpec,
+    ConversationTurn, LlmCallError, LlmCallResult, LlmOutputMode, LlmProvider, LlmRequest,
+    LlmResponse, RawUsage, ToolCall, ToolSpec,
 };
 use crate::console::Console;
 use crate::llm::provider::http::ProviderHttpClient;
@@ -108,14 +108,7 @@ impl AnthropicRequestBuilder {
         Ok(AnthropicHttpRequest {
             url: format!("{}/v1/messages", self.base_url),
             api_key: self.api_key.clone(),
-            body: json!({
-                "model": request.model,
-                "max_tokens": DEFAULT_MAX_TOKENS,
-                "system": system,
-                "messages": messages,
-                "tools": tools(request.tools, request.output_schema),
-                "tool_choice": { "type": "auto" },
-            }),
+            body: request_body(request, system, messages),
         })
     }
 }
@@ -298,6 +291,28 @@ impl fmt::Display for AnthropicStatusError {
 
 impl std::error::Error for AnthropicStatusError {}
 
+fn request_body(
+    request: LlmRequest<'_>,
+    system: String,
+    messages: Vec<serde_json::Value>,
+) -> serde_json::Value {
+    match request.output_mode {
+        LlmOutputMode::Check {
+            tools: tool_specs,
+            output_schema,
+        } => json!({
+            "model": request.model,
+            "max_tokens": DEFAULT_MAX_TOKENS,
+            "system": system,
+            "messages": messages,
+            "tools": tools(tool_specs, output_schema),
+            "tool_choice": {
+                "type": "auto"
+            },
+        }),
+    }
+}
+
 fn messages(
     conversation: &[ConversationTurn],
 ) -> Result<(String, Vec<serde_json::Value>), LlmCallError> {
@@ -424,8 +439,10 @@ mod tests {
         let request = LlmRequest {
             model: "claude-sonnet-4-5",
             conversation: &conversation,
-            tools: &[extract_tool],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[extract_tool],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();
@@ -465,8 +482,10 @@ mod tests {
         let request = LlmRequest {
             model: "claude-sonnet-4-5",
             conversation: &conversation,
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();
@@ -520,8 +539,10 @@ mod tests {
         let request = LlmRequest {
             model: "claude-sonnet-4-5",
             conversation: &[],
-            tools: &[],
-            output_schema: &schema,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
         };
 
         let http = builder.build(request).unwrap();

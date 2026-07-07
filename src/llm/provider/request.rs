@@ -31,6 +31,13 @@ pub struct ToolSpec {
 pub struct LlmRequest<'a> {
     pub model: &'a str,
     pub conversation: &'a [ConversationTurn],
-    pub tools: &'a [ToolSpec],
-    pub output_schema: &'a serde_json::Value,
+    pub output_mode: LlmOutputMode<'a>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum LlmOutputMode<'a> {
+    Check {
+        tools: &'a [ToolSpec],
+        output_schema: &'a serde_json::Value,
+    },
 }
