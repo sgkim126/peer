@@ -179,12 +179,7 @@ fn parse_check_response(content: &[serde_json::Value]) -> Result<LlmResponse, Ll
         return Ok(LlmResponse::ToolCalls(tool_calls));
     }
 
-    let text = content
-        .iter()
-        .find(|block| block.get("type").and_then(serde_json::Value::as_str) == Some("text"))
-        .and_then(|block| block.get("text"))
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| permanent_parse_error("missing text or tool_use content"))?;
+    let text = text_content(content, "missing text or tool_use content")?;
     let value = serde_json::from_str(text).map_err(|error| LlmCallError::Permanent {
         message: "failed to parse assistant text as JSON".to_string(),
         source: Box::new(error),
@@ -193,8 +188,22 @@ fn parse_check_response(content: &[serde_json::Value]) -> Result<LlmResponse, Ll
     Ok(LlmResponse::CheckOutput(parse_check_output(value)?))
 }
 
-fn parse_text_response(_content: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
-    unimplemented!()
+fn parse_text_response(content: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
+    let text = text_content(content, "missing text content")?;
+
+    Ok(LlmResponse::Text(text.to_string()))
+}
+
+fn text_content<'a>(
+    content: &'a [serde_json::Value],
+    missing_message: &str,
+) -> Result<&'a str, LlmCallError> {
+    content
+        .iter()
+        .find(|block| block.get("type").and_then(serde_json::Value::as_str) == Some("text"))
+        .and_then(|block| block.get("text"))
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| permanent_parse_error(missing_message))
 }
 
 fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
@@ -328,9 +337,12 @@ fn request_body(
                 "type": "auto"
             },
         }),
-        LlmOutputMode::Text => {
-            unimplemented!()
-        }
+        LlmOutputMode::Text => json!({
+            "model": request.model,
+            "max_tokens": DEFAULT_MAX_TOKENS,
+            "system": system,
+            "messages": messages,
+        }),
     }
 }
 
@@ -443,6 +455,10 @@ mod tests {
         )
     }
 
+    fn parse_success_text(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+        AnthropicResponseParser::parse_success(body, LlmOutputMode::Text)
+    }
+
     #[test]
     fn builds_anthropic_request_body_with_messages_tools_and_structured_output_tool() {
         let builder = AnthropicRequestBuilder::new(
@@ -541,6 +557,30 @@ mod tests {
             http.body["messages"][1]["content"][0]["content"],
             "{\"diff\":\"+hello\"}"
         );
+    }
+
+    #[test]
+    fn builds_text_request_body_without_tools_or_tool_choice() {
+        let builder = AnthropicRequestBuilder::new(Secret::new("test-api-key"), None);
+        let conversation = [
+            ConversationTurn::System("You summarize PR context.".to_string()),
+            ConversationTurn::User("Summarize this PR.".to_string()),
+        ];
+        let request = LlmRequest {
+            model: "claude-sonnet-4-5",
+            conversation: &conversation,
+            output_mode: LlmOutputMode::Text,
+        };
+
+        let http = builder.build(request).unwrap();
+
+        assert_eq!(http.body["model"], "claude-sonnet-4-5");
+        assert_eq!(http.body["max_tokens"], DEFAULT_MAX_TOKENS);
+        assert_eq!(http.body["system"], "You summarize PR context.");
+        assert_eq!(http.body["messages"][0]["role"], "user");
+        assert_eq!(http.body["messages"][0]["content"], "Summarize this PR.");
+        assert!(http.body.get("tools").is_none());
+        assert!(http.body.get("tool_choice").is_none());
     }
 
     #[test]
@@ -687,6 +727,33 @@ mod tests {
         assert!(matches!(error, LlmCallError::Permanent { .. }));
         assert!(error.to_string().contains("assistant text"));
         assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn parses_text_content_as_text_response() {
+        let body = json!({
+            "content": [{
+                "type": "text",
+                "text": "This PR updates the review flow."
+            }],
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5
+            }
+        });
+
+        let result = parse_success_text(&body).unwrap();
+
+        assert_eq!(
+            result,
+            LlmCallResult {
+                response: LlmResponse::Text("This PR updates the review flow.".to_string()),
+                usage: RawUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                },
+            }
+        );
     }
 
     #[test]

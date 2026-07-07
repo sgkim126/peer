@@ -185,10 +185,7 @@ fn parse_check_response(parts: &[serde_json::Value]) -> Result<LlmResponse, LlmC
         return Ok(LlmResponse::ToolCalls(tool_calls));
     }
 
-    let text = parts
-        .iter()
-        .find_map(|part| part.get("text").and_then(serde_json::Value::as_str))
-        .ok_or_else(|| permanent_parse_error("missing text or functionCall part"))?;
+    let text = text_part(parts, "missing text or functionCall part")?;
     let value = serde_json::from_str(text).map_err(|error| LlmCallError::Permanent {
         message: "failed to parse assistant text as JSON".to_string(),
         source: Box::new(error),
@@ -197,8 +194,20 @@ fn parse_check_response(parts: &[serde_json::Value]) -> Result<LlmResponse, LlmC
     Ok(LlmResponse::CheckOutput(parse_check_output(value)?))
 }
 
-fn parse_text_response(_parts: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
-    unimplemented!()
+fn parse_text_response(parts: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
+    let text = text_part(parts, "missing text part")?;
+
+    Ok(LlmResponse::Text(text.to_string()))
+}
+
+fn text_part<'a>(
+    parts: &'a [serde_json::Value],
+    missing_message: &str,
+) -> Result<&'a str, LlmCallError> {
+    parts
+        .iter()
+        .find_map(|part| part.get("text").and_then(serde_json::Value::as_str))
+        .ok_or_else(|| permanent_parse_error(missing_message))
 }
 
 fn parse_tool_call(index: usize, value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
@@ -328,9 +337,9 @@ fn request_body(
                 "responseMimeType": "application/json"
             }
         }),
-        LlmOutputMode::Text => {
-            unimplemented!()
-        }
+        LlmOutputMode::Text => json!({
+            "contents": contents,
+        }),
     }
 }
 
@@ -478,6 +487,10 @@ mod tests {
         )
     }
 
+    fn parse_success_text(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+        GeminiResponseParser::parse_success(body, LlmOutputMode::Text)
+    }
+
     #[test]
     fn builds_gemini_request_body_with_contents_tools_and_structured_output_tool() {
         let builder = GeminiRequestBuilder::new(
@@ -602,6 +615,39 @@ mod tests {
             http.body["contents"][1]["parts"][0]["functionResponse"]["response"]["diff"],
             "+hello"
         );
+    }
+
+    #[test]
+    fn builds_text_request_body_without_tools_or_generation_config() {
+        let builder = GeminiRequestBuilder::new(Secret::new("test-api-key"), None);
+        let conversation = [
+            ConversationTurn::System("You summarize PR context.".to_string()),
+            ConversationTurn::User("Summarize this PR.".to_string()),
+        ];
+        let request = LlmRequest {
+            model: "gemini-2.5-pro",
+            conversation: &conversation,
+            output_mode: LlmOutputMode::Text,
+        };
+
+        let http = builder.build(request).unwrap();
+
+        assert_eq!(
+            http.url,
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent"
+        );
+        assert_eq!(
+            http.body["systemInstruction"]["parts"][0]["text"],
+            "You summarize PR context."
+        );
+        assert_eq!(http.body["contents"][0]["role"], "user");
+        assert_eq!(
+            http.body["contents"][0]["parts"][0]["text"],
+            "Summarize this PR."
+        );
+        assert!(http.body.get("tools").is_none());
+        assert!(http.body.get("toolConfig").is_none());
+        assert!(http.body.get("generationConfig").is_none());
     }
 
     #[test]
@@ -762,6 +808,36 @@ mod tests {
         assert!(matches!(error, LlmCallError::Permanent { .. }));
         assert!(error.to_string().contains("assistant text"));
         assert!(std::error::Error::source(&error).is_some());
+    }
+
+    #[test]
+    fn parses_text_content_as_text_response() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "text": "This PR updates the review flow."
+                    }]
+                }
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 10,
+                "candidatesTokenCount": 5
+            }
+        });
+
+        let result = parse_success_text(&body).unwrap();
+
+        assert_eq!(
+            result,
+            LlmCallResult {
+                response: LlmResponse::Text("This PR updates the review flow.".to_string()),
+                usage: RawUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                },
+            }
+        );
     }
 
     #[test]

@@ -175,10 +175,7 @@ fn parse_check_response(message: &serde_json::Value) -> Result<LlmResponse, LlmC
         return Ok(LlmResponse::ToolCalls(tool_calls));
     }
 
-    let content = message
-        .get("content")
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| permanent_parse_error("missing assistant content or tool_calls"))?;
+    let content = message_content(message, "missing assistant content or tool_calls")?;
     let value = serde_json::from_str(content).map_err(|error| LlmCallError::Permanent {
         message: "failed to parse assistant content as JSON".to_string(),
         source: Box::new(error),
@@ -188,8 +185,20 @@ fn parse_check_response(message: &serde_json::Value) -> Result<LlmResponse, LlmC
     Ok(LlmResponse::CheckOutput(check_output))
 }
 
-fn parse_text_response(_message: &serde_json::Value) -> Result<LlmResponse, LlmCallError> {
-    unimplemented!()
+fn parse_text_response(message: &serde_json::Value) -> Result<LlmResponse, LlmCallError> {
+    let content = message_content(message, "missing assistant content")?;
+
+    Ok(LlmResponse::Text(content.to_string()))
+}
+
+fn message_content<'a>(
+    message: &'a serde_json::Value,
+    missing_message: &str,
+) -> Result<&'a str, LlmCallError> {
+    message
+        .get("content")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| permanent_parse_error(missing_message))
 }
 
 fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
@@ -315,9 +324,10 @@ fn request_body(request: LlmRequest<'_>) -> Result<serde_json::Value, LlmCallErr
                 "type": "json_object"
             },
         }),
-        LlmOutputMode::Text => {
-            unimplemented!()
-        }
+        LlmOutputMode::Text => json!({
+            "model": request.model,
+            "messages": messages(request.conversation)?,
+        }),
     })
 }
 
@@ -429,6 +439,10 @@ mod tests {
         )
     }
 
+    fn parse_success_text(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
+        OpenAiResponseParser::parse_success(body, LlmOutputMode::Text)
+    }
+
     #[test]
     fn builds_openai_request_body_with_messages_tools_and_structured_output_tool() {
         let builder = OpenAiRequestBuilder::new(
@@ -517,6 +531,26 @@ mod tests {
         assert_eq!(http.body["messages"][1]["role"], "tool");
         assert_eq!(http.body["messages"][1]["tool_call_id"], "call-1");
         assert_eq!(http.body["messages"][1]["content"], "{\"diff\":\"+hello\"}");
+    }
+
+    #[test]
+    fn builds_text_request_body_without_tools_or_response_format() {
+        let builder = OpenAiRequestBuilder::new(Secret::new("test-api-key"), None);
+        let conversation = [ConversationTurn::User("Summarize this PR.".to_string())];
+        let request = LlmRequest {
+            model: "gpt-4.1",
+            conversation: &conversation,
+            output_mode: LlmOutputMode::Text,
+        };
+
+        let http = builder.build(request).unwrap();
+
+        assert_eq!(http.body["model"], "gpt-4.1");
+        assert_eq!(http.body["messages"][0]["role"], "user");
+        assert_eq!(http.body["messages"][0]["content"], "Summarize this PR.");
+        assert!(http.body.get("tools").is_none());
+        assert!(http.body.get("tool_choice").is_none());
+        assert!(http.body.get("response_format").is_none());
     }
 
     #[test]
@@ -655,6 +689,35 @@ mod tests {
         assert_eq!(output.summary, "content json");
         assert_eq!(output.findings, vec![]);
         assert_eq!(output.confidence.as_f64(), 0.8);
+    }
+
+    #[test]
+    fn parses_text_content_as_text_response() {
+        let body = json!({
+            "choices": [{
+                "message": {
+                    "role": "assistant",
+                    "content": "This PR updates the review flow."
+                }
+            }],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 5
+            }
+        });
+
+        let result = parse_success_text(&body).unwrap();
+
+        assert_eq!(
+            result,
+            LlmCallResult {
+                response: LlmResponse::Text("This PR updates the review flow.".to_string()),
+                usage: RawUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                },
+            }
+        );
     }
 
     #[test]
