@@ -170,7 +170,7 @@ where
             "LLM agent did not produce check output within {} iterations",
             request.max_iterations
         ),
-        source: Box::new(AgentLoopError),
+        source: Box::new(AgentError::LoopExhausted),
     })
 }
 
@@ -195,15 +195,19 @@ fn tool_result_json(result: ToolExecutionResult) -> serde_json::Value {
 }
 
 #[derive(Debug)]
-struct AgentLoopError;
+enum AgentError {
+    LoopExhausted,
+}
 
-impl fmt::Display for AgentLoopError {
+impl fmt::Display for AgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "agent loop exhausted")
+        match self {
+            Self::LoopExhausted => f.write_str("agent loop exhausted"),
+        }
     }
 }
 
-impl std::error::Error for AgentLoopError {}
+impl std::error::Error for AgentError {}
 
 impl fmt::Display for AgentExhaustionReason {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
