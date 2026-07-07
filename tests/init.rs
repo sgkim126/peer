@@ -22,7 +22,23 @@ fn git_init(path: &Path) {
         .args(["init"])
         .current_dir(path)
         .output()
-        .unwrap();
+        .unwrap()
+        .assert_success();
+}
+
+trait OutputExt {
+    fn assert_success(&self);
+}
+
+impl OutputExt for std::process::Output {
+    fn assert_success(&self) {
+        assert!(
+            self.status.success(),
+            "command failed with status {:?}\nstderr: {}",
+            self.status.code(),
+            String::from_utf8_lossy(&self.stderr)
+        );
+    }
 }
 
 #[test]
@@ -54,7 +70,7 @@ fn init_succeeds_in_git_repo() {
 fn init_fails_when_peer_already_exists() {
     let (mut cmd, tmp) = peer_in_tmp();
     git_init(tmp.path());
-    cmd.arg("init").output().unwrap();
+    cmd.arg("init").output().unwrap().assert_success();
 
     let out = peer_in(&tmp).arg("init").output().unwrap();
     assert!(!out.status.success());
@@ -65,7 +81,7 @@ fn init_fails_when_peer_already_exists() {
 fn default_config_contains_mistral_provider_and_pricing() {
     let (mut cmd, tmp) = peer_in_tmp();
     git_init(tmp.path());
-    cmd.arg("init").output().unwrap();
+    cmd.arg("init").output().unwrap().assert_success();
 
     let content = std::fs::read_to_string(tmp.path().join(".peer").join("config.toml")).unwrap();
     assert!(content.contains("mistral"), "provider name missing");
