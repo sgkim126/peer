@@ -48,6 +48,12 @@ impl MockProvider {
     }
 }
 
+impl Default for MockProvider {
+    fn default() -> Self {
+        Self::new([])
+    }
+}
+
 impl FakeToolExecutor {
     pub fn new(responses: impl IntoIterator<Item = ToolExecutionResult>) -> Self {
         Self {
@@ -58,6 +64,12 @@ impl FakeToolExecutor {
 
     pub fn calls(&self) -> Vec<ToolCall> {
         self.calls.lock().unwrap().clone()
+    }
+}
+
+impl Default for FakeToolExecutor {
+    fn default() -> Self {
+        Self::new([])
     }
 }
 
@@ -221,7 +233,7 @@ mod tests {
     #[tokio::test]
     #[should_panic(expected = "MockProvider has no queued response")]
     async fn panics_when_no_response_is_queued() {
-        let provider = MockProvider::new([]);
+        let provider = MockProvider::default();
         let schema = json!({
             "type": "object"
         });

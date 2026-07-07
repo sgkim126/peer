@@ -434,7 +434,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepares_title_only_context_without_llm_call() {
-        let provider = MockProvider::new([]);
+        let provider = MockProvider::default();
         let (_tmp, cache) = cache_store();
 
         let prepared = prepare_review_context(
@@ -467,7 +467,7 @@ mod tests {
 
     #[tokio::test]
     async fn prepares_small_body_and_comments_without_llm_call() {
-        let provider = MockProvider::new([]);
+        let provider = MockProvider::default();
         let (_tmp, cache) = cache_store();
         let comments = vec![ReviewComment {
             body: "Please cover this branch.".to_string(),
@@ -605,7 +605,7 @@ mod tests {
                 },
             )
             .unwrap();
-        let provider = MockProvider::new([]);
+        let provider = MockProvider::default();
 
         let prepared = prepare_review_context(
             &provider,

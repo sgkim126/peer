@@ -427,7 +427,6 @@ mod tests {
     use crate::config::{LlmConfig, ModelConfig, ProviderConfig, ReviewConfig};
     use crate::console::Console;
     use crate::git::run_git;
-    use crate::llm::agent::ToolExecutionResult;
     use crate::llm::confidence::Confidence;
     use crate::llm::provider::{LlmCallError, LlmCallResult, LlmResponse, RawUsage, ToolCall};
     use crate::llm::result::{Finding, Severity};
@@ -594,7 +593,7 @@ mod tests {
     {
         let console = Console::default();
         let provider = successful_provider();
-        let tool_executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let tool_executor = FakeToolExecutor::default();
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
 
         let result = run_definition_with(
@@ -742,7 +741,7 @@ mod tests {
         let repository = init_repository().await;
         let console = Console::default();
         let provider = MockProvider::new([Err(error)]);
-        let tool_executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let tool_executor = FakeToolExecutor::default();
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
         let check = SizeCheck::try_new("HEAD".to_string(), &extractor)
             .await
@@ -811,7 +810,7 @@ mod tests {
                 output_tokens: 50,
             },
         })]);
-        let tool_executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let tool_executor = FakeToolExecutor::default();
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
         let mut config = test_config();
         config.llm.max_iterations = 1;

@@ -293,7 +293,7 @@ mod tests {
             10,
             5,
         ))]);
-        let executor = FakeToolExecutor::new([]);
+        let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
         let result = completed(
             run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
@@ -321,7 +321,7 @@ mod tests {
                 7,
             )),
         ]);
-        let executor = FakeToolExecutor::new([]);
+        let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
 
         let result = completed(
@@ -354,7 +354,7 @@ mod tests {
             10,
             5,
         ))]);
-        let executor = FakeToolExecutor::new([]);
+        let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
 
         let result = completed(
@@ -382,7 +382,7 @@ mod tests {
                 7,
             )),
         ]);
-        let executor = FakeToolExecutor::new([]);
+        let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
         let validate = |output: &CheckOutput| {
             if output.summary == "valid" {
@@ -420,7 +420,7 @@ mod tests {
                 7,
             )),
         ]);
-        let executor = FakeToolExecutor::new([]);
+        let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
 
         let outcome = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 2))
@@ -455,7 +455,7 @@ mod tests {
                 )),
             }),
         ]);
-        let executor = FakeToolExecutor::new([]);
+        let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
 
         let outcome = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
@@ -484,7 +484,7 @@ mod tests {
                 "request timed out",
             )),
         })]);
-        let executor = FakeToolExecutor::new([]);
+        let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
 
         let error = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))

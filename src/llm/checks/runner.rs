@@ -127,7 +127,6 @@ mod tests {
     use super::*;
     use crate::cache::CacheKey;
     use crate::git::CommitHash;
-    use crate::llm::agent::ToolExecutionResult;
     use crate::llm::checks::{PreparedCheck, PreparedCheckTarget};
     use crate::llm::provider::{ConversationTurn, LlmCallResult, LlmResponse, RawUsage};
     use crate::llm::result::{CheckOutput, Finding, Severity};
@@ -233,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn runs_prepared_check_and_builds_check_result() {
         let provider = MockProvider::new([Ok(response(output("abc1234", 0.9)))]);
-        let executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let executor = FakeToolExecutor::default();
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
         };
@@ -270,7 +269,7 @@ mod tests {
                 message: "context is full".to_string(),
             }),
         ]);
-        let executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let executor = FakeToolExecutor::default();
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
         };
@@ -301,7 +300,7 @@ mod tests {
             Ok(response(output("def5678", 0.9))),
             Ok(response(output("abc1234", 0.9))),
         ]);
-        let executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let executor = FakeToolExecutor::default();
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
         };
@@ -328,7 +327,7 @@ mod tests {
     async fn returns_cached_check_result_without_calling_provider() {
         let tmp = tempfile::tempdir().unwrap();
         let cache = CacheStore::new(tmp.path().join("cache"), Console::default());
-        let executor = FakeToolExecutor::new(Vec::<ToolExecutionResult>::new());
+        let executor = FakeToolExecutor::default();
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
         };
@@ -345,7 +344,7 @@ mod tests {
         .await
         .unwrap();
 
-        let second_provider = MockProvider::new(Vec::<Result<LlmCallResult, LlmCallError>>::new());
+        let second_provider = MockProvider::default();
         let second = run_check(
             &check,
             &extractor(),
