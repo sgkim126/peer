@@ -3,6 +3,11 @@ use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
 };
 
+// TODO: make it configurable
+const BODY_COMPRESSION_THRESHOLD_CHARS: usize = 800;
+// TODO: make it configurable
+const COMMENTS_COMPRESSION_THRESHOLD_CHARS: usize = 1_500;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReviewContextSummaryKind {
     Body,
@@ -153,30 +158,51 @@ pub async fn prepare_review_context<P>(
 where
     P: LlmProvider,
 {
+    let ReviewContextInput {
+        title,
+        body,
+        comments,
+    } = input;
     let mut usage = RawUsage::default();
-    let body_summary = if let Some(body) = input.body {
-        let output = summarize_body(provider, model, &body).await?;
-        usage += output.usage;
-        Some(output.summary)
+    let body_summary = if let Some(body) = body {
+        if should_compress(&body, BODY_COMPRESSION_THRESHOLD_CHARS) {
+            let output = summarize_body(provider, model, &body).await?;
+            usage += output.usage;
+            Some(output.summary)
+        } else {
+            Some(body)
+        }
     } else {
         None
     };
-    let comments_summary = if input.comments.is_empty() {
+    let comments_summary = if comments.is_empty() {
         None
     } else {
-        let output = summarize_comments(provider, model, &input.comments).await?;
-        usage += output.usage;
-        Some(output.summary)
+        let comments_input = ReviewContextSummaryInput::comments(&comments);
+        if should_compress(
+            &comments_input.content,
+            COMMENTS_COMPRESSION_THRESHOLD_CHARS,
+        ) {
+            let output = summarize_comments(provider, model, &comments).await?;
+            usage += output.usage;
+            Some(output.summary)
+        } else {
+            Some(comments_input.content)
+        }
     };
 
     Ok(PreparedReviewContext {
         context: ReviewContext {
-            title: input.title,
+            title,
             body_summary,
             comments_summary,
         },
         usage,
     })
+}
+
+fn should_compress(content: &str, threshold_chars: usize) -> bool {
+    content.chars().count() > threshold_chars
 }
 
 fn format_comments(comments: &[ReviewComment]) -> String {
@@ -395,6 +421,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn prepares_small_body_and_comments_without_llm_call() {
+        let provider = MockProvider::new([]);
+        let comments = vec![ReviewComment {
+            body: "Please cover this branch.".to_string(),
+            commit: None,
+            location: None,
+        }];
+
+        let prepared = prepare_review_context(
+            &provider,
+            "test-model",
+            ReviewContextInput {
+                title: Some("Add parser".to_string()),
+                body: Some("Short PR body".to_string()),
+                comments: comments.clone(),
+            },
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            prepared,
+            PreparedReviewContext {
+                context: ReviewContext {
+                    title: Some("Add parser".to_string()),
+                    body_summary: Some("Short PR body".to_string()),
+                    comments_summary: Some(format_comments(&comments)),
+                },
+                usage: RawUsage::default(),
+            }
+        );
+        assert!(provider.requests().is_empty());
+    }
+
+    #[tokio::test]
     async fn prepares_context_with_body_and_comments_summaries() {
         let provider = MockProvider::new([
             Ok(LlmCallResult {
@@ -418,9 +479,9 @@ mod tests {
             "test-model",
             ReviewContextInput {
                 title: Some("Add parser".to_string()),
-                body: Some("Long PR body".to_string()),
+                body: Some("x".repeat(BODY_COMPRESSION_THRESHOLD_CHARS + 1)),
                 comments: vec![ReviewComment {
-                    body: "Please cover this branch.".to_string(),
+                    body: "y".repeat(COMMENTS_COMPRESSION_THRESHOLD_CHARS + 1),
                     commit: None,
                     location: None,
                 }],
@@ -466,7 +527,7 @@ mod tests {
             "test-model",
             ReviewContextInput {
                 title: None,
-                body: Some("Long PR body".to_string()),
+                body: Some("x".repeat(BODY_COMPRESSION_THRESHOLD_CHARS + 1)),
                 comments: Vec::new(),
             },
         )
