@@ -133,10 +133,13 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            let cache_store = cache::CacheStore::new(project_root.join(".peer/cache"), console);
             let prepared_review_context = match llm::tools::prepare_review_context(
                 &provider,
+                &provider_config.name,
                 &model_config.name,
                 review_context_input,
+                &cache_store,
             )
             .await
             {

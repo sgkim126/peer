@@ -7,13 +7,11 @@ use serde::de::DeserializeOwned;
 use crate::console::Console;
 
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct CacheStore {
     root: PathBuf,
     console: Console,
 }
 
-#[allow(dead_code)]
 impl CacheStore {
     pub fn new(root: impl Into<PathBuf>, console: Console) -> Self {
         Self {
@@ -111,7 +109,6 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
-    #[allow(dead_code)]
     pub fn from_params<T>(
         tool: impl Into<String>,
         provider: impl Into<String>,

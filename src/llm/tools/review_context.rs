@@ -1,8 +1,12 @@
+use serde::{Deserialize, Serialize};
+
+use crate::cache::{CacheKey, CacheStore};
 use crate::llm::context::{ReviewComment, ReviewContext, ReviewContextInput};
 use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
 };
 
+const REVIEW_CONTEXT_SUMMARY_TOOL: &str = "review_context_summary";
 // TODO: make it configurable
 const BODY_COMPRESSION_THRESHOLD_CHARS: usize = 800;
 // TODO: make it configurable
@@ -55,6 +59,22 @@ struct ReviewContextSummaryOutput {
     usage: RawUsage,
 }
 
+#[derive(Debug, Serialize)]
+struct ReviewContextSummaryCacheParams {
+    conversation: Vec<ReviewContextSummaryCacheTurn>,
+}
+
+#[derive(Debug, Serialize)]
+struct ReviewContextSummaryCacheTurn {
+    role: &'static str,
+    content: String,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct ReviewContextSummaryCacheValue {
+    summary: String,
+}
+
 fn system_prompt(kind: ReviewContextSummaryKind) -> &'static str {
     match kind {
         ReviewContextSummaryKind::Body => {
@@ -79,29 +99,49 @@ fn user_prompt(kind: ReviewContextSummaryKind, content: &str) -> String {
 
 async fn summarize_body<P>(
     provider: &P,
+    provider_name: &str,
     model: &str,
     body: &str,
+    cache: &CacheStore,
 ) -> Result<ReviewContextSummaryOutput, LlmCallError>
 where
     P: LlmProvider,
 {
-    summarize_impl(provider, model, ReviewContextSummaryInput::body(body)).await
-}
-
-async fn summarize_comments<P>(
-    provider: &P,
-    model: &str,
-    comments: &[ReviewComment],
-) -> Result<ReviewContextSummaryOutput, LlmCallError>
-where
-    P: LlmProvider,
-{
-    summarize_impl(
+    summarize_cached(
         provider,
+        provider_name,
         model,
-        ReviewContextSummaryInput::comments(comments),
+        ReviewContextSummaryInput::body(body),
+        cache,
     )
     .await
+}
+
+async fn summarize_cached<P>(
+    provider: &P,
+    provider_name: &str,
+    model: &str,
+    input: ReviewContextSummaryInput,
+    cache: &CacheStore,
+) -> Result<ReviewContextSummaryOutput, LlmCallError>
+where
+    P: LlmProvider,
+{
+    let cache_key = cache_key(provider_name, model, &input)?;
+    if let Ok(Some(value)) = cache.read_json::<ReviewContextSummaryCacheValue>(&cache_key) {
+        return Ok(ReviewContextSummaryOutput {
+            summary: value.summary,
+            usage: RawUsage::default(),
+        });
+    }
+
+    let output = summarize_impl(provider, model, input).await?;
+    let value = ReviewContextSummaryCacheValue {
+        summary: output.summary.clone(),
+    };
+    let _ = cache.write_json(&cache_key, &value);
+
+    Ok(output)
 }
 
 async fn summarize_impl<P>(
@@ -152,8 +192,10 @@ impl std::fmt::Display for ReviewContextSummaryError {
 
 pub async fn prepare_review_context<P>(
     provider: &P,
+    provider_name: &str,
     model: &str,
     input: ReviewContextInput,
+    cache: &CacheStore,
 ) -> Result<PreparedReviewContext, LlmCallError>
 where
     P: LlmProvider,
@@ -166,7 +208,7 @@ where
     let mut usage = RawUsage::default();
     let body_summary = if let Some(body) = body {
         if should_compress(&body, BODY_COMPRESSION_THRESHOLD_CHARS) {
-            let output = summarize_body(provider, model, &body).await?;
+            let output = summarize_body(provider, provider_name, model, &body, cache).await?;
             usage += output.usage;
             Some(output.summary)
         } else {
@@ -183,7 +225,8 @@ where
             &comments_input.content,
             COMMENTS_COMPRESSION_THRESHOLD_CHARS,
         ) {
-            let output = summarize_comments(provider, model, &comments).await?;
+            let output =
+                summarize_cached(provider, provider_name, model, comments_input, cache).await?;
             usage += output.usage;
             Some(output.summary)
         } else {
@@ -199,6 +242,40 @@ where
         },
         usage,
     })
+}
+
+fn cache_key(
+    provider_name: &str,
+    model: &str,
+    input: &ReviewContextSummaryInput,
+) -> Result<CacheKey, LlmCallError> {
+    let params = ReviewContextSummaryCacheParams {
+        conversation: cache_conversation(input),
+    };
+    CacheKey::from_params(REVIEW_CONTEXT_SUMMARY_TOOL, provider_name, model, &params).map_err(
+        |source| LlmCallError::Permanent {
+            message: "failed to hash review context summary cache key".to_string(),
+            source: Box::new(source),
+        },
+    )
+}
+
+fn cache_conversation(input: &ReviewContextSummaryInput) -> Vec<ReviewContextSummaryCacheTurn> {
+    input
+        .prompts()
+        .into_iter()
+        .map(|turn| match turn {
+            ConversationTurn::System(content) => ReviewContextSummaryCacheTurn {
+                role: "system",
+                content,
+            },
+            ConversationTurn::User(content) => ReviewContextSummaryCacheTurn {
+                role: "user",
+                content,
+            },
+            _ => unreachable!("review context summary prompts only contain system and user turns"),
+        })
+        .collect()
 }
 
 fn should_compress(content: &str, threshold_chars: usize) -> bool {
@@ -240,6 +317,12 @@ mod tests {
     use crate::llm::context::ReviewCommentLocation;
     use crate::llm::provider::{LlmCallResult, ToolCall};
     use crate::llm::test_support::{MockProvider, RecordedLlmOutputMode};
+
+    fn cache_store() -> (tempfile::TempDir, CacheStore) {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = CacheStore::new(tmp.path().join("cache"), crate::console::Console::default());
+        (tmp, cache)
+    }
 
     #[test]
     fn builds_body_summary_prompts() {
@@ -290,10 +373,17 @@ mod tests {
                 output_tokens: 5,
             },
         })]);
+        let (_tmp, cache) = cache_store();
 
-        let output = summarize_body(&provider, "test-model", "Long PR body")
-            .await
-            .unwrap();
+        let output = summarize_body(
+            &provider,
+            "test-provider",
+            "test-model",
+            "Long PR body",
+            &cache,
+        )
+        .await
+        .unwrap();
 
         assert_eq!(
             output,
@@ -328,8 +418,9 @@ mod tests {
             }]),
             usage: RawUsage::default(),
         })]);
+        let (_tmp, cache) = cache_store();
 
-        let error = summarize_body(&provider, "test-model", "body")
+        let error = summarize_body(&provider, "test-provider", "test-model", "body", &cache)
             .await
             .unwrap_err();
 
@@ -342,66 +433,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn summarize_comments_sends_text_request() {
-        let provider = MockProvider::new([Ok(LlmCallResult {
-            response: LlmResponse::Text("comment summary".to_string()),
-            usage: RawUsage {
-                input_tokens: 20,
-                output_tokens: 8,
-            },
-        })]);
-        let comments = [ReviewComment {
-            body: "Please cover this branch.".to_string(),
-            commit: Some(CommitHash::new("abc1234").unwrap()),
-            location: Some(ReviewCommentLocation {
-                path: "src/lib.rs".to_string(),
-                line: 42,
-            }),
-        }];
-
-        let output = summarize_comments(&provider, "test-model", &comments)
-            .await
-            .unwrap();
-
-        assert_eq!(
-            output,
-            ReviewContextSummaryOutput {
-                summary: "comment summary".to_string(),
-                usage: RawUsage {
-                    input_tokens: 20,
-                    output_tokens: 8,
-                },
-            }
-        );
-        let requests = provider.requests();
-        assert_eq!(requests.len(), 1);
-        assert_eq!(requests[0].model, "test-model");
-        assert_eq!(requests[0].output_mode, RecordedLlmOutputMode::Text);
-        assert_eq!(
-            requests[0].conversation,
-            vec![
-                ConversationTurn::System(
-                    system_prompt(ReviewContextSummaryKind::Comments).to_string()
-                ),
-                ConversationTurn::User(
-                    "Pull request comments:\nComment 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nBody:\nPlease cover this branch.".to_string()
-                ),
-            ]
-        );
-    }
-
-    #[tokio::test]
     async fn prepares_title_only_context_without_llm_call() {
         let provider = MockProvider::new([]);
+        let (_tmp, cache) = cache_store();
 
         let prepared = prepare_review_context(
             &provider,
+            "test-provider",
             "test-model",
             ReviewContextInput {
                 title: Some("Add parser".to_string()),
                 body: None,
                 comments: Vec::new(),
             },
+            &cache,
         )
         .await
         .unwrap();
@@ -423,6 +468,7 @@ mod tests {
     #[tokio::test]
     async fn prepares_small_body_and_comments_without_llm_call() {
         let provider = MockProvider::new([]);
+        let (_tmp, cache) = cache_store();
         let comments = vec![ReviewComment {
             body: "Please cover this branch.".to_string(),
             commit: None,
@@ -431,12 +477,14 @@ mod tests {
 
         let prepared = prepare_review_context(
             &provider,
+            "test-provider",
             "test-model",
             ReviewContextInput {
                 title: Some("Add parser".to_string()),
                 body: Some("Short PR body".to_string()),
                 comments: comments.clone(),
             },
+            &cache,
         )
         .await
         .unwrap();
@@ -473,9 +521,11 @@ mod tests {
                 },
             }),
         ]);
+        let (_tmp, cache) = cache_store();
 
         let prepared = prepare_review_context(
             &provider,
+            "test-provider",
             "test-model",
             ReviewContextInput {
                 title: Some("Add parser".to_string()),
@@ -486,6 +536,7 @@ mod tests {
                     location: None,
                 }],
             },
+            &cache,
         )
         .await
         .unwrap();
@@ -521,19 +572,148 @@ mod tests {
             message: "timeout".to_string(),
             source: Box::new(std::io::Error::new(std::io::ErrorKind::TimedOut, "timeout")),
         })]);
+        let (_tmp, cache) = cache_store();
 
         let error = prepare_review_context(
             &provider,
+            "test-provider",
             "test-model",
             ReviewContextInput {
                 title: None,
                 body: Some("x".repeat(BODY_COMPRESSION_THRESHOLD_CHARS + 1)),
                 comments: Vec::new(),
             },
+            &cache,
         )
         .await
         .unwrap_err();
 
         assert!(matches!(error, LlmCallError::Transient { .. }));
+    }
+
+    #[tokio::test]
+    async fn uses_cached_body_summary_without_llm_call() {
+        let (_tmp, cache) = cache_store();
+        let body = "x".repeat(BODY_COMPRESSION_THRESHOLD_CHARS + 1);
+        let input = ReviewContextSummaryInput::body(&body);
+        let key = cache_key("test-provider", "test-model", &input).unwrap();
+        cache
+            .write_json(
+                &key,
+                &ReviewContextSummaryCacheValue {
+                    summary: "cached body summary".to_string(),
+                },
+            )
+            .unwrap();
+        let provider = MockProvider::new([]);
+
+        let prepared = prepare_review_context(
+            &provider,
+            "test-provider",
+            "test-model",
+            ReviewContextInput {
+                title: None,
+                body: Some(body),
+                comments: Vec::new(),
+            },
+            &cache,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            prepared.context.body_summary,
+            Some("cached body summary".to_string())
+        );
+        assert_eq!(prepared.usage, RawUsage::default());
+        assert!(provider.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn writes_body_summary_to_cache_on_miss() {
+        let (_tmp, cache) = cache_store();
+        let body = "x".repeat(BODY_COMPRESSION_THRESHOLD_CHARS + 1);
+        let provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::Text("fresh body summary".to_string()),
+            usage: RawUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+        })]);
+
+        let prepared = prepare_review_context(
+            &provider,
+            "test-provider",
+            "test-model",
+            ReviewContextInput {
+                title: None,
+                body: Some(body.clone()),
+                comments: Vec::new(),
+            },
+            &cache,
+        )
+        .await
+        .unwrap();
+
+        let key = cache_key(
+            "test-provider",
+            "test-model",
+            &ReviewContextSummaryInput::body(body),
+        )
+        .unwrap();
+        let cached = cache
+            .read_json::<ReviewContextSummaryCacheValue>(&key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            prepared.context.body_summary,
+            Some("fresh body summary".to_string())
+        );
+        assert_eq!(prepared.usage.input_tokens, 10);
+        assert_eq!(cached.summary, "fresh body summary");
+        assert_eq!(provider.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn treats_corrupted_cache_as_miss() {
+        let (_tmp, cache) = cache_store();
+        let body = "x".repeat(BODY_COMPRESSION_THRESHOLD_CHARS + 1);
+        let key = cache_key(
+            "test-provider",
+            "test-model",
+            &ReviewContextSummaryInput::body(&body),
+        )
+        .unwrap();
+        let path = cache.path_for(&key);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "not json").unwrap();
+        let provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::Text("fresh summary".to_string()),
+            usage: RawUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            },
+        })]);
+
+        let prepared = prepare_review_context(
+            &provider,
+            "test-provider",
+            "test-model",
+            ReviewContextInput {
+                title: None,
+                body: Some(body),
+                comments: Vec::new(),
+            },
+            &cache,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            prepared.context.body_summary,
+            Some("fresh summary".to_string())
+        );
+        assert_eq!(prepared.usage.input_tokens, 10);
+        assert_eq!(provider.requests().len(), 1);
     }
 }
