@@ -5,7 +5,9 @@ use std::io::IsTerminal;
 use crate::cli::OutputFormat;
 use crate::console::Console;
 use crate::llm::checks::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
-use crate::llm::result::{CheckOutcome, CheckResult, CheckTarget, Finding, Severity};
+use crate::llm::result::{
+    CheckOutcome, CheckResult, CheckTarget, CheckUserInfoRequest, Finding, Severity,
+};
 use crate::review::ReviewResult;
 use owo_colors::Style;
 
@@ -109,28 +111,38 @@ fn render_check_outcome_impl(
         }
         CheckOutcome::NeedsUserInfo { request } => Ok(match format {
             OutputFormat::Json => unreachable!("review json renders the full review result"),
-            OutputFormat::Terminal => format!(
-                "{} {}\n{} {}\n\n{}",
-                terminal_label("Check:", use_color),
-                styled(&request.check, Style::new().bold(), use_color),
-                terminal_label("Target:", use_color),
-                display_target(&request.target),
-                request.questions.join("\n")
-            ),
-            OutputFormat::Markdown => {
-                let questions = request
-                    .questions
-                    .iter()
-                    .map(|question| format!("- {question}"))
-                    .collect::<Vec<_>>()
-                    .join("\n");
-                format!(
-                    "## Check: {}\n\nNeeds user info:\n\n{}",
-                    request.check, questions
-                )
-            }
+            OutputFormat::Terminal => render_terminal_user_info_request(request, use_color),
+            OutputFormat::Markdown => render_markdown_user_info_request(request),
         }),
     }
+}
+
+fn render_terminal_user_info_request(request: &CheckUserInfoRequest, use_color: bool) -> String {
+    format!(
+        "{} {}\n{} {}\n{} {}\n\n{}",
+        terminal_label("Check:", use_color),
+        styled(&request.check, Style::new().bold(), use_color),
+        terminal_label("Target:", use_color),
+        display_target(&request.target),
+        terminal_label("Status:", use_color),
+        styled("needs_user_info", Style::new().yellow().bold(), use_color),
+        request.questions.join("\n")
+    )
+}
+
+fn render_markdown_user_info_request(request: &CheckUserInfoRequest) -> String {
+    let questions = request
+        .questions
+        .iter()
+        .map(|question| format!("- {question}"))
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        "## Check: {}\n\n- **Target:** `{}`\n- **Status:** needs_user_info\n\n### Questions\n\n{}",
+        request.check,
+        display_target(&request.target),
+        questions
+    )
 }
 
 fn render_json(output: &CheckCommandOutput) -> Result<String, RenderError> {
@@ -197,8 +209,8 @@ fn remove_review_usage(value: &mut serde_json::Value) {
 }
 
 fn log_usage(output: &CheckCommandOutput, console: Console) {
-    if let Ok(result) = output.as_result() {
-        log_result_usage(result, console);
+    if let Ok(CheckOutcome::Success { check }) = output.as_outcome() {
+        log_result_usage(check, console);
     }
 }
 
@@ -221,8 +233,8 @@ fn log_result_usage(result: &CheckResult, console: Console) {
 }
 
 fn render_terminal(output: &CheckCommandOutput, use_color: bool) -> String {
-    match output.as_result() {
-        Ok(result) => render_terminal_result(result, use_color),
+    match output.as_outcome() {
+        Ok(outcome) => render_check_outcome_for_command(outcome, OutputFormat::Terminal, use_color),
         Err(error) => render_terminal_error(error, use_color),
     }
 }
@@ -312,9 +324,28 @@ fn render_terminal_error(error: &CheckCommandErrorOutput, use_color: bool) -> St
 }
 
 fn render_markdown(output: &CheckCommandOutput) -> String {
-    match output.as_result() {
-        Ok(result) => render_markdown_result(result),
+    match output.as_outcome() {
+        Ok(outcome) => render_check_outcome_for_command(outcome, OutputFormat::Markdown, false),
         Err(error) => render_markdown_error(error),
+    }
+}
+
+fn render_check_outcome_for_command(
+    outcome: &CheckOutcome,
+    format: OutputFormat,
+    use_color: bool,
+) -> String {
+    match outcome {
+        CheckOutcome::Success { check } => match format {
+            OutputFormat::Terminal => render_terminal_result(check, use_color),
+            OutputFormat::Markdown => render_markdown_result(check),
+            OutputFormat::Json => unreachable!("json check output is rendered from the envelope"),
+        },
+        CheckOutcome::NeedsUserInfo { request } => match format {
+            OutputFormat::Terminal => render_terminal_user_info_request(request, use_color),
+            OutputFormat::Markdown => render_markdown_user_info_request(request),
+            OutputFormat::Json => unreachable!("json check output is rendered from the envelope"),
+        },
     }
 }
 
@@ -552,6 +583,30 @@ mod tests {
         envelope
     }
 
+    fn needs_user_info_envelope() -> Value {
+        json!({
+            "status": "success",
+            "data": {
+                "status": "needs_user_info",
+                "request": {
+                    "check": "security",
+                    "target": "abc1234",
+                    "questions": [
+                        "Which production auth policy applies here, and why does it affect this security check?",
+                        "Is this endpoint exposed publicly, and why is that needed to assess exploitability?"
+                    ],
+                    "iterations": 1,
+                    "usage": {
+                        "input_tokens": 120,
+                        "output_tokens": 30,
+                        "cost_usd": 0.002,
+                        "model": "test-model"
+                    }
+                }
+            }
+        })
+    }
+
     fn success_envelope_without_usage() -> Value {
         let mut envelope = success_envelope();
         envelope["data"]["check"]
@@ -569,6 +624,10 @@ mod tests {
         serde_json::from_value(success_envelope_with_finding()["data"]["check"].clone()).unwrap()
     }
 
+    fn needs_user_info_outcome() -> CheckOutcome {
+        serde_json::from_value(needs_user_info_envelope()["data"].clone()).unwrap()
+    }
+
     fn success_review_result() -> ReviewResult {
         let mut size = success_result();
         size.check = "size".to_string();
@@ -579,6 +638,12 @@ mod tests {
             outcomes: vec![CheckOutcome::success(size), CheckOutcome::success(intent)],
             errors: Default::default(),
         }
+    }
+
+    fn mixed_review_result() -> ReviewResult {
+        let mut result = success_review_result();
+        result.outcomes.push(needs_user_info_outcome());
+        result
     }
 
     fn console() -> Console {
@@ -621,6 +686,24 @@ Confidence: 85% | Iterations: 2"
     }
 
     #[test]
+    fn renders_user_info_request_check_for_terminal() {
+        let input = needs_user_info_envelope().to_string();
+
+        let rendered = render_impl(&input, OutputFormat::Terminal, console(), false).unwrap();
+
+        assert_eq!(
+            rendered,
+            "\
+Check: security
+Target: abc1234
+Status: needs_user_info
+
+Which production auth policy applies here, and why does it affect this security check?
+Is this endpoint exposed publicly, and why is that needed to assess exploitability?"
+        );
+    }
+
+    #[test]
     fn omits_usage_from_terminal_output() {
         let input = success_envelope_with_finding().to_string();
 
@@ -654,6 +737,21 @@ Confidence: 85% | Iterations: 2"
     }
 
     #[test]
+    fn renders_user_info_request_check_for_markdown() {
+        let input = needs_user_info_envelope().to_string();
+
+        let rendered = render_impl(&input, OutputFormat::Markdown, console(), false).unwrap();
+
+        assert!(rendered.contains("## Check: security"));
+        assert!(rendered.contains("- **Target:** `abc1234`"));
+        assert!(rendered.contains("- **Status:** needs_user_info"));
+        assert!(rendered.contains("### Questions"));
+        assert!(rendered.contains(
+            "- Which production auth policy applies here, and why does it affect this security check?"
+        ));
+    }
+
+    #[test]
     fn renders_review_result_as_single_json_document() {
         let result = success_review_result();
 
@@ -666,6 +764,19 @@ Confidence: 85% | Iterations: 2"
         assert_eq!(value["outcomes"][1]["check"]["check"], "intent");
         assert!(value["outcomes"][0]["check"].get("usage").is_none());
         assert!(value["outcomes"][1]["check"].get("usage").is_none());
+    }
+
+    #[test]
+    fn renders_mixed_review_result_as_single_json_document() {
+        let result = mixed_review_result();
+
+        let rendered = render_review_result(&result, OutputFormat::Json, console()).unwrap();
+        let value: Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(value["outcomes"].as_array().unwrap().len(), 3);
+        assert_eq!(value["outcomes"][2]["status"], "needs_user_info");
+        assert_eq!(value["outcomes"][2]["request"]["check"], "security");
+        assert!(value["outcomes"][2]["request"].get("usage").is_none());
     }
 
     #[test]
@@ -682,6 +793,21 @@ Confidence: 85% | Iterations: 2"
     }
 
     #[test]
+    fn renders_mixed_review_result_for_terminal() {
+        let result = mixed_review_result();
+
+        let rendered =
+            render_review_result_impl(&result, OutputFormat::Terminal, console(), false).unwrap();
+
+        assert!(rendered.contains("Check: size"));
+        assert!(rendered.contains("\n\nCheck: security"));
+        assert!(rendered.contains("Status: needs_user_info"));
+        assert!(rendered.contains(
+            "Which production auth policy applies here, and why does it affect this security check?"
+        ));
+    }
+
+    #[test]
     fn renders_review_result_for_markdown() {
         let result = success_review_result();
 
@@ -691,6 +817,18 @@ Confidence: 85% | Iterations: 2"
         assert!(rendered.contains("## Check: intent"));
         assert!(rendered.contains("\n\n## Check: intent"));
         assert!(!rendered.contains("**Usage:**"));
+    }
+
+    #[test]
+    fn renders_mixed_review_result_for_markdown() {
+        let result = mixed_review_result();
+
+        let rendered = render_review_result(&result, OutputFormat::Markdown, console()).unwrap();
+
+        assert!(rendered.contains("## Check: size"));
+        assert!(rendered.contains("\n\n## Check: security"));
+        assert!(rendered.contains("- **Status:** needs_user_info"));
+        assert!(rendered.contains("### Questions"));
     }
 
     #[test]

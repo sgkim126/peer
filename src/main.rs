@@ -174,11 +174,7 @@ async fn main() -> ExitCode {
             match rendered {
                 Ok(rendered) => {
                     println!("{rendered}");
-                    if result.errors.is_empty() {
-                        ExitCode::SUCCESS
-                    } else {
-                        ExitCode::FAILURE
-                    }
+                    review_exit_code(&result)
                 }
                 Err(err) => {
                     eprintln!("failed to render review output: {err}");
@@ -271,11 +267,7 @@ fn print_check_result(
     result: Result<CheckOutcome, CheckCommandError>,
     console: Console,
 ) -> ExitCode {
-    let exit_code = if result.is_ok() {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    };
+    let exit_code = check_exit_code(&result);
     let output = CheckCommandOutput::from(result);
 
     match render::render_check_output(&output, cli::OutputFormat::Json, console) {
@@ -287,5 +279,97 @@ fn print_check_result(
             eprintln!("failed to serialize check output: {error}");
             ExitCode::FAILURE
         }
+    }
+}
+
+fn review_exit_code(result: &review::ReviewResult) -> ExitCode {
+    if result.errors.is_empty() && result.outcomes.iter().all(is_complete_outcome) {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn check_exit_code(result: &Result<CheckOutcome, CheckCommandError>) -> ExitCode {
+    match result {
+        Ok(outcome) if is_complete_outcome(outcome) => ExitCode::SUCCESS,
+        Ok(_) | Err(_) => ExitCode::FAILURE,
+    }
+}
+
+fn is_complete_outcome(outcome: &CheckOutcome) -> bool {
+    matches!(outcome, CheckOutcome::Success { .. })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::git::CommitHash;
+    use crate::llm::result::{
+        CheckOutcome, CheckResult, CheckTarget, CheckUsage, CheckUserInfoRequest,
+    };
+    use crate::review::ReviewResult;
+    use std::process::ExitCode;
+
+    use super::{check_exit_code, review_exit_code};
+
+    fn success_outcome() -> CheckOutcome {
+        CheckOutcome::success(CheckResult {
+            check: "size".to_string(),
+            target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            summary: "ok".to_string(),
+            findings: Vec::new(),
+            confidence: 1.0.try_into().unwrap(),
+            iterations: 1,
+            is_exhausted: false,
+            exhaustion_reason: None,
+            usage: usage(),
+        })
+    }
+
+    fn needs_user_info_outcome() -> CheckOutcome {
+        CheckOutcome::NeedsUserInfo {
+            request: CheckUserInfoRequest {
+                check: "security".to_string(),
+                target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
+                questions: vec![
+                    "Which production auth policy applies here, and why is it needed?".to_string(),
+                ],
+                iterations: 1,
+                usage: usage(),
+            },
+        }
+    }
+
+    fn usage() -> CheckUsage {
+        CheckUsage {
+            input_tokens: 1,
+            output_tokens: 1,
+            cost_usd: 0.0,
+            model: "test-model".to_string(),
+        }
+    }
+
+    #[test]
+    fn check_exit_succeeds_only_for_complete_outcome() {
+        assert_eq!(check_exit_code(&Ok(success_outcome())), ExitCode::SUCCESS);
+        assert_eq!(
+            check_exit_code(&Ok(needs_user_info_outcome())),
+            ExitCode::FAILURE
+        );
+    }
+
+    #[test]
+    fn review_exit_fails_when_any_outcome_needs_user_info() {
+        let complete = ReviewResult {
+            outcomes: vec![success_outcome()],
+            errors: Vec::new(),
+        };
+        assert_eq!(review_exit_code(&complete), ExitCode::SUCCESS);
+
+        let incomplete = ReviewResult {
+            outcomes: vec![success_outcome(), needs_user_info_outcome()],
+            errors: Vec::new(),
+        };
+        assert_eq!(review_exit_code(&incomplete), ExitCode::FAILURE);
     }
 }

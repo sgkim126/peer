@@ -113,15 +113,6 @@ impl CheckCommandOutput {
             Self::Error { error } => Err(error),
         }
     }
-
-    pub fn as_result(&self) -> Result<&CheckResult, &CheckCommandErrorOutput> {
-        self.as_outcome()?.as_success().ok_or_else(|| match self {
-            Self::Error { error } => error,
-            Self::Success { .. } => {
-                unreachable!("successful check command output contains no successful result")
-            }
-        })
-    }
 }
 
 #[cfg(test)]

@@ -107,13 +107,6 @@ impl CheckOutcome {
     pub fn success(check: CheckResult) -> Self {
         Self::Success { check }
     }
-
-    pub fn as_success(&self) -> Option<&CheckResult> {
-        match self {
-            Self::Success { check } => Some(check),
-            Self::NeedsUserInfo { .. } => None,
-        }
-    }
 }
 
 impl CheckResult {
