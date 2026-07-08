@@ -16,6 +16,12 @@ impl Repo {
         git(&path, &["init"]);
         git(&path, &["config", "user.email", "test@example.com"]);
         git(&path, &["config", "user.name", "Test"]);
+        std::fs::write(path.join(".gitignore"), ".peer/\n").unwrap();
+        git(&path, &["add", ".gitignore"]);
+        git(
+            &path,
+            &["commit", "--no-gpg-sign", "-m", "ignore peer config"],
+        );
         Command::new(env!("CARGO_BIN_EXE_peer"))
             .arg("init")
             .current_dir(&path)
