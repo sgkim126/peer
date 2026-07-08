@@ -370,6 +370,24 @@ fn all_tools() -> Vec<ToolSpec> {
                 "required": ["path", "revision"]
             }),
         },
+        ToolSpec {
+            name: "request_user_info".to_string(),
+            description: "Stop the check and ask the user for information that is necessary to complete the check but is not available from the provided context or repository tools. Do not ask for information that can be obtained with the other available tools. Each question must include enough context to explain why the information is needed.".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "questions": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "minItems": 1,
+                        "description": "Questions for the user. Include the reason the information is needed in each question."
+                    }
+                },
+                "required": ["questions"]
+            }),
+        },
     ]
 }
 

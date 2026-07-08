@@ -3,7 +3,7 @@ use std::fmt;
 use crate::cache::CacheStore;
 use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
-use crate::llm::agent::{AgentRequest, ToolExecutor, run_agent};
+use crate::llm::agent::{AgentRequest, AgentRunOutcome, ToolExecutor, run_agent};
 use crate::llm::confidence::Confidence;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::{LlmCallError, LlmProvider};
@@ -102,19 +102,41 @@ where
     )
     .await?;
 
-    let result = CheckResult::from_agent_outcome(
-        check.name(),
-        prepared.result_target(),
-        outcome,
-        config.model,
-        config.input_per_1m_usd,
-        config.output_per_1m_usd,
-    );
-    if let Some(cache) = config.cache {
-        let _ = cache.write_json(&cache_key, &result);
-    }
+    match outcome {
+        AgentRunOutcome::NeedsUserInfo {
+            request,
+            usage,
+            iterations,
+        } => Ok(CheckOutcome::NeedsUserInfo {
+            request: crate::llm::result::CheckUserInfoRequest {
+                check: check.name().to_string(),
+                target: prepared.result_target(),
+                questions: request.questions,
+                iterations,
+                usage: CheckUsage::from_raw_usage(
+                    usage,
+                    config.model,
+                    config.input_per_1m_usd,
+                    config.output_per_1m_usd,
+                ),
+            },
+        }),
+        outcome => {
+            let result = CheckResult::from_agent_outcome(
+                check.name(),
+                prepared.result_target(),
+                outcome,
+                config.model,
+                config.input_per_1m_usd,
+                config.output_per_1m_usd,
+            );
+            if let Some(cache) = config.cache {
+                let _ = cache.write_json(&cache_key, &result);
+            }
 
-    Ok(CheckOutcome::success(result))
+            Ok(CheckOutcome::success(result))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -233,6 +255,16 @@ mod tests {
         match outcome {
             CheckOutcome::Success { check } => check,
             CheckOutcome::NeedsUserInfo { .. } => panic!("expected successful check outcome"),
+        }
+    }
+
+    fn request_user_info_call() -> crate::llm::provider::ToolCall {
+        crate::llm::provider::ToolCall {
+            id: "call-info".to_string(),
+            name: "request_user_info".to_string(),
+            arguments: json!({
+                "questions": ["Which deployment policy applies, and why does it affect this check?"]
+            }),
         }
     }
 
@@ -375,5 +407,94 @@ mod tests {
         assert_eq!(second.usage.input_tokens, 0);
         assert_eq!(second.usage.output_tokens, 0);
         assert_eq!(second.usage.cost_usd, 0.0);
+    }
+
+    #[tokio::test]
+    async fn maps_user_info_request_to_check_outcome() {
+        let provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::ToolCalls(vec![request_user_info_call()]),
+            usage: RawUsage {
+                input_tokens: 1_000,
+                output_tokens: 500,
+            },
+        })]);
+        let executor = FakeToolExecutor::default();
+        let check = TestCheck {
+            target: CommitHash::new("abc1234").unwrap(),
+        };
+
+        let outcome = run_check(
+            &check,
+            &extractor(),
+            &provider,
+            &executor,
+            config(),
+            &ReviewContext::default(),
+        )
+        .await
+        .unwrap();
+
+        let CheckOutcome::NeedsUserInfo { request } = outcome else {
+            panic!("expected user-info outcome");
+        };
+        assert_eq!(request.check, "test");
+        assert_eq!(
+            request.target,
+            crate::llm::result::CheckTarget::Commit(CommitHash::new("abc1234").unwrap())
+        );
+        assert_eq!(
+            request.questions,
+            vec!["Which deployment policy applies, and why does it affect this check?"]
+        );
+        assert_eq!(request.iterations, 1);
+        assert_eq!(request.usage.input_tokens, 1_000);
+        assert_eq!(request.usage.output_tokens, 500);
+        assert_eq!(request.usage.cost_usd, 0.005);
+        assert!(executor.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn does_not_cache_user_info_request() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = CacheStore::new(tmp.path().join("cache"), Console::default());
+        let executor = FakeToolExecutor::default();
+        let check = TestCheck {
+            target: CommitHash::new("abc1234").unwrap(),
+        };
+        let first_provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::ToolCalls(vec![request_user_info_call()]),
+            usage: RawUsage {
+                input_tokens: 1,
+                output_tokens: 1,
+            },
+        })]);
+
+        run_check(
+            &check,
+            &extractor(),
+            &first_provider,
+            &executor,
+            config_with_cache(&cache),
+            &ReviewContext::default(),
+        )
+        .await
+        .unwrap();
+
+        let second_provider = MockProvider::new([Ok(response(output("abc1234", 0.9)))]);
+        let second_outcome = run_check(
+            &check,
+            &extractor(),
+            &second_provider,
+            &executor,
+            config_with_cache(&cache),
+            &ReviewContext::default(),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(first_provider.requests().len(), 1);
+        assert_eq!(second_provider.requests().len(), 1);
+        let second = success_result(&second_outcome);
+        assert_eq!(second.summary, "summary");
     }
 }

@@ -220,7 +220,7 @@ mod tests {
             prepared.result_target(),
             CheckTarget::Range("base123..tip4567".to_string())
         );
-        assert_eq!(prepared.tools.len(), 5);
+        assert_eq!(prepared.tools.len(), 6);
         assert_eq!(
             prepared.output_schema["required"],
             serde_json::json!(["summary", "findings", "confidence"])

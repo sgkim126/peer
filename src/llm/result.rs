@@ -99,7 +99,6 @@ pub struct CheckUserInfoRequest {
     pub check: String,
     pub target: CheckTarget,
     pub questions: Vec<String>,
-    pub attempted_tools: Vec<String>,
     pub iterations: u32,
     pub usage: CheckUsage,
 }
@@ -129,6 +128,9 @@ impl CheckResult {
         let (result, exhaustion_reason) = match outcome {
             AgentRunOutcome::Completed(result) => (result, None),
             AgentRunOutcome::Exhausted { result, reason } => (result, Some(reason.to_string())),
+            AgentRunOutcome::NeedsUserInfo { .. } => {
+                unreachable!("user-info requests cannot be converted to CheckResult")
+            }
         };
 
         let AgentRunResult {

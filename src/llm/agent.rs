@@ -28,12 +28,22 @@ pub struct AgentRunResult {
     pub iterations: u32,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentUserInfoRequest {
+    pub questions: Vec<String>,
+}
+
 #[derive(Debug)]
 pub enum AgentRunOutcome {
     Completed(AgentRunResult),
     Exhausted {
         result: AgentRunResult,
         reason: AgentExhaustionReason,
+    },
+    NeedsUserInfo {
+        request: AgentUserInfoRequest,
+        usage: RawUsage,
+        iterations: u32,
     },
 }
 
@@ -138,6 +148,18 @@ where
                         "calls"
                     }
                 ));
+                if let Some(tool_call) = tool_calls
+                    .iter()
+                    .find(|tool_call| tool_call.name == "request_user_info")
+                {
+                    let user_info_request = parse_user_info_request(tool_call)?;
+                    return Ok(AgentRunOutcome::NeedsUserInfo {
+                        request: user_info_request,
+                        usage,
+                        iterations: iteration,
+                    });
+                }
+
                 let assistant_tool_calls = tool_calls.clone();
                 conversation.push(ConversationTurn::AssistantToolCalls(assistant_tool_calls));
 
@@ -201,8 +223,33 @@ fn tool_result_json(result: ToolExecutionResult) -> serde_json::Value {
     }
 }
 
+fn parse_user_info_request(tool_call: &ToolCall) -> Result<AgentUserInfoRequest, LlmCallError> {
+    #[derive(serde::Deserialize)]
+    struct RequestUserInfoArguments {
+        questions: Vec<String>,
+    }
+
+    let arguments: RequestUserInfoArguments = serde_json::from_value(tool_call.arguments.clone())
+        .map_err(|error| LlmCallError::Permanent {
+        message: format!("invalid request_user_info arguments: {error}"),
+        source: Box::new(AgentError::InvalidUserInfoRequest),
+    })?;
+
+    if arguments.questions.is_empty() {
+        return Err(LlmCallError::Permanent {
+            message: "invalid request_user_info arguments: questions must not be empty".to_string(),
+            source: Box::new(AgentError::InvalidUserInfoRequest),
+        });
+    }
+
+    Ok(AgentUserInfoRequest {
+        questions: arguments.questions,
+    })
+}
+
 #[derive(Debug)]
 enum AgentError {
+    InvalidUserInfoRequest,
     LoopExhausted,
     UnexpectedTextResponse,
 }
@@ -210,6 +257,7 @@ enum AgentError {
 impl fmt::Display for AgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidUserInfoRequest => f.write_str("invalid user info request"),
             Self::LoopExhausted => f.write_str("agent loop exhausted"),
             Self::UnexpectedTextResponse => f.write_str("unexpected text response"),
         }
@@ -284,6 +332,18 @@ mod tests {
             panic!("expected completed agent run");
         };
         result
+    }
+
+    fn user_info_request(outcome: AgentRunOutcome) -> (AgentUserInfoRequest, RawUsage, u32) {
+        let AgentRunOutcome::NeedsUserInfo {
+            request,
+            usage,
+            iterations,
+        } = outcome
+        else {
+            panic!("expected user-info request");
+        };
+        (request, usage, iterations)
     }
 
     #[tokio::test]
@@ -583,5 +643,77 @@ mod tests {
             panic!("expected tool result");
         };
         assert_eq!(result, &json!({ "error": "git failed" }));
+    }
+
+    #[tokio::test]
+    async fn returns_user_info_request_when_tool_is_called() {
+        let tool_call = ToolCall {
+            id: "call-1".to_string(),
+            name: "request_user_info".to_string(),
+            arguments: json!({
+                "questions": [
+                    "What production auth policy applies here, and why it affects this security check?"
+                ]
+            }),
+        };
+        let provider = MockProvider::new([Ok(call_result(
+            LlmResponse::ToolCalls(vec![tool_call]),
+            10,
+            5,
+        ))]);
+        let executor = FakeToolExecutor::default();
+        let schema = json!({ "type": "object" });
+
+        let (request, usage, iterations) = user_info_request(
+            run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+                .await
+                .unwrap(),
+        );
+
+        assert_eq!(
+            request.questions,
+            vec![
+                "What production auth policy applies here, and why it affects this security check?"
+            ]
+        );
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(iterations, 1);
+        assert!(executor.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn request_user_info_ignores_other_tool_calls() {
+        let info_call = ToolCall {
+            id: "call-info".to_string(),
+            name: "request_user_info".to_string(),
+            arguments: json!({
+                "questions": ["Which deployment flag is enabled, and why does it affect this check?"]
+            }),
+        };
+        let diff_call = ToolCall {
+            id: "call-diff".to_string(),
+            name: "get_commit_diff".to_string(),
+            arguments: json!({ "revision": "abc1234" }),
+        };
+        let provider = MockProvider::new([Ok(call_result(
+            LlmResponse::ToolCalls(vec![diff_call, info_call]),
+            10,
+            5,
+        ))]);
+        let executor = FakeToolExecutor::default();
+        let schema = json!({ "type": "object" });
+
+        let (request, _, _) = user_info_request(
+            run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+                .await
+                .unwrap(),
+        );
+
+        assert_eq!(
+            request.questions,
+            vec!["Which deployment flag is enabled, and why does it affect this check?"]
+        );
+        assert!(executor.calls().is_empty());
     }
 }

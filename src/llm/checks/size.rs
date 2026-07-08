@@ -205,6 +205,7 @@ mod tests {
                 "get_changed_files",
                 "get_commits_in_range",
                 "get_file_content",
+                "request_user_info",
             ]
         );
     }
@@ -236,6 +237,25 @@ mod tests {
         assert_eq!(
             file_content.parameters["required"],
             serde_json::json!(["path", "revision"])
+        );
+
+        let request_user_info = prepared
+            .tools
+            .iter()
+            .find(|tool| tool.name == "request_user_info")
+            .unwrap();
+        assert!(
+            request_user_info
+                .description
+                .contains("Do not ask for information")
+        );
+        assert_eq!(
+            request_user_info.parameters["required"],
+            serde_json::json!(["questions"])
+        );
+        assert_eq!(
+            request_user_info.parameters["properties"]["questions"]["minItems"],
+            1
         );
     }
 
