@@ -7,7 +7,7 @@ use crate::llm::agent::{AgentRequest, ToolExecutor, run_agent};
 use crate::llm::confidence::Confidence;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::{LlmCallError, LlmProvider};
-use crate::llm::result::{CheckOutput, CheckResult, CheckUsage};
+use crate::llm::result::{CheckOutcome, CheckOutput, CheckResult, CheckUsage};
 
 use super::CheckDefinition;
 
@@ -65,7 +65,7 @@ pub async fn run_check<C, P, E>(
     tool_executor: &E,
     config: CheckRunConfig<'_>,
     review_context: &ReviewContext,
-) -> Result<CheckResult, CheckRunError>
+) -> Result<CheckOutcome, CheckRunError>
 where
     C: CheckDefinition,
     P: LlmProvider,
@@ -81,7 +81,7 @@ where
             cost_usd: 0.0,
             model: config.model.to_string(),
         };
-        return Ok(result);
+        return Ok(CheckOutcome::success(result));
     }
 
     let prepared = check.prepare(extractor, review_context).await?;
@@ -114,7 +114,7 @@ where
         let _ = cache.write_json(&cache_key, &result);
     }
 
-    Ok(result)
+    Ok(CheckOutcome::success(result))
 }
 
 #[cfg(test)]
@@ -229,6 +229,13 @@ mod tests {
         Extractor::new(PathBuf::from("/unused"), Console::default())
     }
 
+    fn success_result(outcome: &CheckOutcome) -> &CheckResult {
+        match outcome {
+            CheckOutcome::Success { check } => check,
+            CheckOutcome::NeedsUserInfo { .. } => panic!("expected successful check outcome"),
+        }
+    }
+
     #[tokio::test]
     async fn runs_prepared_check_and_builds_check_result() {
         let provider = MockProvider::new([Ok(response(output("abc1234", 0.9)))]);
@@ -237,7 +244,7 @@ mod tests {
             target: CommitHash::new("abc1234").unwrap(),
         };
 
-        let result = run_check(
+        let outcome = run_check(
             &check,
             &extractor(),
             &provider,
@@ -247,6 +254,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let result = success_result(&outcome);
 
         assert_eq!(result.check, "test");
         assert_eq!(result.summary, "summary");
@@ -274,7 +282,7 @@ mod tests {
             target: CommitHash::new("abc1234").unwrap(),
         };
 
-        let result = run_check(
+        let outcome = run_check(
             &check,
             &extractor(),
             &provider,
@@ -284,6 +292,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let result = success_result(&outcome);
 
         assert!(result.is_exhausted);
         assert_eq!(result.confidence.as_f64(), 0.7);
@@ -305,7 +314,7 @@ mod tests {
             target: CommitHash::new("abc1234").unwrap(),
         };
 
-        let result = run_check(
+        let outcome = run_check(
             &check,
             &extractor(),
             &provider,
@@ -315,6 +324,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let result = success_result(&outcome);
 
         assert_eq!(
             result.findings[0].commit,
@@ -333,7 +343,7 @@ mod tests {
         };
         let first_provider = MockProvider::new([Ok(response(output("abc1234", 0.9)))]);
 
-        let first = run_check(
+        let first_outcome = run_check(
             &check,
             &extractor(),
             &first_provider,
@@ -343,9 +353,10 @@ mod tests {
         )
         .await
         .unwrap();
+        let first = success_result(&first_outcome);
 
         let second_provider = MockProvider::default();
-        let second = run_check(
+        let second_outcome = run_check(
             &check,
             &extractor(),
             &second_provider,
@@ -355,6 +366,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let second = success_result(&second_outcome);
 
         assert_eq!(first_provider.requests().len(), 1);
         assert_eq!(second_provider.requests().len(), 0);

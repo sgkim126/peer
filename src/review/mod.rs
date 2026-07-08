@@ -139,7 +139,7 @@ pub async fn run(
         )
         .await
         {
-            Ok(result) => outcomes.push(CheckOutcome::success(result)),
+            Ok(outcome) => outcomes.push(outcome),
             Err(error) => errors.push(ReviewCheckError { check, error }),
         }
     }

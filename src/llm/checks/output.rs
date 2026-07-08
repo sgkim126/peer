@@ -49,10 +49,10 @@ impl From<CheckCommandError> for CheckCommandErrorOutput {
     }
 }
 
-impl From<Result<CheckResult, CheckCommandError>> for CheckCommandOutput {
-    fn from(result: Result<CheckResult, CheckCommandError>) -> Self {
+impl From<Result<CheckOutcome, CheckCommandError>> for CheckCommandOutput {
+    fn from(result: Result<CheckOutcome, CheckCommandError>) -> Self {
         match result {
-            Ok(result) => Self::success(result),
+            Ok(outcome) => Self::Success { data: outcome },
             Err(error) => Self::error(CheckCommandErrorOutput::from(error)),
         }
     }
@@ -160,7 +160,7 @@ mod tests {
 
     #[test]
     fn success_output_wraps_check_result_in_data() {
-        let value = serde_json::to_value(CheckCommandOutput::from(Ok(check_result()))).unwrap();
+        let value = serde_json::to_value(CheckCommandOutput::success(check_result())).unwrap();
 
         assert_eq!(
             value,

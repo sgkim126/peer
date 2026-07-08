@@ -30,7 +30,7 @@ use crate::llm::provider::{
     ConversationTurn, LlmProvider, ProviderCreationError, ToolSpec, create_provider,
 };
 use crate::llm::result::{
-    CheckOutput, CheckResult, CheckTarget, validate_per_commit_targets, validate_range_targets,
+    CheckOutcome, CheckOutput, CheckTarget, validate_per_commit_targets, validate_range_targets,
 };
 use crate::llm::tool_executor::PeerToolExecutor;
 
@@ -100,7 +100,7 @@ pub async fn handler(
     config: &Config,
     project_root: PathBuf,
     review_context: &ReviewContext,
-) -> Result<CheckResult, CheckCommandError> {
+) -> Result<CheckOutcome, CheckCommandError> {
     let (provider_config, _) =
         config.resolve_provider(&config.llm.default_provider, &config.llm.default_model)?;
     let provider_name = provider_config.name.clone();
@@ -163,7 +163,7 @@ struct CheckExecution<'a, P, E> {
 async fn run_definition_with<C, P, E>(
     check: C,
     execution: CheckExecution<'_, P, E>,
-) -> Result<CheckResult, CheckCommandError>
+) -> Result<CheckOutcome, CheckCommandError>
 where
     C: CheckDefinition,
     P: LlmProvider,
@@ -429,7 +429,7 @@ mod tests {
     use crate::git::run_git;
     use crate::llm::confidence::Confidence;
     use crate::llm::provider::{LlmCallError, LlmCallResult, LlmResponse, RawUsage, ToolCall};
-    use crate::llm::result::{Finding, Severity};
+    use crate::llm::result::{CheckOutcome, CheckResult, Finding, Severity};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
 
     struct TestCheck {
@@ -584,6 +584,13 @@ mod tests {
         })])
     }
 
+    fn success_result(outcome: &CheckOutcome) -> &CheckResult {
+        match outcome {
+            CheckOutcome::Success { check } => check,
+            CheckOutcome::NeedsUserInfo { .. } => panic!("expected successful check outcome"),
+        }
+    }
+
     async fn run_check_with_repository<C>(
         repository: &tempfile::TempDir,
         check: C,
@@ -596,7 +603,7 @@ mod tests {
         let tool_executor = FakeToolExecutor::default();
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
 
-        let result = run_definition_with(
+        let outcome = run_definition_with(
             check,
             CheckExecution {
                 console,
@@ -611,6 +618,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let result = success_result(&outcome).clone();
 
         (result, provider)
     }
@@ -706,7 +714,7 @@ mod tests {
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
         let check = IntentCheck::try_new("HEAD", &extractor).await.unwrap();
 
-        let result = run_definition_with(
+        let outcome = run_definition_with(
             check,
             CheckExecution {
                 console,
@@ -721,6 +729,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let result = success_result(&outcome);
 
         assert_eq!(result.iterations, 2);
         assert_eq!(tool_executor.calls(), vec![tool_call]);
@@ -804,7 +813,7 @@ mod tests {
         config.llm.max_iterations = 1;
         let check = SecurityCheck::try_new("HEAD", &extractor).await.unwrap();
 
-        let result = run_definition_with(
+        let outcome = run_definition_with(
             check,
             CheckExecution {
                 console,
@@ -819,6 +828,7 @@ mod tests {
         )
         .await
         .unwrap();
+        let result = success_result(&outcome);
 
         assert!(result.is_exhausted);
         assert_eq!(result.summary, "uncertain");

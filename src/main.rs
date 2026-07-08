@@ -17,7 +17,7 @@ use crate::cli::{Cli, Command};
 use crate::config::discover;
 use crate::console::Console;
 use crate::llm::checks::{CheckCommandError, CheckCommandOutput};
-use crate::llm::result::{CheckResult, CheckUsage};
+use crate::llm::result::{CheckOutcome, CheckUsage};
 
 use std::io::Read;
 use std::process::ExitCode;
@@ -268,7 +268,7 @@ async fn main() -> ExitCode {
 }
 
 fn print_check_result(
-    result: Result<CheckResult, CheckCommandError>,
+    result: Result<CheckOutcome, CheckCommandError>,
     console: Console,
 ) -> ExitCode {
     let exit_code = if result.is_ok() {
