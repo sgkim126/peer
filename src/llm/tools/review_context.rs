@@ -12,7 +12,7 @@ const REVIEW_CONTEXT_SUMMARY_TOOL: &str = "review_context_summary";
 // TODO: make it configurable
 const BODY_COMPRESSION_THRESHOLD_CHARS: usize = 800;
 // TODO: make it configurable
-const COMMENTS_COMPRESSION_THRESHOLD_CHARS: usize = 1_500;
+const COMMENT_THREAD_COMPRESSION_THRESHOLD_CHARS: usize = 800;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReviewContextSummaryKind {
@@ -31,17 +31,6 @@ impl ReviewContextSummaryInput {
         Self {
             kind: ReviewContextSummaryKind::Body,
             content: body.into(),
-        }
-    }
-
-    fn comments(comments: &[ReviewCommentThread]) -> Self {
-        if let [thread] = comments {
-            return Self::comment_thread(1, thread);
-        }
-
-        Self {
-            kind: ReviewContextSummaryKind::CommentThread,
-            content: format_comment_threads(comments),
         }
     }
 
@@ -251,33 +240,67 @@ where
     } else {
         None
     };
-    let comments_summary = if comments.is_empty() {
-        None
-    } else {
-        let comments_input = ReviewContextSummaryInput::comments(&comments);
-        if should_compress(
-            &comments_input.content,
-            COMMENTS_COMPRESSION_THRESHOLD_CHARS,
-        ) {
-            let output = if let [thread] = comments.as_slice() {
-                summarize_comment_thread_cached(provider, provider_name, model, 1, thread, cache)
-                    .await?
-            } else {
-                summarize_cached(provider, provider_name, model, comments_input, cache).await?
-            };
-            usage += output.usage;
-            Some(output.summary)
-        } else {
-            Some(comments_input.content)
-        }
-    };
+    let comments_output =
+        prepare_comments_summary(provider, provider_name, model, &comments, cache).await?;
+    usage += comments_output.usage;
 
     Ok(PreparedReviewContext {
         context: ReviewContext {
             title,
             body_summary,
-            comments_summary,
+            comments_summary: comments_output.summary,
         },
+        usage,
+    })
+}
+
+#[derive(Debug, Clone, PartialEq)]
+struct PreparedCommentsSummary {
+    summary: Option<String>,
+    usage: RawUsage,
+}
+
+async fn prepare_comments_summary<P>(
+    provider: &P,
+    provider_name: &str,
+    model: &str,
+    comments: &[ReviewCommentThread],
+    cache: &CacheStore,
+) -> Result<PreparedCommentsSummary, LlmCallError>
+where
+    P: LlmProvider,
+{
+    if comments.is_empty() {
+        return Ok(PreparedCommentsSummary {
+            summary: None,
+            usage: RawUsage::default(),
+        });
+    }
+
+    let mut usage = RawUsage::default();
+    let mut summaries = Vec::with_capacity(comments.len());
+    for (index, thread) in comments.iter().enumerate() {
+        let thread_index = index + 1;
+        let formatted = format_comment_thread(thread_index, thread);
+        if should_compress(&formatted, COMMENT_THREAD_COMPRESSION_THRESHOLD_CHARS) {
+            let output = summarize_comment_thread_cached(
+                provider,
+                provider_name,
+                model,
+                thread_index,
+                thread,
+                cache,
+            )
+            .await?;
+            usage += output.usage;
+            summaries.push(output.summary);
+        } else {
+            summaries.push(formatted);
+        }
+    }
+
+    Ok(PreparedCommentsSummary {
+        summary: Some(summaries.join("\n\n")),
         usage,
     })
 }
@@ -318,15 +341,6 @@ fn cache_conversation(input: &ReviewContextSummaryInput) -> Vec<ReviewContextSum
 
 fn should_compress(content: &str, threshold_chars: usize) -> bool {
     content.chars().count() > threshold_chars
-}
-
-fn format_comment_threads(threads: &[ReviewCommentThread]) -> String {
-    threads
-        .iter()
-        .enumerate()
-        .map(|(index, thread)| format_comment_thread(index + 1, thread))
-        .collect::<Vec<_>>()
-        .join("\n\n")
 }
 
 fn format_comment_thread(index: usize, thread: &ReviewCommentThread) -> String {
@@ -437,36 +451,6 @@ mod tests {
                     "Pull request comment thread:\nThread 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nComment 1 by alice:\nBody:\nPlease cover this branch.\nComment 2 by bob:\nBody:\nFixed in the latest push.".to_string()
                 ),
             ]
-        );
-    }
-
-    #[test]
-    fn formats_comment_threads_for_context_output() {
-        let output = format_comment_threads(&[
-            ReviewCommentThread {
-                commit: Some(CommitHash::new("abc1234").unwrap()),
-                location: Some(ReviewCommentLocation {
-                    path: "src/lib.rs".to_string(),
-                    line: 42,
-                }),
-                comments: vec![ReviewThreadComment {
-                    author: "alice".to_string(),
-                    body: "Please cover this branch.".to_string(),
-                }],
-            },
-            ReviewCommentThread {
-                commit: None,
-                location: None,
-                comments: vec![ReviewThreadComment {
-                    author: "carol".to_string(),
-                    body: "This looks resolved.".to_string(),
-                }],
-            },
-        ]);
-
-        assert_eq!(
-            output,
-            "Thread 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nComment 1 by alice:\nBody:\nPlease cover this branch.\n\nThread 2:\nComment 1 by carol:\nBody:\nThis looks resolved."
         );
     }
 
@@ -688,7 +672,10 @@ mod tests {
                 context: ReviewContext {
                     title: Some("Add parser".to_string()),
                     body_summary: Some("Short PR body".to_string()),
-                    comments_summary: Some(format_comment_threads(&comments)),
+                    comments_summary: Some(
+                        "Thread 1:\nComment 1 by alice:\nBody:\nPlease cover this branch."
+                            .to_string(),
+                    ),
                 },
                 usage: RawUsage::default(),
             }
@@ -697,7 +684,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn prepares_context_with_body_and_comments_summaries() {
+    async fn prepares_context_with_body_and_comment_thread_summaries() {
         let provider = MockProvider::new([
             Ok(LlmCallResult {
                 response: LlmResponse::Text("body summary".to_string()),
@@ -728,7 +715,7 @@ mod tests {
                     location: None,
                     comments: vec![ReviewThreadComment {
                         author: "alice".to_string(),
-                        body: "y".repeat(COMMENTS_COMPRESSION_THRESHOLD_CHARS + 1),
+                        body: "y".repeat(COMMENT_THREAD_COMPRESSION_THRESHOLD_CHARS + 1),
                     }],
                 }],
             },
@@ -760,6 +747,117 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![RecordedLlmOutputMode::Text, RecordedLlmOutputMode::Text]
         );
+    }
+
+    #[tokio::test]
+    async fn summarizes_each_long_comment_thread_separately() {
+        let provider = MockProvider::new([
+            Ok(LlmCallResult {
+                response: LlmResponse::Text("first thread summary".to_string()),
+                usage: RawUsage {
+                    input_tokens: 10,
+                    output_tokens: 3,
+                },
+            }),
+            Ok(LlmCallResult {
+                response: LlmResponse::Text("second thread summary".to_string()),
+                usage: RawUsage {
+                    input_tokens: 20,
+                    output_tokens: 4,
+                },
+            }),
+        ]);
+        let (_tmp, cache) = cache_store();
+
+        let prepared = prepare_review_context(
+            &provider,
+            "test-provider",
+            "test-model",
+            ReviewContextInput {
+                title: None,
+                body: None,
+                comments: vec![
+                    review_thread("x".repeat(COMMENT_THREAD_COMPRESSION_THRESHOLD_CHARS + 1)),
+                    review_thread("y".repeat(COMMENT_THREAD_COMPRESSION_THRESHOLD_CHARS + 1)),
+                ],
+            },
+            &cache,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            prepared.context.comments_summary,
+            Some("first thread summary\n\nsecond thread summary".to_string())
+        );
+        assert_eq!(
+            prepared.usage,
+            RawUsage {
+                input_tokens: 30,
+                output_tokens: 7,
+            }
+        );
+        assert_eq!(provider.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn preserves_comment_thread_order_with_short_cached_and_miss_threads() {
+        let (_tmp, cache) = cache_store();
+        let short_thread = review_thread("Short comment.");
+        let cached_thread =
+            review_thread("c".repeat(COMMENT_THREAD_COMPRESSION_THRESHOLD_CHARS + 1));
+        let miss_thread = review_thread("m".repeat(COMMENT_THREAD_COMPRESSION_THRESHOLD_CHARS + 1));
+        let cached_key = cache_key(
+            "test-provider",
+            "test-model",
+            &ReviewContextSummaryInput::comment_thread(2, &cached_thread),
+        )
+        .unwrap();
+        cache
+            .write_json(
+                &cached_key,
+                &ReviewContextSummaryCacheValue {
+                    summary: "cached second thread".to_string(),
+                },
+            )
+            .unwrap();
+        let provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::Text("fresh third thread".to_string()),
+            usage: RawUsage {
+                input_tokens: 11,
+                output_tokens: 5,
+            },
+        })]);
+
+        let prepared = prepare_review_context(
+            &provider,
+            "test-provider",
+            "test-model",
+            ReviewContextInput {
+                title: None,
+                body: None,
+                comments: vec![short_thread.clone(), cached_thread, miss_thread],
+            },
+            &cache,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            prepared.context.comments_summary,
+            Some(format!(
+                "{}\n\ncached second thread\n\nfresh third thread",
+                format_comment_thread(1, &short_thread)
+            ))
+        );
+        assert_eq!(
+            prepared.usage,
+            RawUsage {
+                input_tokens: 11,
+                output_tokens: 5,
+            }
+        );
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[tokio::test]
