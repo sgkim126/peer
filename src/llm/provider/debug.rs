@@ -30,16 +30,17 @@ fn display_header_value(name: &HeaderName, value: &HeaderValue) -> String {
 }
 
 fn is_sensitive_header(name: &HeaderName) -> bool {
-    matches!(
-        name.as_str().to_ascii_lowercase().as_str(),
-        "authorization"
-            | "proxy-authorization"
-            | "x-api-key"
-            | "x-goog-api-key"
-            | "api-key"
-            | "cookie"
-            | "set-cookie"
-    )
+    [
+        "authorization",
+        "proxy-authorization",
+        "x-api-key",
+        "x-goog-api-key",
+        "api-key",
+        "cookie",
+        "set-cookie",
+    ]
+    .iter()
+    .any(|sensitive| name.as_str().eq_ignore_ascii_case(sensitive))
 }
 
 #[cfg(test)]
