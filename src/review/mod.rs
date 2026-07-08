@@ -1,4 +1,5 @@
 use std::fmt;
+use std::future::Future;
 use std::path::{Path, PathBuf};
 
 use crate::cli::CheckCommand;
@@ -125,20 +126,24 @@ pub async fn run(
     project_root: PathBuf,
     review_context: &ReviewContext,
 ) -> ReviewResult {
+    run_with_check_handler(plan, |check| {
+        let command = CheckCommand::from(check);
+        let project_root = project_root.clone();
+        async move { checks::handler(console, command, config, project_root, review_context).await }
+    })
+    .await
+}
+
+async fn run_with_check_handler<F, Fut>(plan: ReviewPlan, mut run_check: F) -> ReviewResult
+where
+    F: FnMut(ReviewCheck) -> Fut,
+    Fut: Future<Output = Result<CheckOutcome, CheckCommandError>>,
+{
     let mut outcomes = Vec::with_capacity(plan.checks.len());
     let mut errors = Vec::new();
 
     for check in plan.checks {
-        let command = CheckCommand::from(check.clone());
-        match checks::handler(
-            console,
-            command,
-            config,
-            project_root.clone(),
-            review_context,
-        )
-        .await
-        {
+        match run_check(check.clone()).await {
             Ok(outcome) => outcomes.push(outcome),
             Err(error) => errors.push(ReviewCheckError { check, error }),
         }
@@ -265,12 +270,14 @@ impl From<GitError> for ReviewTargetError {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::VecDeque;
+
     use tempfile::TempDir;
 
     use super::*;
     use crate::git::run_git;
     use crate::llm::confidence::Confidence;
-    use crate::llm::result::{CheckResult, CheckTarget, CheckUsage};
+    use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, CheckUserInfoRequest};
 
     struct Repo {
         _tmp: TempDir,
@@ -333,6 +340,92 @@ mod tests {
                 model: "test-model".to_string(),
             },
         }
+    }
+
+    fn needs_user_info_outcome() -> CheckOutcome {
+        CheckOutcome::NeedsUserInfo {
+            request: CheckUserInfoRequest {
+                check: "intent".to_string(),
+                target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
+                questions: vec![
+                    "Which product behavior is intended here, and why is it needed for this check?"
+                        .to_string(),
+                ],
+                iterations: 1,
+                usage: CheckUsage {
+                    input_tokens: 30,
+                    output_tokens: 40,
+                    cost_usd: 0.002,
+                    model: "test-model".to_string(),
+                },
+            },
+        }
+    }
+
+    #[tokio::test]
+    async fn run_continues_after_user_info_request_and_collects_errors() {
+        let plan = ReviewPlan {
+            checks: vec![
+                ReviewCheck::Size {
+                    revision: "abc1234".to_string(),
+                },
+                ReviewCheck::Intent {
+                    revision: "abc1234".to_string(),
+                },
+                ReviewCheck::Quality {
+                    revision: "abc1234".to_string(),
+                },
+                ReviewCheck::Security {
+                    revision: "abc1234".to_string(),
+                },
+            ],
+        };
+        let success = CheckOutcome::success(check_result());
+        let needs_user_info = needs_user_info_outcome();
+        let error = CheckCommandError::from(Confidence::try_from(1.1).unwrap_err());
+        let mut results = VecDeque::from([
+            Ok(success.clone()),
+            Ok(needs_user_info.clone()),
+            Err(error),
+            Ok(success.clone()),
+        ]);
+        let mut executed = Vec::new();
+
+        let result = run_with_check_handler(plan, |check| {
+            executed.push(check);
+            let result = results.pop_front().unwrap();
+            async move { result }
+        })
+        .await;
+
+        assert_eq!(
+            executed,
+            vec![
+                ReviewCheck::Size {
+                    revision: "abc1234".to_string()
+                },
+                ReviewCheck::Intent {
+                    revision: "abc1234".to_string()
+                },
+                ReviewCheck::Quality {
+                    revision: "abc1234".to_string()
+                },
+                ReviewCheck::Security {
+                    revision: "abc1234".to_string()
+                },
+            ]
+        );
+        assert_eq!(
+            result.outcomes,
+            vec![success.clone(), needs_user_info, success]
+        );
+        assert_eq!(result.errors.len(), 1);
+        assert_eq!(
+            result.errors[0].check,
+            ReviewCheck::Quality {
+                revision: "abc1234".to_string()
+            }
+        );
     }
 
     #[tokio::test]
