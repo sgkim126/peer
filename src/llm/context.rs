@@ -134,6 +134,20 @@ pub struct ReviewComment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[allow(dead_code)]
+pub struct ReviewCommentThread {
+    pub commit: Option<CommitHash>,
+    pub location: Option<ReviewCommentLocation>,
+    pub comments: Vec<ReviewThreadComment>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct ReviewThreadComment {
+    pub author: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ReviewCommentLocation {
     pub path: String,
     pub line: u32,
@@ -145,6 +159,10 @@ mod tests {
     use std::fs;
 
     fn comments(input: &str) -> Vec<ReviewComment> {
+        serde_json::from_str(input).unwrap()
+    }
+
+    fn comment_threads(input: &str) -> Vec<ReviewCommentThread> {
         serde_json::from_str(input).unwrap()
     }
 
@@ -250,6 +268,136 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("missing field `path`"));
+    }
+
+    #[test]
+    fn parses_comment_thread_with_commit_location_and_comments() {
+        let threads = comment_threads(
+            r#"[
+                {
+                    "commit": "abc1234",
+                    "location": {
+                        "path": "src/lib.rs",
+                        "line": 42
+                    },
+                    "comments": [
+                        {
+                            "author": "alice",
+                            "body": "Please handle this error case."
+                        },
+                        {
+                            "author": "bob",
+                            "body": "Fixed in the latest push."
+                        }
+                    ]
+                }
+            ]"#,
+        );
+
+        assert_eq!(
+            threads,
+            vec![ReviewCommentThread {
+                commit: Some(CommitHash::new("abc1234").unwrap()),
+                location: Some(ReviewCommentLocation {
+                    path: "src/lib.rs".to_string(),
+                    line: 42,
+                }),
+                comments: vec![
+                    ReviewThreadComment {
+                        author: "alice".to_string(),
+                        body: "Please handle this error case.".to_string(),
+                    },
+                    ReviewThreadComment {
+                        author: "bob".to_string(),
+                        body: "Fixed in the latest push.".to_string(),
+                    },
+                ],
+            }]
+        );
+    }
+
+    #[test]
+    fn parses_comment_thread_without_optional_metadata() {
+        let threads = comment_threads(
+            r#"[
+                {
+                    "comments": [
+                        {
+                            "author": "alice",
+                            "body": "This part is hard to follow."
+                        }
+                    ]
+                }
+            ]"#,
+        );
+
+        assert_eq!(
+            threads,
+            vec![ReviewCommentThread {
+                commit: None,
+                location: None,
+                comments: vec![ReviewThreadComment {
+                    author: "alice".to_string(),
+                    body: "This part is hard to follow.".to_string(),
+                }],
+            }]
+        );
+    }
+
+    #[test]
+    fn rejects_thread_comment_without_author() {
+        let error = serde_json::from_str::<Vec<ReviewCommentThread>>(
+            r#"[
+                {
+                    "comments": [
+                        {
+                            "body": "comment"
+                        }
+                    ]
+                }
+            ]"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("missing field `author`"));
+    }
+
+    #[test]
+    fn rejects_thread_comment_without_body() {
+        let error = serde_json::from_str::<Vec<ReviewCommentThread>>(
+            r#"[
+                {
+                    "comments": [
+                        {
+                            "author": "alice"
+                        }
+                    ]
+                }
+            ]"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("missing field `body`"));
+    }
+
+    #[test]
+    fn rejects_comment_thread_with_invalid_commit() {
+        let error = serde_json::from_str::<Vec<ReviewCommentThread>>(
+            r#"[
+                {
+                    "commit": "",
+                    "comments": [
+                        {
+                            "author": "alice",
+                            "body": "comment"
+                        }
+                    ]
+                }
+            ]"#,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("invalid commit hash"));
     }
 
     #[test]
