@@ -1,0 +1,145 @@
+name: Peer Review
+description: Run peer init if needed, then run peer review.
+
+inputs:
+  version:
+    description: Peer release version to download, with or without a leading v.
+    required: true
+  provider:
+    description: LLM provider name. Supported values match resources/default_config.toml.
+    required: true
+  model:
+    description: LLM model name to pass to peer review.
+    required: true
+  target:
+    description: Git revision or range to review.
+    required: true
+  title:
+    description: Pull request title to pass to peer review.
+    required: false
+    default: ""
+  body-file:
+    description: Path to a file containing the pull request body.
+    required: false
+    default: ""
+  comments-file:
+    description: Path to a JSON file containing review comment threads.
+    required: false
+    default: ""
+
+outputs:
+  exit-code:
+    description: Exit code returned by peer review.
+    value: ${{ steps.review.outputs.exit-code }}
+  stdout-path:
+    description: Path to the peer review stdout file on the runner.
+    value: ${{ steps.review.outputs.stdout-path }}
+  stderr-path:
+    description: Path to the peer review stderr file on the runner.
+    value: ${{ steps.review.outputs.stderr-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install peer binary
+      shell: bash
+      env:
+        PEER_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        version="${PEER_VERSION#v}"
+        tag="v$version"
+
+        case "${RUNNER_OS}-${RUNNER_ARCH}" in
+          Linux-X64) ;;
+          *)
+            echo "Unsupported runner platform: ${RUNNER_OS}-${RUNNER_ARCH}. peer-review supports Linux-X64 only." >&2
+            exit 2
+            ;;
+        esac
+
+        archive="peer-linux-x86_64-${tag}.tar.gz"
+        url="https://github.com/sgkim126/peer/releases/download/${tag}/${archive}"
+        install_dir="$RUNNER_TEMP/peer-bin"
+
+        mkdir -p "$install_dir"
+        curl --fail --location --show-error --silent "$url" --output "$RUNNER_TEMP/$archive"
+        tar -xzf "$RUNNER_TEMP/$archive" -C "$install_dir"
+        chmod +x "$install_dir/peer"
+
+        echo "$install_dir" >> "$GITHUB_PATH"
+
+    - name: Initialize peer config
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ ! -d .peer ]; then
+          peer init
+        fi
+
+    - name: Run peer review
+      id: review
+      shell: bash
+      env:
+        PEER_REVIEW_PROVIDER: ${{ inputs.provider }}
+        PEER_REVIEW_MODEL: ${{ inputs.model }}
+        PEER_REVIEW_TARGET: ${{ inputs.target }}
+        PEER_REVIEW_TITLE: ${{ inputs.title }}
+        PEER_REVIEW_BODY_FILE: ${{ inputs.body-file }}
+        PEER_REVIEW_COMMENTS_FILE: ${{ inputs.comments-file }}
+      run: |
+        set -euo pipefail
+
+        case "$PEER_REVIEW_PROVIDER" in
+          mistral) api_key_env="MISTRAL_API_KEY" ;;
+          openai) api_key_env="OPENAI_API_KEY" ;;
+          anthropic) api_key_env="ANTHROPIC_API_KEY" ;;
+          gemini) api_key_env="GEMINI_API_KEY" ;;
+          *)
+            echo "Unsupported provider: $PEER_REVIEW_PROVIDER" >&2
+            exit 2
+            ;;
+        esac
+
+        if [ -z "${!api_key_env:-}" ]; then
+          echo "Required environment variable is missing or empty: $api_key_env" >&2
+          exit 2
+        fi
+
+        stdout="$RUNNER_TEMP/peer-review-stdout.md"
+        stderr="$RUNNER_TEMP/peer-review-stderr.log"
+        args=(
+          review "$PEER_REVIEW_TARGET"
+          --provider "$PEER_REVIEW_PROVIDER"
+          --model "$PEER_REVIEW_MODEL"
+          --format markdown
+        )
+
+        if [ -n "$PEER_REVIEW_TITLE" ]; then
+          args+=(--title "$PEER_REVIEW_TITLE")
+        fi
+        if [ -n "$PEER_REVIEW_BODY_FILE" ]; then
+          args+=(--body-file "$PEER_REVIEW_BODY_FILE")
+        fi
+        if [ -n "$PEER_REVIEW_COMMENTS_FILE" ]; then
+          args+=(--comments-file "$PEER_REVIEW_COMMENTS_FILE")
+        fi
+
+        set +e
+        peer "${args[@]}" >"$stdout" 2>"$stderr"
+        code=$?
+        set -e
+
+        {
+          echo "### peer review stderr"
+          echo
+          echo '```text'
+          cat "$stderr"
+          echo '```'
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        echo "stdout-path=$stdout" >> "$GITHUB_OUTPUT"
+        echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
