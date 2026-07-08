@@ -5,12 +5,12 @@ use crate::extract::ExtractError;
 use crate::llm::checks::CheckCommandError;
 use crate::llm::checks::runner::CheckRunError;
 use crate::llm::provider::{LlmCallError, ProviderCreationError};
-use crate::llm::result::CheckResult;
+use crate::llm::result::{CheckOutcome, CheckResult};
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum CheckCommandOutput {
-    Success { data: CheckResult },
+    Success { data: CheckOutcome },
     Error { error: CheckCommandErrorOutput },
 }
 
@@ -98,18 +98,29 @@ fn llm_error_classification(error: &LlmCallError) -> (ErrorCode, bool) {
 
 impl CheckCommandOutput {
     pub fn success(data: CheckResult) -> Self {
-        Self::Success { data }
+        Self::Success {
+            data: CheckOutcome::success(data),
+        }
     }
 
     pub fn error(error: CheckCommandErrorOutput) -> Self {
         Self::Error { error }
     }
 
-    pub fn as_result(&self) -> Result<&CheckResult, &CheckCommandErrorOutput> {
+    pub fn as_outcome(&self) -> Result<&CheckOutcome, &CheckCommandErrorOutput> {
         match self {
             Self::Success { data } => Ok(data),
             Self::Error { error } => Err(error),
         }
+    }
+
+    pub fn as_result(&self) -> Result<&CheckResult, &CheckCommandErrorOutput> {
+        self.as_outcome()?.as_success().ok_or_else(|| match self {
+            Self::Error { error } => error,
+            Self::Success { .. } => {
+                unreachable!("successful check command output contains no successful result")
+            }
+        })
     }
 }
 
@@ -156,19 +167,22 @@ mod tests {
             json!({
                 "status": "success",
                 "data": {
-                    "check": "size",
-                    "target": "abc1234",
-                    "summary": "The commit is appropriately sized.",
-                    "findings": [],
-                    "confidence": 0.9,
-                    "iterations": 1,
-                    "is_exhausted": false,
-                    "exhaustion_reason": null,
-                    "usage": {
-                        "input_tokens": 100,
-                        "output_tokens": 20,
-                        "cost_usd": 0.001,
-                        "model": "test-model"
+                    "status": "success",
+                    "check": {
+                        "check": "size",
+                        "target": "abc1234",
+                        "summary": "The commit is appropriately sized.",
+                        "findings": [],
+                        "confidence": 0.9,
+                        "iterations": 1,
+                        "is_exhausted": false,
+                        "exhaustion_reason": null,
+                        "usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 20,
+                            "cost_usd": 0.001,
+                            "model": "test-model"
+                        }
                     }
                 }
             })

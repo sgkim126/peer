@@ -32,19 +32,22 @@ fn success_envelope() -> serde_json::Value {
     json!({
         "status": "success",
         "data": {
-            "check": "size",
-            "target": "abc1234",
-            "summary": "The commit is appropriately sized.",
-            "findings": [],
-            "confidence": 0.9,
-            "iterations": 1,
-            "is_exhausted": false,
-            "exhaustion_reason": null,
-            "usage": {
-                "input_tokens": 100,
-                "output_tokens": 20,
-                "cost_usd": 0.001,
-                "model": "test-model"
+            "status": "success",
+            "check": {
+                "check": "size",
+                "target": "abc1234",
+                "summary": "The commit is appropriately sized.",
+                "findings": [],
+                "confidence": 0.9,
+                "iterations": 1,
+                "is_exhausted": false,
+                "exhaustion_reason": null,
+                "usage": {
+                    "input_tokens": 100,
+                    "output_tokens": 20,
+                    "cost_usd": 0.001,
+                    "model": "test-model"
+                }
             }
         }
     })
@@ -93,7 +96,10 @@ fn renders_usage_from_stdin_with_verbose() {
 fn renders_pretty_json_from_stdin() {
     let input = success_envelope();
     let mut expected = input.clone();
-    expected["data"].as_object_mut().unwrap().remove("usage");
+    expected["data"]["check"]
+        .as_object_mut()
+        .unwrap()
+        .remove("usage");
     let output = run_render("json", &input.to_string());
 
     assert!(output.status.success());
@@ -108,7 +114,10 @@ fn renders_pretty_json_from_stdin() {
 fn renders_usage_in_json_from_stdin_with_verbose() {
     let input = success_envelope();
     let mut expected = input.clone();
-    expected["data"].as_object_mut().unwrap().remove("usage");
+    expected["data"]["check"]
+        .as_object_mut()
+        .unwrap()
+        .remove("usage");
     let output = run_render_verbose("json", &input.to_string());
 
     assert!(output.status.success());

@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 use crate::cli::OutputFormat;
 use crate::console::Console;
 use crate::llm::checks::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
-use crate::llm::result::{CheckResult, CheckTarget, Finding, Severity};
+use crate::llm::result::{CheckOutcome, CheckResult, CheckTarget, Finding, Severity};
 use crate::review::ReviewResult;
 use owo_colors::Style;
 
@@ -89,11 +89,47 @@ fn render_review_result_impl(
     match format {
         OutputFormat::Json => render_review_json(result, console),
         OutputFormat::Terminal | OutputFormat::Markdown => result
-            .checks
+            .outcomes
             .iter()
-            .map(|check| render_check_result_impl(check, format, console, use_color))
+            .map(|outcome| render_check_outcome_impl(outcome, format, console, use_color))
             .collect::<Result<Vec<_>, _>>()
             .map(|rendered| rendered.join("\n\n")),
+    }
+}
+
+fn render_check_outcome_impl(
+    outcome: &CheckOutcome,
+    format: OutputFormat,
+    console: Console,
+    use_color: bool,
+) -> Result<String, RenderError> {
+    match outcome {
+        CheckOutcome::Success { check } => {
+            render_check_result_impl(check, format, console, use_color)
+        }
+        CheckOutcome::NeedsUserInfo { request } => Ok(match format {
+            OutputFormat::Json => unreachable!("review json renders the full review result"),
+            OutputFormat::Terminal => format!(
+                "{} {}\n{} {}\n\n{}",
+                terminal_label("Check:", use_color),
+                styled(&request.check, Style::new().bold(), use_color),
+                terminal_label("Target:", use_color),
+                display_target(&request.target),
+                request.questions.join("\n")
+            ),
+            OutputFormat::Markdown => {
+                let questions = request
+                    .questions
+                    .iter()
+                    .map(|question| format!("- {question}"))
+                    .collect::<Vec<_>>()
+                    .join("\n");
+                format!(
+                    "## Check: {}\n\nNeeds user info:\n\n{}",
+                    request.check, questions
+                )
+            }
+        }),
     }
 }
 
@@ -112,25 +148,50 @@ fn render_review_json(result: &ReviewResult, console: Console) -> Result<String,
 }
 
 fn remove_usage(value: &mut serde_json::Value) {
-    if let Some(data) = value
+    let Some(outcome) = value
         .get_mut("data")
         .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+
+    if let Some(check) = outcome
+        .get_mut("check")
+        .and_then(serde_json::Value::as_object_mut)
     {
-        data.remove("usage");
+        check.remove("usage");
+    }
+    if let Some(request) = outcome
+        .get_mut("request")
+        .and_then(serde_json::Value::as_object_mut)
+    {
+        request.remove("usage");
     }
 }
 
 fn remove_review_usage(value: &mut serde_json::Value) {
     let Some(checks) = value
-        .get_mut("checks")
+        .get_mut("outcomes")
         .and_then(serde_json::Value::as_array_mut)
     else {
         return;
     };
 
-    for check in checks {
-        if let Some(check) = check.as_object_mut() {
+    for outcome in checks {
+        let Some(outcome) = outcome.as_object_mut() else {
+            continue;
+        };
+        if let Some(check) = outcome
+            .get_mut("check")
+            .and_then(serde_json::Value::as_object_mut)
+        {
             check.remove("usage");
+        }
+        if let Some(request) = outcome
+            .get_mut("request")
+            .and_then(serde_json::Value::as_object_mut)
+        {
+            request.remove("usage");
         }
     }
 }
@@ -142,8 +203,10 @@ fn log_usage(output: &CheckCommandOutput, console: Console) {
 }
 
 fn log_review_usage(result: &ReviewResult, console: Console) {
-    for check in &result.checks {
-        log_result_usage(check, console);
+    for outcome in &result.outcomes {
+        if let CheckOutcome::Success { check } = outcome {
+            log_result_usage(check, console);
+        }
     }
 }
 
@@ -452,19 +515,22 @@ mod tests {
         json!({
             "status": "success",
             "data": {
-                "check": "size",
-                "target": "abc1234",
-                "summary": "The commit is appropriately sized.",
-                "findings": [],
-                "confidence": 0.9,
-                "iterations": 1,
-                "is_exhausted": false,
-                "exhaustion_reason": null,
-                "usage": {
-                    "input_tokens": 100,
-                    "output_tokens": 20,
-                    "cost_usd": 0.001,
-                    "model": "test-model"
+                "status": "success",
+                "check": {
+                    "check": "size",
+                    "target": "abc1234",
+                    "summary": "The commit is appropriately sized.",
+                    "findings": [],
+                    "confidence": 0.9,
+                    "iterations": 1,
+                    "is_exhausted": false,
+                    "exhaustion_reason": null,
+                    "usage": {
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cost_usd": 0.001,
+                        "model": "test-model"
+                    }
                 }
             }
         })
@@ -472,31 +538,35 @@ mod tests {
 
     fn success_envelope_with_finding() -> Value {
         let mut envelope = success_envelope();
-        envelope["data"]["summary"] = json!("A critical issue was found.");
-        envelope["data"]["findings"] = json!([{
+        let check = &mut envelope["data"]["check"];
+        check["summary"] = json!("A critical issue was found.");
+        check["findings"] = json!([{
             "commit": "abc1234",
             "severity": "critical",
             "message": "User input reaches a shell command.",
             "file": "src/main.rs",
             "line": 42
         }]);
-        envelope["data"]["confidence"] = json!(0.85);
-        envelope["data"]["iterations"] = json!(2);
+        check["confidence"] = json!(0.85);
+        check["iterations"] = json!(2);
         envelope
     }
 
     fn success_envelope_without_usage() -> Value {
         let mut envelope = success_envelope();
-        envelope["data"].as_object_mut().unwrap().remove("usage");
+        envelope["data"]["check"]
+            .as_object_mut()
+            .unwrap()
+            .remove("usage");
         envelope
     }
 
     fn success_result() -> CheckResult {
-        serde_json::from_value(success_envelope()["data"].clone()).unwrap()
+        serde_json::from_value(success_envelope()["data"]["check"].clone()).unwrap()
     }
 
     fn success_result_with_finding() -> CheckResult {
-        serde_json::from_value(success_envelope_with_finding()["data"].clone()).unwrap()
+        serde_json::from_value(success_envelope_with_finding()["data"]["check"].clone()).unwrap()
     }
 
     fn success_review_result() -> ReviewResult {
@@ -506,7 +576,7 @@ mod tests {
         intent.check = "intent".to_string();
 
         ReviewResult {
-            checks: vec![size, intent],
+            outcomes: vec![CheckOutcome::success(size), CheckOutcome::success(intent)],
             errors: Default::default(),
         }
     }
@@ -590,11 +660,12 @@ Confidence: 85% | Iterations: 2"
         let rendered = render_review_result(&result, OutputFormat::Json, console()).unwrap();
         let value: Value = serde_json::from_str(&rendered).unwrap();
 
-        assert_eq!(value["checks"].as_array().unwrap().len(), 2);
-        assert_eq!(value["checks"][0]["check"], "size");
-        assert_eq!(value["checks"][1]["check"], "intent");
-        assert!(value["checks"][0].get("usage").is_none());
-        assert!(value["checks"][1].get("usage").is_none());
+        assert_eq!(value["outcomes"].as_array().unwrap().len(), 2);
+        assert_eq!(value["outcomes"][0]["status"], "success");
+        assert_eq!(value["outcomes"][0]["check"]["check"], "size");
+        assert_eq!(value["outcomes"][1]["check"]["check"], "intent");
+        assert!(value["outcomes"][0]["check"].get("usage").is_none());
+        assert!(value["outcomes"][1]["check"].get("usage").is_none());
     }
 
     #[test]
@@ -662,8 +733,8 @@ Confidence: 85% | Iterations: 2"
     #[test]
     fn renders_exhausted_check_warning_for_terminal() {
         let mut envelope = success_envelope();
-        envelope["data"]["is_exhausted"] = json!(true);
-        envelope["data"]["exhaustion_reason"] = json!("max_iterations");
+        envelope["data"]["check"]["is_exhausted"] = json!(true);
+        envelope["data"]["check"]["exhaustion_reason"] = json!("max_iterations");
 
         let rendered = render_impl(
             &envelope.to_string(),
@@ -743,8 +814,8 @@ A critical issue was found.
     #[test]
     fn renders_exhausted_check_warning_for_markdown() {
         let mut envelope = success_envelope();
-        envelope["data"]["is_exhausted"] = json!(true);
-        envelope["data"]["exhaustion_reason"] = json!("max_iterations");
+        envelope["data"]["check"]["is_exhausted"] = json!(true);
+        envelope["data"]["check"]["exhaustion_reason"] = json!("max_iterations");
 
         let rendered = render(&envelope.to_string(), OutputFormat::Markdown, console()).unwrap();
 

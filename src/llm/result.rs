@@ -87,6 +87,36 @@ pub struct CheckResult {
     pub usage: CheckUsage,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum CheckOutcome {
+    Success { check: CheckResult },
+    NeedsUserInfo { request: CheckUserInfoRequest },
+}
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct CheckUserInfoRequest {
+    pub check: String,
+    pub target: CheckTarget,
+    pub questions: Vec<String>,
+    pub attempted_tools: Vec<String>,
+    pub iterations: u32,
+    pub usage: CheckUsage,
+}
+
+impl CheckOutcome {
+    pub fn success(check: CheckResult) -> Self {
+        Self::Success { check }
+    }
+
+    pub fn as_success(&self) -> Option<&CheckResult> {
+        match self {
+            Self::Success { check } => Some(check),
+            Self::NeedsUserInfo { .. } => None,
+        }
+    }
+}
+
 impl CheckResult {
     pub fn from_agent_outcome(
         check: impl Into<String>,

@@ -7,7 +7,7 @@ use crate::console::Console;
 use crate::git::{CommitHash, GitError, run_git};
 use crate::llm::checks::{self, CheckCommandError};
 use crate::llm::context::ReviewContext;
-use crate::llm::result::CheckResult;
+use crate::llm::result::CheckOutcome;
 
 use serde::{Deserialize, Serialize};
 
@@ -27,7 +27,7 @@ pub struct ReviewPlan {
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct ReviewResult {
-    pub checks: Vec<CheckResult>,
+    pub outcomes: Vec<CheckOutcome>,
 
     #[serde(skip, default)]
     pub errors: Vec<ReviewCheckError>,
@@ -125,7 +125,7 @@ pub async fn run(
     project_root: PathBuf,
     review_context: &ReviewContext,
 ) -> ReviewResult {
-    let mut results = Vec::with_capacity(plan.checks.len());
+    let mut outcomes = Vec::with_capacity(plan.checks.len());
     let mut errors = Vec::new();
 
     for check in plan.checks {
@@ -139,15 +139,12 @@ pub async fn run(
         )
         .await
         {
-            Ok(result) => results.push(result),
+            Ok(result) => outcomes.push(CheckOutcome::success(result)),
             Err(error) => errors.push(ReviewCheckError { check, error }),
         }
     }
 
-    ReviewResult {
-        checks: results,
-        errors,
-    }
+    ReviewResult { outcomes, errors }
 }
 
 pub async fn resolve_target(
@@ -273,7 +270,7 @@ mod tests {
     use super::*;
     use crate::git::run_git;
     use crate::llm::confidence::Confidence;
-    use crate::llm::result::{CheckTarget, CheckUsage};
+    use crate::llm::result::{CheckResult, CheckTarget, CheckUsage};
 
     struct Repo {
         _tmp: TempDir,
@@ -623,22 +620,23 @@ mod tests {
         let check = check_result();
 
         let result = ReviewResult {
-            checks: vec![check.clone()],
+            outcomes: vec![CheckOutcome::success(check.clone())],
             errors: Default::default(),
         };
 
-        assert_eq!(result.checks, vec![check]);
+        assert_eq!(result.outcomes, vec![CheckOutcome::success(check)]);
     }
 
     #[test]
     fn serializes_review_result() {
         let result = ReviewResult {
-            checks: vec![check_result()],
+            outcomes: vec![CheckOutcome::success(check_result())],
             errors: Default::default(),
         };
 
         let value = serde_json::to_value(result).unwrap();
 
-        assert_eq!(value["checks"][0]["check"], "size");
+        assert_eq!(value["outcomes"][0]["status"], "success");
+        assert_eq!(value["outcomes"][0]["check"]["check"], "size");
     }
 }
