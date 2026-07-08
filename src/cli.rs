@@ -1,6 +1,8 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+use crate::review::ReviewCheckKind;
+
 #[derive(Parser, Debug)]
 #[command(name = "peer", about = "LLM-based code review CLI")]
 pub struct Cli {
@@ -20,6 +22,9 @@ pub enum Command {
 
     Review {
         target: String,
+
+        #[arg(long = "skip-check", value_enum, value_delimiter = ',')]
+        skip_checks: Vec<ReviewCheckKind>,
 
         #[arg(long)]
         title: Option<String>,
@@ -114,6 +119,7 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD~3..HEAD".into(),
+                skip_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -130,6 +136,7 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "abc123".into(),
+                skip_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -146,6 +153,7 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "main".into(),
+                skip_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -172,9 +180,39 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
+                skip_checks: vec![],
                 title: Some("Add review context".into()),
                 body_file: Some(PathBuf::from("body.md")),
                 comments_file: Some(PathBuf::from("comments.json")),
+                format: OutputFormat::Terminal,
+            }
+        );
+    }
+
+    #[test]
+    fn review_with_skip_checks() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "HEAD~3..HEAD",
+            "--skip-check",
+            "size,security",
+            "--skip-check",
+            "coherence",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD~3..HEAD".into(),
+                skip_checks: vec![
+                    ReviewCheckKind::Size,
+                    ReviewCheckKind::Security,
+                    ReviewCheckKind::Coherence,
+                ],
+                title: None,
+                body_file: None,
+                comments_file: None,
                 format: OutputFormat::Terminal,
             }
         );

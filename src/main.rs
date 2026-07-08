@@ -41,6 +41,7 @@ async fn main() -> ExitCode {
         },
         Command::Review {
             target,
+            skip_checks,
             title,
             body_file,
             comments_file,
@@ -107,7 +108,7 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            let plan = review::plan_checks(&review_target);
+            let plan = review::plan_checks(&review_target).without_checks(&skip_checks);
             console.debug(format_args!("{plan:?}"));
 
             let (provider_config, model_config) = match config

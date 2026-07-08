@@ -9,6 +9,7 @@ use crate::git::{CommitHash, GitError, run_git};
 use crate::llm::checks::{self, CheckCommandError};
 use crate::llm::context::ReviewContext;
 use crate::llm::result::CheckOutcome;
+use clap::ValueEnum;
 
 use serde::{Deserialize, Serialize};
 
@@ -24,6 +25,15 @@ pub enum ReviewTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewPlan {
     pub checks: Vec<ReviewCheck>,
+}
+
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ReviewCheckKind {
+    Size,
+    Intent,
+    Quality,
+    Security,
+    Coherence,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -49,6 +59,17 @@ pub enum ReviewCheck {
     Coherence { range: String },
 }
 
+impl ReviewPlan {
+    pub fn without_checks(mut self, skipped: &[ReviewCheckKind]) -> Self {
+        if skipped.is_empty() {
+            return self;
+        }
+
+        self.checks.retain(|check| !skipped.contains(&check.kind()));
+        self
+    }
+}
+
 impl From<ReviewCheck> for CheckCommand {
     fn from(check: ReviewCheck) -> Self {
         match check {
@@ -57,6 +78,18 @@ impl From<ReviewCheck> for CheckCommand {
             ReviewCheck::Quality { revision } => Self::Quality { revision },
             ReviewCheck::Security { revision } => Self::Security { revision },
             ReviewCheck::Coherence { range } => Self::Coherence { range },
+        }
+    }
+}
+
+impl ReviewCheck {
+    fn kind(&self) -> ReviewCheckKind {
+        match self {
+            Self::Size { .. } => ReviewCheckKind::Size,
+            Self::Intent { .. } => ReviewCheckKind::Intent,
+            Self::Quality { .. } => ReviewCheckKind::Quality,
+            Self::Security { .. } => ReviewCheckKind::Security,
+            Self::Coherence { .. } => ReviewCheckKind::Coherence,
         }
     }
 }
@@ -659,6 +692,72 @@ mod tests {
                         revision: second_commit_hash.to_string()
                     },
                     ReviewCheck::Coherence { range: revision },
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn skips_selected_single_commit_checks() {
+        let commit_hash = "abc1234";
+        let commit = CommitHash::new(commit_hash).unwrap();
+        let target = ReviewTarget::Commit(commit);
+
+        let plan = plan_checks(&target)
+            .without_checks(&[ReviewCheckKind::Size, ReviewCheckKind::Security]);
+
+        assert_eq!(
+            plan,
+            ReviewPlan {
+                checks: vec![
+                    ReviewCheck::Intent {
+                        revision: commit_hash.to_string()
+                    },
+                    ReviewCheck::Quality {
+                        revision: commit_hash.to_string()
+                    },
+                ]
+            }
+        );
+    }
+
+    #[test]
+    fn skips_selected_range_checks() {
+        let first_commit_hash = "abc1234";
+        let second_commit_hash = "def5678";
+        let first = CommitHash::new(first_commit_hash).unwrap();
+        let second = CommitHash::new(second_commit_hash).unwrap();
+        let revision = "main..HEAD".to_string();
+        let target = ReviewTarget::Range {
+            revision: revision.clone(),
+            commits: vec![first, second],
+        };
+
+        let plan = plan_checks(&target)
+            .without_checks(&[ReviewCheckKind::Intent, ReviewCheckKind::Coherence]);
+
+        assert_eq!(
+            plan,
+            ReviewPlan {
+                checks: vec![
+                    ReviewCheck::Size {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Quality {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Security {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Size {
+                        revision: second_commit_hash.to_string()
+                    },
+                    ReviewCheck::Quality {
+                        revision: second_commit_hash.to_string()
+                    },
+                    ReviewCheck::Security {
+                        revision: second_commit_hash.to_string()
+                    },
                 ]
             }
         );
