@@ -23,6 +23,12 @@ pub enum Command {
     Review {
         target: String,
 
+        #[arg(long)]
+        provider: Option<String>,
+
+        #[arg(long)]
+        model: Option<String>,
+
         #[arg(long = "skip-check", value_enum, value_delimiter = ',')]
         skip_checks: Vec<ReviewCheckKind>,
 
@@ -45,6 +51,12 @@ pub enum Command {
     },
 
     Check {
+        #[arg(long, global = true)]
+        provider: Option<String>,
+
+        #[arg(long, global = true)]
+        model: Option<String>,
+
         #[command(subcommand)]
         command: CheckCommand,
     },
@@ -119,6 +131,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD~3..HEAD".into(),
+                provider: None,
+                model: None,
                 skip_checks: vec![],
                 title: None,
                 body_file: None,
@@ -136,6 +150,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "abc123".into(),
+                provider: None,
+                model: None,
                 skip_checks: vec![],
                 title: None,
                 body_file: None,
@@ -153,6 +169,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "main".into(),
+                provider: None,
+                model: None,
                 skip_checks: vec![],
                 title: None,
                 body_file: None,
@@ -180,6 +198,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
+                provider: None,
+                model: None,
                 skip_checks: vec![],
                 title: Some("Add review context".into()),
                 body_file: Some(PathBuf::from("body.md")),
@@ -205,11 +225,40 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD~3..HEAD".into(),
+                provider: None,
+                model: None,
                 skip_checks: vec![
                     ReviewCheckKind::Size,
                     ReviewCheckKind::Security,
                     ReviewCheckKind::Coherence,
                 ],
+                title: None,
+                body_file: None,
+                comments_file: None,
+                format: OutputFormat::Terminal,
+            }
+        );
+    }
+
+    #[test]
+    fn review_with_provider_and_model() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "HEAD",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-5.4-mini",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD".into(),
+                provider: Some("openai".into()),
+                model: Some("gpt-5.4-mini".into()),
+                skip_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -303,6 +352,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 command: CheckCommand::Size {
                     revision: "abc123".into(),
                 },
@@ -317,6 +368,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 command: CheckCommand::Intent {
                     revision: "abc123".into(),
                 },
@@ -331,6 +384,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 command: CheckCommand::Quality {
                     revision: "abc123".into(),
                 },
@@ -345,6 +400,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 command: CheckCommand::Security {
                     revision: "abc123".into(),
                 },
@@ -359,8 +416,60 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 command: CheckCommand::Coherence {
                     range: "HEAD~3..HEAD".into(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn check_with_provider_and_model() {
+        let cli = parse(&[
+            "peer",
+            "check",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-sonnet-5",
+            "size",
+            "abc123",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Check {
+                provider: Some("anthropic".into()),
+                model: Some("claude-sonnet-5".into()),
+                command: CheckCommand::Size {
+                    revision: "abc123".into(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn check_with_provider_and_model_after_check_subcommand() {
+        let cli = parse(&[
+            "peer",
+            "check",
+            "size",
+            "abc123",
+            "--provider",
+            "anthropic",
+            "--model",
+            "claude-sonnet-5",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Check {
+                provider: Some("anthropic".into()),
+                model: Some("claude-sonnet-5".into()),
+                command: CheckCommand::Size {
+                    revision: "abc123".into(),
                 },
             }
         );

@@ -14,7 +14,7 @@ mod secret;
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
-use crate::config::discover;
+use crate::config::{Config, discover};
 use crate::console::Console;
 use crate::llm::checks::{CheckCommandError, CheckCommandOutput};
 use crate::llm::result::{CheckOutcome, CheckUsage};
@@ -41,6 +41,8 @@ async fn main() -> ExitCode {
         },
         Command::Review {
             target,
+            provider,
+            model,
             skip_checks,
             title,
             body_file,
@@ -77,7 +79,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let (config, project_root) = match discover(&cwd) {
+            let (mut config, project_root) = match discover(&cwd) {
                 Ok((config, project_root)) => (config, project_root),
                 Err(err) => {
                     eprintln!("{err}");
@@ -85,6 +87,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            apply_llm_defaults(&mut config, provider, model);
 
             let review_target = match review::resolve_target(&target, &project_root, console).await
             {
@@ -214,7 +217,11 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Check { command } => {
+        Command::Check {
+            provider,
+            model,
+            command,
+        } => {
             let cwd = match std::env::current_dir() {
                 Ok(cwd) => cwd,
                 Err(err) => {
@@ -224,7 +231,8 @@ async fn main() -> ExitCode {
                 }
             };
             let result = match discover(&cwd) {
-                Ok((config, project_root)) => {
+                Ok((mut config, project_root)) => {
+                    apply_llm_defaults(&mut config, provider, model);
                     llm::checks::handler(
                         console,
                         command,
@@ -261,6 +269,15 @@ async fn main() -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+    }
+}
+
+fn apply_llm_defaults(config: &mut Config, provider: Option<String>, model: Option<String>) {
+    if let Some(provider) = provider {
+        config.llm.default_provider = provider;
+    }
+    if let Some(model) = model {
+        config.llm.default_model = model;
     }
 }
 
