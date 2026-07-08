@@ -17,7 +17,7 @@ const COMMENTS_COMPRESSION_THRESHOLD_CHARS: usize = 1_500;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ReviewContextSummaryKind {
     Body,
-    Comments,
+    CommentThread,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,9 +35,20 @@ impl ReviewContextSummaryInput {
     }
 
     fn comments(comments: &[ReviewCommentThread]) -> Self {
+        if let [thread] = comments {
+            return Self::comment_thread(1, thread);
+        }
+
         Self {
-            kind: ReviewContextSummaryKind::Comments,
+            kind: ReviewContextSummaryKind::CommentThread,
             content: format_comment_threads(comments),
+        }
+    }
+
+    fn comment_thread(index: usize, thread: &ReviewCommentThread) -> Self {
+        Self {
+            kind: ReviewContextSummaryKind::CommentThread,
+            content: format_comment_thread(index, thread),
         }
     }
 
@@ -82,8 +93,8 @@ fn system_prompt(kind: ReviewContextSummaryKind) -> &'static str {
         ReviewContextSummaryKind::Body => {
             "Summarize the pull request body for a code review agent. Preserve the author's intent, stated risks, testing notes, and review instructions. Return only the summary."
         }
-        ReviewContextSummaryKind::Comments => {
-            "Summarize threaded pull request comments for a code review agent. Preserve unresolved concerns, requested changes, affected commits, and file locations. Return only the summary."
+        ReviewContextSummaryKind::CommentThread => {
+            "Summarize one pull request comment thread for a code review agent. Preserve unresolved concerns, requested changes, affected commits, and file locations. Return only the summary."
         }
     }
 }
@@ -93,8 +104,8 @@ fn user_prompt(kind: ReviewContextSummaryKind, content: &str) -> String {
         ReviewContextSummaryKind::Body => {
             format!("Pull request body:\n{content}")
         }
-        ReviewContextSummaryKind::Comments => {
-            format!("Pull request comments:\n{content}")
+        ReviewContextSummaryKind::CommentThread => {
+            format!("Pull request comment thread:\n{content}")
         }
     }
 }
@@ -352,24 +363,57 @@ mod tests {
     }
 
     #[test]
-    fn formats_comment_threads_with_optional_metadata() {
-        let input = ReviewContextSummaryInput::comments(&[
+    fn builds_comment_thread_summary_prompts() {
+        let thread = ReviewCommentThread {
+            commit: Some(CommitHash::new("abc1234").unwrap()),
+            location: Some(ReviewCommentLocation {
+                path: "src/lib.rs".to_string(),
+                line: 42,
+            }),
+            comments: vec![
+                ReviewThreadComment {
+                    author: "alice".to_string(),
+                    body: "Please cover this branch.".to_string(),
+                },
+                ReviewThreadComment {
+                    author: "bob".to_string(),
+                    body: "Fixed in the latest push.".to_string(),
+                },
+            ],
+        };
+        let input = ReviewContextSummaryInput::comment_thread(1, &thread);
+
+        assert_eq!(input.kind, ReviewContextSummaryKind::CommentThread);
+        assert_eq!(
+            input.content,
+            "Thread 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nComment 1 by alice:\nBody:\nPlease cover this branch.\nComment 2 by bob:\nBody:\nFixed in the latest push."
+        );
+        assert_eq!(
+            input.prompts(),
+            vec![
+                ConversationTurn::System(
+                    system_prompt(ReviewContextSummaryKind::CommentThread).to_string()
+                ),
+                ConversationTurn::User(
+                    "Pull request comment thread:\nThread 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nComment 1 by alice:\nBody:\nPlease cover this branch.\nComment 2 by bob:\nBody:\nFixed in the latest push.".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn formats_comment_threads_for_context_output() {
+        let output = format_comment_threads(&[
             ReviewCommentThread {
                 commit: Some(CommitHash::new("abc1234").unwrap()),
                 location: Some(ReviewCommentLocation {
                     path: "src/lib.rs".to_string(),
                     line: 42,
                 }),
-                comments: vec![
-                    ReviewThreadComment {
-                        author: "alice".to_string(),
-                        body: "Please cover this branch.".to_string(),
-                    },
-                    ReviewThreadComment {
-                        author: "bob".to_string(),
-                        body: "Fixed in the latest push.".to_string(),
-                    },
-                ],
+                comments: vec![ReviewThreadComment {
+                    author: "alice".to_string(),
+                    body: "Please cover this branch.".to_string(),
+                }],
             },
             ReviewCommentThread {
                 commit: None,
@@ -381,10 +425,9 @@ mod tests {
             },
         ]);
 
-        assert_eq!(input.kind, ReviewContextSummaryKind::Comments);
         assert_eq!(
-            input.content,
-            "Thread 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nComment 1 by alice:\nBody:\nPlease cover this branch.\nComment 2 by bob:\nBody:\nFixed in the latest push.\n\nThread 2:\nComment 1 by carol:\nBody:\nThis looks resolved."
+            output,
+            "Thread 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nComment 1 by alice:\nBody:\nPlease cover this branch.\n\nThread 2:\nComment 1 by carol:\nBody:\nThis looks resolved."
         );
     }
 
