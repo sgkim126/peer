@@ -130,6 +130,27 @@ where
     .await
 }
 
+async fn summarize_comment_thread_cached<P>(
+    provider: &P,
+    provider_name: &str,
+    model: &str,
+    index: usize,
+    thread: &ReviewCommentThread,
+    cache: &CacheStore,
+) -> Result<ReviewContextSummaryOutput, LlmCallError>
+where
+    P: LlmProvider,
+{
+    summarize_cached(
+        provider,
+        provider_name,
+        model,
+        ReviewContextSummaryInput::comment_thread(index, thread),
+        cache,
+    )
+    .await
+}
+
 async fn summarize_cached<P>(
     provider: &P,
     provider_name: &str,
@@ -238,8 +259,12 @@ where
             &comments_input.content,
             COMMENTS_COMPRESSION_THRESHOLD_CHARS,
         ) {
-            let output =
-                summarize_cached(provider, provider_name, model, comments_input, cache).await?;
+            let output = if let [thread] = comments.as_slice() {
+                summarize_comment_thread_cached(provider, provider_name, model, 1, thread, cache)
+                    .await?
+            } else {
+                summarize_cached(provider, provider_name, model, comments_input, cache).await?
+            };
             usage += output.usage;
             Some(output.summary)
         } else {
@@ -345,6 +370,20 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cache = CacheStore::new(tmp.path().join("cache"), crate::console::Console::default());
         (tmp, cache)
+    }
+
+    fn review_thread(body: impl Into<String>) -> ReviewCommentThread {
+        ReviewCommentThread {
+            commit: Some(CommitHash::new("abc1234").unwrap()),
+            location: Some(ReviewCommentLocation {
+                path: "src/lib.rs".to_string(),
+                line: 42,
+            }),
+            comments: vec![ReviewThreadComment {
+                author: "alice".to_string(),
+                body: body.into(),
+            }],
+        }
     }
 
     #[test]
@@ -497,6 +536,90 @@ mod tests {
                 .to_string()
                 .contains("review context summary was expected")
         );
+    }
+
+    #[tokio::test]
+    async fn uses_cached_comment_thread_summary_without_llm_call() {
+        let (_tmp, cache) = cache_store();
+        let thread = review_thread("Please cover this branch.");
+        let input = ReviewContextSummaryInput::comment_thread(1, &thread);
+        let key = cache_key("test-provider", "test-model", &input).unwrap();
+        cache
+            .write_json(
+                &key,
+                &ReviewContextSummaryCacheValue {
+                    summary: "cached thread summary".to_string(),
+                },
+            )
+            .unwrap();
+        let provider = MockProvider::default();
+
+        let output = summarize_comment_thread_cached(
+            &provider,
+            "test-provider",
+            "test-model",
+            1,
+            &thread,
+            &cache,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            output,
+            ReviewContextSummaryOutput {
+                summary: "cached thread summary".to_string(),
+                usage: RawUsage::default(),
+            }
+        );
+        assert!(provider.requests().is_empty());
+    }
+
+    #[tokio::test]
+    async fn writes_comment_thread_summary_to_cache_on_miss() {
+        let (_tmp, cache) = cache_store();
+        let thread = review_thread("Please cover this branch.");
+        let provider = MockProvider::new([Ok(LlmCallResult {
+            response: LlmResponse::Text("fresh thread summary".to_string()),
+            usage: RawUsage {
+                input_tokens: 12,
+                output_tokens: 4,
+            },
+        })]);
+
+        let output = summarize_comment_thread_cached(
+            &provider,
+            "test-provider",
+            "test-model",
+            1,
+            &thread,
+            &cache,
+        )
+        .await
+        .unwrap();
+
+        let key = cache_key(
+            "test-provider",
+            "test-model",
+            &ReviewContextSummaryInput::comment_thread(1, &thread),
+        )
+        .unwrap();
+        let cached = cache
+            .read_json::<ReviewContextSummaryCacheValue>(&key)
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            output,
+            ReviewContextSummaryOutput {
+                summary: "fresh thread summary".to_string(),
+                usage: RawUsage {
+                    input_tokens: 12,
+                    output_tokens: 4,
+                },
+            }
+        );
+        assert_eq!(cached.summary, "fresh thread summary");
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[tokio::test]
