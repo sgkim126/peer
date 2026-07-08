@@ -134,7 +134,6 @@ pub struct ReviewComment {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-#[allow(dead_code)]
 pub struct ReviewCommentThread {
     pub commit: Option<CommitHash>,
     pub location: Option<ReviewCommentLocation>,

@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::cache::{CacheKey, CacheStore};
-use crate::llm::context::{ReviewComment, ReviewContext, ReviewContextInput};
+use crate::llm::context::{ReviewComment, ReviewCommentThread, ReviewContext, ReviewContextInput};
 use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
 };
@@ -310,11 +310,53 @@ fn format_comment(index: usize, comment: &ReviewComment) -> String {
     output
 }
 
+#[allow(dead_code)]
+fn format_comment_threads(threads: &[ReviewCommentThread]) -> String {
+    threads
+        .iter()
+        .enumerate()
+        .map(|(index, thread)| format_comment_thread(index + 1, thread))
+        .collect::<Vec<_>>()
+        .join("\n\n")
+}
+
+fn format_comment_thread(index: usize, thread: &ReviewCommentThread) -> String {
+    let mut output = format!("Thread {index}:");
+
+    if let Some(commit) = &thread.commit {
+        output.push_str("\nCommit: ");
+        output.push_str(commit.as_ref());
+    }
+    if let Some(location) = &thread.location {
+        output.push_str("\nLocation: ");
+        output.push_str(&location.path);
+        output.push(':');
+        output.push_str(&location.line.to_string());
+    }
+
+    for (comment_index, comment) in thread.comments.iter().enumerate() {
+        output.push('\n');
+        output.push_str(&format_thread_comment(comment_index + 1, comment));
+    }
+
+    output
+}
+
+fn format_thread_comment(
+    index: usize,
+    comment: &crate::llm::context::ReviewThreadComment,
+) -> String {
+    let mut output = format!("Comment {index} by {}:", comment.author);
+    output.push_str("\nBody:\n");
+    output.push_str(&comment.body);
+    output
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::git::CommitHash;
-    use crate::llm::context::ReviewCommentLocation;
+    use crate::llm::context::{ReviewCommentLocation, ReviewThreadComment};
     use crate::llm::provider::{LlmCallResult, ToolCall};
     use crate::llm::test_support::{MockProvider, RecordedLlmOutputMode};
 
@@ -361,6 +403,42 @@ mod tests {
         assert_eq!(
             input.content,
             "Comment 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nBody:\nPlease cover this branch.\n\nComment 2:\nBody:\nThis looks resolved."
+        );
+    }
+
+    #[test]
+    fn formats_comment_threads_with_optional_metadata() {
+        let output = format_comment_threads(&[
+            ReviewCommentThread {
+                commit: Some(CommitHash::new("abc1234").unwrap()),
+                location: Some(ReviewCommentLocation {
+                    path: "src/lib.rs".to_string(),
+                    line: 42,
+                }),
+                comments: vec![
+                    ReviewThreadComment {
+                        author: "alice".to_string(),
+                        body: "Please cover this branch.".to_string(),
+                    },
+                    ReviewThreadComment {
+                        author: "bob".to_string(),
+                        body: "Fixed in the latest push.".to_string(),
+                    },
+                ],
+            },
+            ReviewCommentThread {
+                commit: None,
+                location: None,
+                comments: vec![ReviewThreadComment {
+                    author: "carol".to_string(),
+                    body: "This looks resolved.".to_string(),
+                }],
+            },
+        ]);
+
+        assert_eq!(
+            output,
+            "Thread 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nComment 1 by alice:\nBody:\nPlease cover this branch.\nComment 2 by bob:\nBody:\nFixed in the latest push.\n\nThread 2:\nComment 1 by carol:\nBody:\nThis looks resolved."
         );
     }
 
