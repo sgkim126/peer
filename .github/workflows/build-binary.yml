@@ -1,0 +1,80 @@
+name: Build Binary
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    name: CI
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build ${{ matrix.artifact-name }}
+    needs: ci
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            artifact-name: peer-linux-x86_64
+            binary-name: peer
+          - runner: macos-latest
+            artifact-name: peer-macos-arm64
+            binary-name: peer
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Install Rust
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+
+      - name: Read Rust version
+        id: rust
+        run: |
+          echo "version=$(rustc -Vv | sed -n 's/^release: //p')" >> "$GITHUB_OUTPUT"
+
+      - name: Cache Cargo dependencies
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            target/
+          key: ${{ runner.os }}-cargo-release-${{ steps.rust.outputs.version }}-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Read package version
+        id: package
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare binary
+        run: |
+          set -euo pipefail
+
+          mkdir -p dist
+          cp "target/release/${{ matrix.binary-name }}" "dist/${{ matrix.binary-name }}"
+          chmod +x "dist/${{ matrix.binary-name }}"
+          tar -C dist -czf "${{ matrix.artifact-name }}-v${{ steps.package.outputs.version }}.tar.gz" "${{ matrix.binary-name }}"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ matrix.artifact-name }}-v${{ steps.package.outputs.version }}
+          path: ${{ matrix.artifact-name }}-v${{ steps.package.outputs.version }}.tar.gz
+          if-no-files-found: error
