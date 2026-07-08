@@ -1,7 +1,9 @@
 use serde::{Deserialize, Serialize};
 
 use crate::cache::{CacheKey, CacheStore};
-use crate::llm::context::{ReviewComment, ReviewCommentThread, ReviewContext, ReviewContextInput};
+use crate::llm::context::{
+    ReviewCommentThread, ReviewContext, ReviewContextInput, ReviewThreadComment,
+};
 use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
 };
@@ -32,10 +34,10 @@ impl ReviewContextSummaryInput {
         }
     }
 
-    fn comments(comments: &[ReviewComment]) -> Self {
+    fn comments(comments: &[ReviewCommentThread]) -> Self {
         Self {
             kind: ReviewContextSummaryKind::Comments,
-            content: format_comments(comments),
+            content: format_comment_threads(comments),
         }
     }
 
@@ -81,7 +83,7 @@ fn system_prompt(kind: ReviewContextSummaryKind) -> &'static str {
             "Summarize the pull request body for a code review agent. Preserve the author's intent, stated risks, testing notes, and review instructions. Return only the summary."
         }
         ReviewContextSummaryKind::Comments => {
-            "Summarize pull request comments for a code review agent. Preserve unresolved concerns, requested changes, affected commits, and file locations. Return only the summary."
+            "Summarize threaded pull request comments for a code review agent. Preserve unresolved concerns, requested changes, affected commits, and file locations. Return only the summary."
         }
     }
 }
@@ -282,35 +284,6 @@ fn should_compress(content: &str, threshold_chars: usize) -> bool {
     content.chars().count() > threshold_chars
 }
 
-fn format_comments(comments: &[ReviewComment]) -> String {
-    comments
-        .iter()
-        .enumerate()
-        .map(|(index, comment)| format_comment(index + 1, comment))
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-fn format_comment(index: usize, comment: &ReviewComment) -> String {
-    let mut output = format!("Comment {index}:");
-
-    if let Some(commit) = &comment.commit {
-        output.push_str("\nCommit: ");
-        output.push_str(commit.as_ref());
-    }
-    if let Some(location) = &comment.location {
-        output.push_str("\nLocation: ");
-        output.push_str(&location.path);
-        output.push(':');
-        output.push_str(&location.line.to_string());
-    }
-
-    output.push_str("\nBody:\n");
-    output.push_str(&comment.body);
-    output
-}
-
-#[allow(dead_code)]
 fn format_comment_threads(threads: &[ReviewCommentThread]) -> String {
     threads
         .iter()
@@ -342,10 +315,7 @@ fn format_comment_thread(index: usize, thread: &ReviewCommentThread) -> String {
     output
 }
 
-fn format_thread_comment(
-    index: usize,
-    comment: &crate::llm::context::ReviewThreadComment,
-) -> String {
+fn format_thread_comment(index: usize, comment: &ReviewThreadComment) -> String {
     let mut output = format!("Comment {index} by {}:", comment.author);
     output.push_str("\nBody:\n");
     output.push_str(&comment.body);
@@ -356,7 +326,7 @@ fn format_thread_comment(
 mod tests {
     use super::*;
     use crate::git::CommitHash;
-    use crate::llm::context::{ReviewCommentLocation, ReviewThreadComment};
+    use crate::llm::context::ReviewCommentLocation;
     use crate::llm::provider::{LlmCallResult, ToolCall};
     use crate::llm::test_support::{MockProvider, RecordedLlmOutputMode};
 
@@ -382,33 +352,8 @@ mod tests {
     }
 
     #[test]
-    fn formats_comments_with_optional_metadata() {
-        let input = ReviewContextSummaryInput::comments(&[
-            ReviewComment {
-                body: "Please cover this branch.".to_string(),
-                commit: Some(CommitHash::new("abc1234").unwrap()),
-                location: Some(ReviewCommentLocation {
-                    path: "src/lib.rs".to_string(),
-                    line: 42,
-                }),
-            },
-            ReviewComment {
-                body: "This looks resolved.".to_string(),
-                commit: None,
-                location: None,
-            },
-        ]);
-
-        assert_eq!(input.kind, ReviewContextSummaryKind::Comments);
-        assert_eq!(
-            input.content,
-            "Comment 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nBody:\nPlease cover this branch.\n\nComment 2:\nBody:\nThis looks resolved."
-        );
-    }
-
-    #[test]
     fn formats_comment_threads_with_optional_metadata() {
-        let output = format_comment_threads(&[
+        let input = ReviewContextSummaryInput::comments(&[
             ReviewCommentThread {
                 commit: Some(CommitHash::new("abc1234").unwrap()),
                 location: Some(ReviewCommentLocation {
@@ -436,8 +381,9 @@ mod tests {
             },
         ]);
 
+        assert_eq!(input.kind, ReviewContextSummaryKind::Comments);
         assert_eq!(
-            output,
+            input.content,
             "Thread 1:\nCommit: abc1234\nLocation: src/lib.rs:42\nComment 1 by alice:\nBody:\nPlease cover this branch.\nComment 2 by bob:\nBody:\nFixed in the latest push.\n\nThread 2:\nComment 1 by carol:\nBody:\nThis looks resolved."
         );
     }
@@ -547,10 +493,13 @@ mod tests {
     async fn prepares_small_body_and_comments_without_llm_call() {
         let provider = MockProvider::default();
         let (_tmp, cache) = cache_store();
-        let comments = vec![ReviewComment {
-            body: "Please cover this branch.".to_string(),
+        let comments = vec![ReviewCommentThread {
             commit: None,
             location: None,
+            comments: vec![ReviewThreadComment {
+                author: "alice".to_string(),
+                body: "Please cover this branch.".to_string(),
+            }],
         }];
 
         let prepared = prepare_review_context(
@@ -573,7 +522,7 @@ mod tests {
                 context: ReviewContext {
                     title: Some("Add parser".to_string()),
                     body_summary: Some("Short PR body".to_string()),
-                    comments_summary: Some(format_comments(&comments)),
+                    comments_summary: Some(format_comment_threads(&comments)),
                 },
                 usage: RawUsage::default(),
             }
@@ -608,10 +557,13 @@ mod tests {
             ReviewContextInput {
                 title: Some("Add parser".to_string()),
                 body: Some("x".repeat(BODY_COMPRESSION_THRESHOLD_CHARS + 1)),
-                comments: vec![ReviewComment {
-                    body: "y".repeat(COMMENTS_COMPRESSION_THRESHOLD_CHARS + 1),
+                comments: vec![ReviewCommentThread {
                     commit: None,
                     location: None,
+                    comments: vec![ReviewThreadComment {
+                        author: "alice".to_string(),
+                        body: "y".repeat(COMMENTS_COMPRESSION_THRESHOLD_CHARS + 1),
+                    }],
                 }],
             },
             &cache,

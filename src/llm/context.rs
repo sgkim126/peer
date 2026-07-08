@@ -9,7 +9,7 @@ use crate::git::CommitHash;
 pub struct ReviewContextInput {
     pub title: Option<String>,
     pub body: Option<String>,
-    pub comments: Vec<ReviewComment>,
+    pub comments: Vec<ReviewCommentThread>,
 }
 
 impl ReviewContextInput {
@@ -127,13 +127,6 @@ impl ReviewContext {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
-pub struct ReviewComment {
-    pub body: String,
-    pub commit: Option<CommitHash>,
-    pub location: Option<ReviewCommentLocation>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct ReviewCommentThread {
     pub commit: Option<CommitHash>,
     pub location: Option<ReviewCommentLocation>,
@@ -157,93 +150,24 @@ mod tests {
     use super::*;
     use std::fs;
 
-    fn comments(input: &str) -> Vec<ReviewComment> {
-        serde_json::from_str(input).unwrap()
-    }
-
     fn comment_threads(input: &str) -> Vec<ReviewCommentThread> {
         serde_json::from_str(input).unwrap()
     }
 
     #[test]
-    fn parses_comments_with_commit_and_location() {
-        let comments = comments(
+    fn rejects_comment_thread_partial_location_without_line() {
+        let error = serde_json::from_str::<Vec<ReviewCommentThread>>(
             r#"[
                 {
-                    "body": "Please handle this error case.",
-                    "commit": "abc1234",
-                    "location": {
-                        "path": "src/lib.rs",
-                        "line": 42
-                    }
-                }
-            ]"#,
-        );
-
-        assert_eq!(
-            comments,
-            vec![ReviewComment {
-                body: "Please handle this error case.".to_string(),
-                commit: Some(CommitHash::new("abc1234").unwrap()),
-                location: Some(ReviewCommentLocation {
-                    path: "src/lib.rs".to_string(),
-                    line: 42,
-                }),
-            }]
-        );
-    }
-
-    #[test]
-    fn parses_comments_without_optional_metadata() {
-        let comments = comments(
-            r#"[
-                {
-                    "body": "This part is hard to follow."
-                }
-            ]"#,
-        );
-
-        assert_eq!(
-            comments,
-            vec![ReviewComment {
-                body: "This part is hard to follow.".to_string(),
-                commit: None,
-                location: None,
-            }]
-        );
-    }
-
-    #[test]
-    fn rejects_comment_without_body() {
-        let error = serde_json::from_str::<Vec<ReviewComment>>(r#"[{}]"#).unwrap_err();
-
-        assert!(error.to_string().contains("missing field `body`"));
-    }
-
-    #[test]
-    fn rejects_invalid_comment_commit() {
-        let error = serde_json::from_str::<Vec<ReviewComment>>(
-            r#"[
-                {
-                    "body": "comment",
-                    "commit": ""
-                }
-            ]"#,
-        )
-        .unwrap_err();
-
-        assert!(error.to_string().contains("invalid commit hash"));
-    }
-
-    #[test]
-    fn rejects_partial_location_without_line() {
-        let error = serde_json::from_str::<Vec<ReviewComment>>(
-            r#"[
-                {
-                    "body": "comment",
                     "location": {
                         "path": "src/lib.rs"
-                    }
+                    },
+                    "comments": [
+                        {
+                            "author": "alice",
+                            "body": "comment"
+                        }
+                    ]
                 }
             ]"#,
         )
@@ -253,14 +177,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_partial_location_without_path() {
-        let error = serde_json::from_str::<Vec<ReviewComment>>(
+    fn rejects_comment_thread_partial_location_without_path() {
+        let error = serde_json::from_str::<Vec<ReviewCommentThread>>(
             r#"[
                 {
-                    "body": "comment",
                     "location": {
                         "line": 42
-                    }
+                    },
+                    "comments": [
+                        {
+                            "author": "alice",
+                            "body": "comment"
+                        }
+                    ]
                 }
             ]"#,
         )
@@ -409,8 +338,13 @@ mod tests {
             &comments_path,
             r#"[
                 {
-                    "body": "Please handle this error case.",
-                    "commit": "abc1234"
+                    "commit": "abc1234",
+                    "comments": [
+                        {
+                            "author": "alice",
+                            "body": "Please handle this error case."
+                        }
+                    ]
                 }
             ]"#,
         )
@@ -426,7 +360,12 @@ mod tests {
         assert_eq!(input.title.as_deref(), Some("Add review context"));
         assert_eq!(input.body.as_deref(), Some("This PR adds review context."));
         assert_eq!(input.comments.len(), 1);
-        assert_eq!(input.comments[0].body, "Please handle this error case.");
+        assert_eq!(input.comments[0].comments.len(), 1);
+        assert_eq!(input.comments[0].comments[0].author, "alice");
+        assert_eq!(
+            input.comments[0].comments[0].body,
+            "Please handle this error case."
+        );
     }
 
     #[test]
