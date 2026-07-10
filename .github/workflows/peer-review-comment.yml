@@ -20,6 +20,11 @@ on:
         required: false
         default: false
         type: boolean
+      verbose:
+        description: Enable peer verbose logging.
+        required: false
+        default: false
+        type: boolean
     secrets:
       MISTRAL_API_KEY:
         required: false
@@ -78,12 +83,18 @@ jobs:
             let provider = ${{ toJSON(inputs.provider) }};
             let model = ${{ toJSON(inputs.model) }};
             let debug = ${{ toJSON(inputs.debug) }};
+            let verbose = ${{ toJSON(inputs.verbose) }};
 
             for (let i = 0; i < tokens.length; i += 1) {
               const token = tokens[i];
 
               if (token === '--debug') {
                 debug = true;
+                continue;
+              }
+
+              if (token === '--verbose') {
+                verbose = true;
                 continue;
               }
 
@@ -142,6 +153,7 @@ jobs:
             core.setOutput('provider', provider);
             core.setOutput('model', model);
             core.setOutput('debug', String(debug));
+            core.setOutput('verbose', String(verbose));
 
       - name: Mark peer review started
         if: steps.trigger.outputs.should-run == 'true'
@@ -271,6 +283,7 @@ jobs:
           body-file: ${{ steps.context.outputs.body-file }}
           comments-file: ${{ steps.context.outputs.comments-file }}
           debug: ${{ steps.trigger.outputs.debug }}
+          verbose: ${{ steps.trigger.outputs.verbose }}
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

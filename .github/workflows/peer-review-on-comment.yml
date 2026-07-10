@@ -23,4 +23,5 @@ jobs:
       provider: mistral
       model: mistral-large-latest
       debug: true
+      verbose: true
     secrets: inherit
