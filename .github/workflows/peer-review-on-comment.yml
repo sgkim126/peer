@@ -19,7 +19,7 @@ jobs:
       pull-requests: write
     uses: ./.github/workflows/peer-review-comment.yml
     with:
-      version: "0.1.2"
+      version: "0.1.3"
       provider: mistral
       model: mistral-large-latest
       debug: true
