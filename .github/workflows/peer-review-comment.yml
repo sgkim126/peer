@@ -238,6 +238,7 @@ jobs:
           provider: ${{ steps.trigger.outputs.provider }}
           model: ${{ steps.trigger.outputs.model }}
           target: ${{ steps.trigger.outputs.base-sha }}..HEAD
+          repo: ${{ github.repository }}
           title: ${{ steps.trigger.outputs.title }}
           body-file: ${{ steps.context.outputs.body-file }}
           comments-file: ${{ steps.context.outputs.comments-file }}

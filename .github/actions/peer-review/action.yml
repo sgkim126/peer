@@ -14,6 +14,9 @@ inputs:
   target:
     description: Git revision or range to review.
     required: true
+  repo:
+    description: GitHub repository name in owner/name form for GitHub output links.
+    required: true
   title:
     description: Pull request title to pass to peer review.
     required: false
@@ -107,6 +110,7 @@ runs:
         PEER_REVIEW_PROVIDER: ${{ inputs.provider }}
         PEER_REVIEW_MODEL: ${{ inputs.model }}
         PEER_REVIEW_TARGET: ${{ inputs.target }}
+        PEER_REVIEW_REPO: ${{ inputs.repo }}
         PEER_REVIEW_TITLE: ${{ inputs.title }}
         PEER_REVIEW_BODY_FILE: ${{ inputs.body-file }}
         PEER_REVIEW_COMMENTS_FILE: ${{ inputs.comments-file }}
@@ -135,7 +139,8 @@ runs:
           review "$PEER_REVIEW_TARGET"
           --provider "$PEER_REVIEW_PROVIDER"
           --model "$PEER_REVIEW_MODEL"
-          --format markdown
+          --format github
+          --repo "$PEER_REVIEW_REPO"
         )
 
         if [ -n "$PEER_REVIEW_TITLE" ]; then
