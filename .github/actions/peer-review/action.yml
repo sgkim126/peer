@@ -7,10 +7,10 @@ inputs:
     required: true
   provider:
     description: LLM provider name. Supported values match resources/default_config.toml.
-    required: true
+    required: false
   model:
     description: LLM model name to pass to peer review.
-    required: true
+    required: false
   target:
     description: Git revision or range to review.
     required: true
@@ -135,32 +135,38 @@ runs:
       run: |
         set -euo pipefail
 
-        case "$PEER_REVIEW_PROVIDER" in
-          mistral) api_key_env="MISTRAL_API_KEY" ;;
-          openai) api_key_env="OPENAI_API_KEY" ;;
-          anthropic) api_key_env="ANTHROPIC_API_KEY" ;;
-          gemini) api_key_env="GEMINI_API_KEY" ;;
-          *)
-            echo "Unsupported provider: $PEER_REVIEW_PROVIDER" >&2
-            exit 2
-            ;;
-        esac
+        if [ -n "$PEER_REVIEW_PROVIDER" ]; then
+          case "$PEER_REVIEW_PROVIDER" in
+            mistral) api_key_env="MISTRAL_API_KEY" ;;
+            openai) api_key_env="OPENAI_API_KEY" ;;
+            anthropic) api_key_env="ANTHROPIC_API_KEY" ;;
+            gemini) api_key_env="GEMINI_API_KEY" ;;
+            *)
+              echo "Unsupported provider: $PEER_REVIEW_PROVIDER" >&2
+              exit 2
+              ;;
+          esac
 
-        if [ -z "${!api_key_env:-}" ]; then
-          echo "Required environment variable is missing or empty: $api_key_env" >&2
-          exit 2
+          if [ -z "${!api_key_env:-}" ]; then
+            echo "Required environment variable is missing or empty: $api_key_env" >&2
+            exit 2
+          fi
         fi
 
         stdout="$RUNNER_TEMP/peer-review-stdout.md"
         stderr="$RUNNER_TEMP/peer-review-stderr.log"
         args=(
           review "$PEER_REVIEW_TARGET"
-          --provider "$PEER_REVIEW_PROVIDER"
-          --model "$PEER_REVIEW_MODEL"
           --format github
           --repo "$PEER_REVIEW_REPO"
         )
 
+        if [ -n "$PEER_REVIEW_PROVIDER" ]; then
+          args+=(--provider "$PEER_REVIEW_PROVIDER")
+        fi
+        if [ -n "$PEER_REVIEW_MODEL" ]; then
+          args+=(--model "$PEER_REVIEW_MODEL")
+        fi
         if [ "$PEER_REVIEW_DEBUG" = "true" ]; then
           args=(--debug "${args[@]}")
         fi
