@@ -33,12 +33,18 @@ pub enum ErrorCode {
 
 impl From<CheckCommandError> for CheckCommandErrorOutput {
     fn from(error: CheckCommandError) -> Self {
+        Self::from_ref(&error)
+    }
+}
+
+impl CheckCommandErrorOutput {
+    pub fn from_ref(error: &CheckCommandError) -> Self {
         let message = error.to_string();
         let (code, is_retryable) = match error {
-            CheckCommandError::Config(error) => peer_error_classification(&error),
+            CheckCommandError::Config(error) => peer_error_classification(error),
             CheckCommandError::InvalidConfidence(_) => (ErrorCode::ConfigInvalid, false),
-            CheckCommandError::Provider(error) => provider_error_classification(&error),
-            CheckCommandError::Run(error) => check_run_error_classification(&error),
+            CheckCommandError::Provider(error) => provider_error_classification(error),
+            CheckCommandError::Run(error) => check_run_error_classification(error),
         };
 
         Self {

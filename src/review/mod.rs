@@ -6,12 +6,12 @@ use crate::cli::CheckCommand;
 use crate::config::Config;
 use crate::console::Console;
 use crate::git::{CommitHash, GitError, run_git};
-use crate::llm::checks::{self, CheckCommandError};
+use crate::llm::checks::{self, CheckCommandError, CheckCommandErrorOutput};
 use crate::llm::context::ReviewContext;
 use crate::llm::result::CheckOutcome;
 use clap::ValueEnum;
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {
@@ -36,11 +36,11 @@ pub enum ReviewCheckKind {
     Coherence,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Serialize)]
 pub struct ReviewResult {
     pub outcomes: Vec<CheckOutcome>,
 
-    #[serde(skip, default)]
+    #[serde(default)]
     pub errors: Vec<ReviewCheckError>,
 }
 
@@ -115,6 +115,20 @@ impl fmt::Display for ReviewCheckError {
 impl std::error::Error for ReviewCheckError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.error)
+    }
+}
+
+impl Serialize for ReviewCheckError {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+
+        let mut state = serializer.serialize_struct("ReviewCheckError", 2)?;
+        state.serialize_field("check", &self.check.to_string())?;
+        state.serialize_field("error", &CheckCommandErrorOutput::from_ref(&self.error))?;
+        state.end()
     }
 }
 
@@ -830,5 +844,6 @@ mod tests {
 
         assert_eq!(value["outcomes"][0]["status"], "success");
         assert_eq!(value["outcomes"][0]["check"]["check"], "size");
+        assert!(value["errors"].as_array().unwrap().is_empty());
     }
 }

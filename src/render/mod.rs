@@ -8,7 +8,7 @@ use crate::llm::checks::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode}
 use crate::llm::result::{
     CheckOutcome, CheckResult, CheckTarget, CheckUserInfoRequest, Finding, Severity,
 };
-use crate::review::ReviewResult;
+use crate::review::{ReviewCheck, ReviewCheckError, ReviewResult};
 use owo_colors::Style;
 
 #[derive(Clone, Debug)]
@@ -181,12 +181,21 @@ fn render_review_result_impl(
 ) -> Result<String, RenderError> {
     match options {
         RenderOptions::Json => render_review_json(result, console),
-        RenderOptions::Terminal | RenderOptions::Markdown | RenderOptions::Github { .. } => result
-            .outcomes
-            .iter()
-            .map(|outcome| render_check_outcome_impl(outcome, options, console, use_color))
-            .collect::<Result<Vec<_>, _>>()
-            .map(|rendered| rendered.join("\n\n")),
+        RenderOptions::Terminal | RenderOptions::Markdown | RenderOptions::Github { .. } => {
+            let outcomes = result
+                .outcomes
+                .iter()
+                .map(|outcome| render_check_outcome_impl(outcome, options, console, use_color));
+            let errors = result
+                .errors
+                .iter()
+                .map(|error| Ok(render_review_check_error(error, options, use_color)));
+
+            outcomes
+                .chain(errors)
+                .collect::<Result<Vec<_>, _>>()
+                .map(|rendered| rendered.join("\n\n"))
+        }
     }
 }
 
@@ -577,6 +586,62 @@ fn render_markdown_error(error: &CheckCommandErrorOutput) -> String {
     )
 }
 
+fn render_review_check_error(
+    review_error: &ReviewCheckError,
+    options: &RenderOptions,
+    use_color: bool,
+) -> String {
+    let (check, target) = review_check_name_and_target(&review_error.check);
+    let error = CheckCommandErrorOutput::from_ref(&review_error.error);
+
+    match options {
+        RenderOptions::Terminal => format!(
+            "{} {}\n{} {}\n{} {}\n\n{} {} — {}",
+            terminal_label("Check:", use_color),
+            styled(check, Style::new().bold(), use_color),
+            terminal_label("Target:", use_color),
+            target,
+            terminal_label("Status:", use_color),
+            styled("failed", Style::new().red().bold(), use_color),
+            terminal_label("Error:", use_color),
+            styled(
+                error_code_name(error.code),
+                Style::new().red().bold(),
+                use_color
+            ),
+            error.message
+        ),
+        RenderOptions::Markdown => render_markdown_review_check_error(check, target, &error),
+        RenderOptions::Github { .. } => format!(
+            "<details>\n<summary>Check: {check} - Status: failed - Target: {target}</summary>\n\n{}\n</details>",
+            render_markdown_review_check_error(check, target, &error)
+        ),
+        RenderOptions::Json => unreachable!("review json is rendered separately"),
+    }
+}
+
+fn render_markdown_review_check_error(
+    check: &str,
+    target: &str,
+    error: &CheckCommandErrorOutput,
+) -> String {
+    format!(
+        "## Check: {check}\n\n- **Target:** `{target}`\n- **Status:** failed\n\n> [!CAUTION]\n> `{}`: {}",
+        error_code_name(error.code),
+        error.message
+    )
+}
+
+fn review_check_name_and_target(check: &ReviewCheck) -> (&str, &str) {
+    match check {
+        ReviewCheck::Size { revision } => ("size", revision),
+        ReviewCheck::Intent { revision } => ("intent", revision),
+        ReviewCheck::Quality { revision } => ("quality", revision),
+        ReviewCheck::Security { revision } => ("security", revision),
+        ReviewCheck::Coherence { range } => ("coherence", range),
+    }
+}
+
 fn display_markdown_finding(finding: &Finding) -> String {
     let mut context = format!("`{}`", finding.commit);
     if let Some(location) = &finding.location {
@@ -769,6 +834,8 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::*;
+    use crate::error::PeerError;
+    use crate::llm::checks::CheckCommandError;
 
     fn success_envelope() -> Value {
         json!({
@@ -872,6 +939,21 @@ mod tests {
         let mut result = success_review_result();
         result.outcomes.push(needs_user_info_outcome());
         result
+    }
+
+    fn review_result_with_failed_check() -> ReviewResult {
+        ReviewResult {
+            outcomes: vec![],
+            errors: vec![ReviewCheckError {
+                check: ReviewCheck::Security {
+                    revision: "abc1234".to_string(),
+                },
+                error: CheckCommandError::Config(PeerError::InvalidConfig {
+                    message: "missing API key".to_string(),
+                    source: None,
+                }),
+            }],
+        }
     }
 
     fn console() -> Console {
@@ -1079,6 +1161,29 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         assert_eq!(value["outcomes"][2]["status"], "needs_user_info");
         assert_eq!(value["outcomes"][2]["request"]["check"], "security");
         assert!(value["outcomes"][2]["request"].get("usage").is_none());
+    }
+
+    #[test]
+    fn renders_failed_review_check_in_all_formats() {
+        let result = review_result_with_failed_check();
+
+        let terminal =
+            render_review_result_impl(&result, &RenderOptions::Terminal, console(), false).unwrap();
+        assert!(terminal.contains("Check: security"));
+        assert!(terminal.contains("Target: abc1234"));
+        assert!(terminal.contains("Status: failed"));
+        assert!(terminal.contains("Error: config_invalid — missing API key"));
+
+        let markdown = render_review_result(&result, RenderOptions::Markdown, console()).unwrap();
+        assert!(markdown.contains("## Check: security"));
+        assert!(markdown.contains("- **Status:** failed"));
+        assert!(markdown.contains("`config_invalid`: missing API key"));
+
+        let json = render_review_result(&result, RenderOptions::Json, console()).unwrap();
+        let value: Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value["errors"][0]["check"], "security abc1234");
+        assert_eq!(value["errors"][0]["error"]["code"], "config_invalid");
+        assert_eq!(value["errors"][0]["error"]["message"], "missing API key");
     }
 
     #[test]
