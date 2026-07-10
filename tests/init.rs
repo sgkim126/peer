@@ -88,10 +88,7 @@ fn default_config_contains_provider_examples_and_pricing() {
     assert!(content.contains("openai"), "provider name missing");
     assert!(content.contains("anthropic"), "provider name missing");
     assert!(content.contains("gemini"), "provider name missing");
-    assert!(
-        content.contains("mistral-large-latest"),
-        "model name missing"
-    );
+    assert!(content.contains("mistral-large-2512"), "model name missing");
     assert!(
         content.contains("input_per_1m_usd"),
         "input pricing missing"

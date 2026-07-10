@@ -182,13 +182,13 @@ mod tests {
     fn resolve_provider_returns_provider_and_model() {
         let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         let (provider, model) = config
-            .resolve_provider("mistral", "mistral-large-latest")
+            .resolve_provider("mistral", "mistral-large-2512")
             .unwrap();
         assert_eq!(provider.name, "mistral");
         assert_eq!(provider.api_key_env, "MISTRAL_API_KEY");
-        assert_eq!(model.name, "mistral-large-latest");
-        assert_eq!(model.input_per_1m_usd, 2.0);
-        assert_eq!(model.output_per_1m_usd, 6.0);
+        assert_eq!(model.name, "mistral-large-2512");
+        assert_eq!(model.input_per_1m_usd, 0.5);
+        assert_eq!(model.output_per_1m_usd, 1.5);
     }
 
     #[test]
@@ -220,7 +220,7 @@ mod tests {
                 review: ReviewConfig { max_commits: 10 },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
-                    default_model: "mistral-large-latest".into(),
+                    default_model: "mistral-large-2512".into(),
                     confidence_threshold: 0.8,
                     max_iterations: 5,
                 },
@@ -229,41 +229,79 @@ mod tests {
                         name: "mistral".into(),
                         api_key_env: "MISTRAL_API_KEY".into(),
                         base_url: None,
-                        models: vec![ModelConfig {
-                            name: "mistral-large-latest".into(),
-                            input_per_1m_usd: 2.0,
-                            output_per_1m_usd: 6.0,
-                        }],
+                        models: vec![
+                            ModelConfig {
+                                name: "mistral-large-2512".into(),
+                                input_per_1m_usd: 0.5,
+                                output_per_1m_usd: 1.5,
+                            },
+                            ModelConfig {
+                                name: "mistral-medium-3-5".into(),
+                                input_per_1m_usd: 1.5,
+                                output_per_1m_usd: 7.5,
+                            },
+                            ModelConfig {
+                                name: "mistral-small-2603".into(),
+                                input_per_1m_usd: 0.15,
+                                output_per_1m_usd: 0.6,
+                            },
+                        ],
                     },
                     ProviderConfig {
                         name: "openai".into(),
                         api_key_env: "OPENAI_API_KEY".into(),
                         base_url: None,
-                        models: vec![ModelConfig {
-                            name: "gpt-5.4-mini".into(),
-                            input_per_1m_usd: 0.75,
-                            output_per_1m_usd: 4.5,
-                        }],
+                        models: vec![
+                            ModelConfig {
+                                name: "gpt-5.5".into(),
+                                input_per_1m_usd: 5.0,
+                                output_per_1m_usd: 30.0,
+                            },
+                            ModelConfig {
+                                name: "gpt-5.4".into(),
+                                input_per_1m_usd: 2.5,
+                                output_per_1m_usd: 15.0,
+                            },
+                            ModelConfig {
+                                name: "gpt-5.4-mini".into(),
+                                input_per_1m_usd: 0.75,
+                                output_per_1m_usd: 4.5,
+                            },
+                        ],
                     },
                     ProviderConfig {
                         name: "anthropic".into(),
                         api_key_env: "ANTHROPIC_API_KEY".into(),
                         base_url: None,
-                        models: vec![ModelConfig {
-                            name: "claude-sonnet-5".into(),
-                            input_per_1m_usd: 2.0,
-                            output_per_1m_usd: 10.0,
-                        }],
+                        models: vec![
+                            ModelConfig {
+                                name: "claude-sonnet-5".into(),
+                                input_per_1m_usd: 2.0,
+                                output_per_1m_usd: 10.0,
+                            },
+                            ModelConfig {
+                                name: "claude-opus-4-8".into(),
+                                input_per_1m_usd: 5.0,
+                                output_per_1m_usd: 25.0,
+                            },
+                        ],
                     },
                     ProviderConfig {
                         name: "gemini".into(),
                         api_key_env: "GEMINI_API_KEY".into(),
                         base_url: None,
-                        models: vec![ModelConfig {
-                            name: "gemini-3.5-flash".into(),
-                            input_per_1m_usd: 1.5,
-                            output_per_1m_usd: 9.0,
-                        }],
+                        models: vec![
+                            ModelConfig {
+                                name: "gemini-3.5-flash".into(),
+                                input_per_1m_usd: 1.5,
+                                output_per_1m_usd: 9.0,
+                            },
+                            ModelConfig {
+                                name: "gemini-3.1-pro-preview".into(),
+                                input_per_1m_usd: 2.0,
+                                output_per_1m_usd: 12.0,
+                            },
+                        ],
                     }
                 ],
             }
