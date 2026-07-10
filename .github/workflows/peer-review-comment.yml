@@ -149,6 +149,7 @@ jobs:
             core.setOutput('should-run', 'true');
             core.setOutput('pr-number', String(issue.number));
             core.setOutput('base-sha', pull.base.sha);
+            core.setOutput('head-sha', pull.head.sha);
             core.setOutput('title', pull.title ?? '');
             core.setOutput('provider', provider);
             core.setOutput('model', model);
@@ -285,7 +286,7 @@ jobs:
           version: ${{ inputs.version }}
           provider: ${{ steps.trigger.outputs.provider }}
           model: ${{ steps.trigger.outputs.model }}
-          target: ${{ steps.trigger.outputs.base-sha }}..HEAD
+          target: ${{ steps.trigger.outputs.base-sha }}..${{ steps.trigger.outputs.head-sha }}
           repo: ${{ github.repository }}
           title: ${{ steps.trigger.outputs.title }}
           body-file: ${{ steps.context.outputs.body-file }}
