@@ -155,21 +155,29 @@ jobs:
             core.setOutput('debug', String(debug));
             core.setOutput('verbose', String(verbose));
 
-      - name: Mark peer review started
+      - name: Create peer review placeholder
         if: steps.trigger.outputs.should-run == 'true'
-        id: reaction
+        id: placeholder
         uses: actions/github-script@v9
         with:
           script: |
             const { owner, repo } = context.repo;
-            const { data: reaction } = await github.rest.reactions.createForIssueComment({
+            const triggerComment = context.payload.comment;
+            const metadata = [
+              `provider: ${{ steps.trigger.outputs.provider }}`,
+              `model: ${{ steps.trigger.outputs.model }}`,
+              `Triggered by [comment](${triggerComment.html_url})`,
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join('\n');
+
+            const { data: comment } = await github.rest.issues.createComment({
               owner,
               repo,
-              comment_id: context.payload.comment.id,
-              content: 'eyes',
+              issue_number: context.payload.issue.number,
+              body: `${metadata}\n\n⏳ peer review in progress.`,
             });
 
-            core.setOutput('reaction-id', String(reaction.id));
+            core.setOutput('comment-id', String(comment.id));
 
       - name: Checkout pull request
         if: steps.trigger.outputs.should-run == 'true'
@@ -290,59 +298,41 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-      - name: Comment review result
-        if: always() && steps.trigger.outputs.should-run == 'true' && steps.peer.outputs.stdout-path != ''
+      - name: Update peer review placeholder
+        if: always() && steps.trigger.outputs.should-run == 'true' && steps.placeholder.outputs.comment-id != ''
         uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
-            const bodyPath = '${{ steps.peer.outputs.stdout-path }}';
-            const output = fs.readFileSync(bodyPath, 'utf8').trim();
+            const stdoutPath = '${{ steps.peer.outputs.stdout-path }}';
+            const exitCode = '${{ steps.peer.outputs.exit-code }}';
+            let output = '';
+            if (stdoutPath) {
+              try {
+                output = fs.readFileSync(stdoutPath, 'utf8').trim();
+              } catch (error) {
+                core.warning(`Could not read peer review output: ${error.message}`);
+              }
+            }
+
             const triggerComment = context.payload.comment;
             const metadata = [
               `provider: ${{ steps.trigger.outputs.provider }}`,
               `model: ${{ steps.trigger.outputs.model }}`,
-              `exit: ${{ steps.peer.outputs.exit-code }}`,
               `Triggered by [comment](${triggerComment.html_url})`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
 
+            const status = exitCode === '0'
+              ? '✅ peer review completed.'
+              : `❌ peer review failed (exit code: ${exitCode || 'unknown'}).`;
             const body = output
-              ? `${metadata}\n\n${output}`
-              : `${metadata}\n\npeer review completed without output.`;
+              ? `${metadata}\n\n${status}\n\n${output}`
+              : `${metadata}\n\n${status}`;
 
-            await github.rest.issues.createComment({
+            await github.rest.issues.updateComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: Number('${{ steps.trigger.outputs.pr-number }}'),
+              comment_id: Number('${{ steps.placeholder.outputs.comment-id }}'),
               body,
-            });
-
-      - name: Update peer review reaction
-        if: always() && steps.trigger.outputs.should-run == 'true'
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const { owner, repo } = context.repo;
-            const commentId = context.payload.comment.id;
-            const reactionId = '${{ steps.reaction.outputs.reaction-id }}';
-
-            if (reactionId) {
-              try {
-                await github.rest.reactions.deleteForIssueComment({
-                  owner,
-                  repo,
-                  comment_id: commentId,
-                  reaction_id: Number(reactionId),
-                });
-              } catch (error) {
-                core.warning(`Failed to delete eyes reaction: ${error.message}`);
-              }
-            }
-
-            await github.rest.reactions.createForIssueComment({
-              owner,
-              repo,
-              comment_id: commentId,
-              content: '${{ steps.peer.outputs.exit-code }}' === '0' ? 'rocket' : 'confused',
             });
