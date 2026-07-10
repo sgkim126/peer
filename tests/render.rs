@@ -161,7 +161,7 @@ fn renders_github_output_from_stdin() {
     assert!(output.stderr.is_empty());
 
     let output = String::from_utf8(output.stdout).unwrap();
-    assert!(output.starts_with("<details>\n<summary>Check: size - Status: ok</summary>"));
+    assert!(output.starts_with("<details>\n<summary>Check: size - Status: ok - Target: abc1234</summary>"));
     assert!(
         output
             .contains("- **Target:** [`abc1234`](https://github.com/sgkim126/peer/commit/abc1234)")

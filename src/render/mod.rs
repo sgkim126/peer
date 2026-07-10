@@ -564,8 +564,10 @@ fn render_github_result_body(result: &CheckResult, repo: &str) -> String {
 
 fn render_folded_github_result(result: &CheckResult, rendered: &str) -> String {
     format!(
-        "<details>\n<summary>Check: {} - Status: ok</summary>\n\n{}\n</details>",
-        result.check, rendered
+        "<details>\n<summary>Check: {} - Status: ok - Target: {}</summary>\n\n{}\n</details>",
+        result.check,
+        display_target(&result.target),
+        rendered
     )
 }
 
@@ -1146,7 +1148,9 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         )
         .unwrap();
 
-        assert!(rendered.contains("<details>\n<summary>Check: size - Status: ok</summary>"));
+        assert!(rendered.contains(
+            "<details>\n<summary>Check: size - Status: ok - Target: abc1234</summary>"
+        ));
         assert!(rendered.contains("</details>\n\n## Check: intent"));
         assert!(rendered.contains("- **Status:** issue"));
     }
@@ -1164,7 +1168,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         )
         .unwrap();
 
-        assert!(!rendered.contains("<summary>Check: intent - Status: ok</summary>"));
+        assert!(!rendered.contains("<summary>Check: intent - Status: ok - Target: abc1234</summary>"));
         assert!(rendered.contains("\n\n## Check: security"));
         assert!(rendered.contains("- **Status:** needs_user_info"));
     }
@@ -1357,7 +1361,9 @@ A critical issue was found.
         )
         .unwrap();
 
-        assert!(rendered.starts_with("<details>\n<summary>Check: size - Status: ok</summary>"));
+        assert!(rendered.starts_with(
+            "<details>\n<summary>Check: size - Status: ok - Target: abc1234</summary>"
+        ));
         assert!(rendered.contains("- **Status:** ok"));
         assert!(rendered.ends_with("</details>"));
     }
