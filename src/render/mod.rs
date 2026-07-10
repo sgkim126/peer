@@ -125,7 +125,7 @@ fn render_check_output_impl(
         RenderOptions::Json => render_json(output),
         RenderOptions::Terminal => Ok(render_terminal(output, use_color)),
         RenderOptions::Markdown => Ok(render_markdown(output)),
-        RenderOptions::Github { .. } => unimplemented!(),
+        RenderOptions::Github { repo } => Ok(render_github(output, repo)),
     }
 }
 
@@ -166,9 +166,9 @@ fn render_check_result_impl(
             log_result_usage(result, console);
             Ok(render_markdown_result(result))
         }
-        RenderOptions::Github { .. } => {
+        RenderOptions::Github { repo } => {
             log_result_usage(result, console);
-            unimplemented!()
+            Ok(render_github_result(result, repo))
         }
     }
 }
@@ -204,7 +204,7 @@ fn render_check_outcome_impl(
             RenderOptions::Json => unreachable!("review json renders the full review result"),
             RenderOptions::Terminal => render_terminal_user_info_request(request, use_color),
             RenderOptions::Markdown => render_markdown_user_info_request(request),
-            RenderOptions::Github { .. } => unimplemented!(),
+            RenderOptions::Github { .. } => render_markdown_user_info_request(request),
         }),
     }
 }
@@ -424,6 +424,14 @@ fn render_markdown(output: &CheckCommandOutput) -> String {
     }
 }
 
+fn render_github(output: &CheckCommandOutput, repo: &str) -> String {
+    match output.as_outcome() {
+        Ok(CheckOutcome::Success { check }) => render_github_result(check, repo),
+        Ok(CheckOutcome::NeedsUserInfo { request }) => render_markdown_user_info_request(request),
+        Err(error) => render_markdown_error(error),
+    }
+}
+
 enum CommandRenderFormat {
     Terminal { use_color: bool },
     Markdown,
@@ -492,6 +500,59 @@ fn render_markdown_result(result: &CheckResult) -> String {
     output.trim_end().to_string()
 }
 
+fn render_github_result(result: &CheckResult, repo: &str) -> String {
+    let mut output = String::new();
+    writeln!(output, "## Check: {}", result.check).unwrap();
+    writeln!(output).unwrap();
+    writeln!(
+        output,
+        "- **Target:** {}",
+        display_github_target(&result.target, repo)
+    )
+    .unwrap();
+    writeln!(output, "- **Status:** {}", check_status(&result.findings)).unwrap();
+    writeln!(output).unwrap();
+    writeln!(output, "{}", result.summary).unwrap();
+    writeln!(output).unwrap();
+    writeln!(output, "### Findings").unwrap();
+    writeln!(output).unwrap();
+
+    if result.findings.is_empty() {
+        writeln!(output, "None.").unwrap();
+    } else {
+        for finding in &result.findings {
+            writeln!(output, "- {}", display_github_finding(finding, repo)).unwrap();
+        }
+    }
+
+    if result.is_exhausted {
+        writeln!(output).unwrap();
+        writeln!(output, "> [!WARNING]").unwrap();
+        writeln!(
+            output,
+            "> Agent loop exhausted: `{}`",
+            result
+                .exhaustion_reason
+                .as_deref()
+                .unwrap_or("unknown reason")
+        )
+        .unwrap();
+    }
+
+    writeln!(output).unwrap();
+    writeln!(output, "### Metadata").unwrap();
+    writeln!(output).unwrap();
+    writeln!(
+        output,
+        "- **Confidence:** {:.0}%",
+        result.confidence.as_f64() * 100.0
+    )
+    .unwrap();
+    writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
+
+    output.trim_end().to_string()
+}
+
 fn render_markdown_error(error: &CheckCommandErrorOutput) -> String {
     format!(
         "> [!CAUTION]\n> `{}`: {}",
@@ -509,6 +570,36 @@ fn display_markdown_finding(finding: &Finding) -> String {
             location.file.clone()
         };
         write!(context, " · `{location}`").unwrap();
+    }
+
+    format!(
+        "**{}** — {} ({context})",
+        severity_name(finding.severity),
+        finding.message
+    )
+}
+
+fn display_github_target(target: &CheckTarget, repo: &str) -> String {
+    match target {
+        CheckTarget::Commit(commit) => {
+            let commit = commit.as_ref();
+            format!("[`{commit}`]({})", github_commit_url(repo, commit))
+        }
+        CheckTarget::Range(range) => format!("`{range}`"),
+    }
+}
+
+fn display_github_finding(finding: &Finding, repo: &str) -> String {
+    let commit = finding.commit.as_ref();
+    let mut context = format!("[`{commit}`]({})", github_commit_url(repo, commit));
+    if let Some(location) = &finding.location {
+        let label = if let Some(line) = location.line {
+            format!("{}:{line}", location.file)
+        } else {
+            location.file.clone()
+        };
+        let url = github_file_url(repo, commit, &location.file, location.line);
+        write!(context, " · [`{label}`]({url})").unwrap();
     }
 
     format!(
@@ -1130,6 +1221,77 @@ A critical issue was found.
 - **Confidence:** 85%
 - **Iterations:** 2"
         );
+    }
+
+    #[test]
+    fn renders_successful_check_for_github_with_links() {
+        let rendered = render(
+            &success_envelope_with_finding().to_string(),
+            RenderOptions::Github {
+                repo: "sgkim126/peer".to_string(),
+            },
+            console(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            rendered,
+            "\
+## Check: size
+
+- **Target:** [`abc1234`](https://github.com/sgkim126/peer/commit/abc1234)
+- **Status:** issue
+
+A critical issue was found.
+
+### Findings
+
+- **critical** — User input reaches a shell command. ([`abc1234`](https://github.com/sgkim126/peer/commit/abc1234) · [`src/main.rs:42`](https://github.com/sgkim126/peer/blob/abc1234/src/main.rs#L42))
+
+### Metadata
+
+- **Confidence:** 85%
+- **Iterations:** 2"
+        );
+    }
+
+    #[test]
+    fn renders_github_finding_file_link_without_line() {
+        let mut envelope = success_envelope_with_finding();
+        envelope["data"]["check"]["findings"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("line");
+
+        let rendered = render(
+            &envelope.to_string(),
+            RenderOptions::Github {
+                repo: "sgkim126/peer".to_string(),
+            },
+            console(),
+        )
+        .unwrap();
+
+        assert!(rendered.contains(
+            "[`src/main.rs`](https://github.com/sgkim126/peer/blob/abc1234/src/main.rs)"
+        ));
+    }
+
+    #[test]
+    fn renders_github_range_target_without_link() {
+        let mut envelope = success_envelope();
+        envelope["data"]["check"]["target"] = json!("HEAD~2..HEAD");
+
+        let rendered = render(
+            &envelope.to_string(),
+            RenderOptions::Github {
+                repo: "sgkim126/peer".to_string(),
+            },
+            console(),
+        )
+        .unwrap();
+
+        assert!(rendered.contains("- **Target:** `HEAD~2..HEAD`"));
     }
 
     #[test]
