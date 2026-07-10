@@ -288,6 +288,7 @@ jobs:
             const metadata = [
               `provider: ${{ steps.trigger.outputs.provider }}`,
               `model: ${{ steps.trigger.outputs.model }}`,
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
 
             const body = output
