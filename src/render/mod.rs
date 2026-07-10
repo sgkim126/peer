@@ -326,7 +326,9 @@ fn log_result_usage(result: &CheckResult, console: Console) {
 
 fn render_terminal(output: &CheckCommandOutput, use_color: bool) -> String {
     match output.as_outcome() {
-        Ok(outcome) => render_check_outcome_for_command(outcome, OutputFormat::Terminal, use_color),
+        Ok(outcome) => {
+            render_check_outcome_for_command(outcome, CommandRenderFormat::Terminal { use_color })
+        }
         Err(error) => render_terminal_error(error, use_color),
     }
 }
@@ -417,28 +419,27 @@ fn render_terminal_error(error: &CheckCommandErrorOutput, use_color: bool) -> St
 
 fn render_markdown(output: &CheckCommandOutput) -> String {
     match output.as_outcome() {
-        Ok(outcome) => render_check_outcome_for_command(outcome, OutputFormat::Markdown, false),
+        Ok(outcome) => render_check_outcome_for_command(outcome, CommandRenderFormat::Markdown),
         Err(error) => render_markdown_error(error),
     }
 }
 
-fn render_check_outcome_for_command(
-    outcome: &CheckOutcome,
-    format: OutputFormat,
-    use_color: bool,
-) -> String {
+enum CommandRenderFormat {
+    Terminal { use_color: bool },
+    Markdown,
+}
+
+fn render_check_outcome_for_command(outcome: &CheckOutcome, format: CommandRenderFormat) -> String {
     match outcome {
         CheckOutcome::Success { check } => match format {
-            OutputFormat::Terminal => render_terminal_result(check, use_color),
-            OutputFormat::Markdown => render_markdown_result(check),
-            OutputFormat::Github => unimplemented!(),
-            OutputFormat::Json => unreachable!("json check output is rendered from the envelope"),
+            CommandRenderFormat::Terminal { use_color } => render_terminal_result(check, use_color),
+            CommandRenderFormat::Markdown => render_markdown_result(check),
         },
         CheckOutcome::NeedsUserInfo { request } => match format {
-            OutputFormat::Terminal => render_terminal_user_info_request(request, use_color),
-            OutputFormat::Markdown => render_markdown_user_info_request(request),
-            OutputFormat::Github => unimplemented!(),
-            OutputFormat::Json => unreachable!("json check output is rendered from the envelope"),
+            CommandRenderFormat::Terminal { use_color } => {
+                render_terminal_user_info_request(request, use_color)
+            }
+            CommandRenderFormat::Markdown => render_markdown_user_info_request(request),
         },
     }
 }
