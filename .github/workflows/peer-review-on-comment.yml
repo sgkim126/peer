@@ -1,0 +1,21 @@
+name: Peer Review On Comment
+
+on:
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  peer-review:
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '@peer review')
+    uses: ./.github/workflows/peer-review-comment.yml
+    with:
+      version: "0.1.0"
+      provider: mistral
+      model: mistral-large-latest
+    secrets: inherit
