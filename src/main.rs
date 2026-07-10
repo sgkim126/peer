@@ -95,7 +95,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            apply_llm_defaults(&mut config, provider, model);
+            apply_llm_defaults(&mut config, provider, model.clone());
 
             let review_target = match review::resolve_target(&target, &project_root, console).await
             {
@@ -122,16 +122,15 @@ async fn main() -> ExitCode {
             let plan = review::plan_checks(&review_target).without_checks(&skip_checks);
             console.debug(format_args!("{plan:?}"));
 
-            let (provider_config, model_config) = match config
-                .resolve_provider(&config.llm.default_provider, &config.llm.default_model)
-            {
-                Ok(resolved) => resolved,
-                Err(err) => {
-                    eprintln!("{err}");
-                    console.debug(format_args!("{err:?}"));
-                    return ExitCode::FAILURE;
-                }
-            };
+            let (provider_config, model_config) =
+                match config.resolve_provider(&config.llm.default_provider, model.as_deref()) {
+                    Ok(resolved) => resolved,
+                    Err(err) => {
+                        eprintln!("{err}");
+                        console.debug(format_args!("{err:?}"));
+                        return ExitCode::FAILURE;
+                    }
+                };
             let provider = match llm::provider::create_provider(
                 &provider_config.name,
                 &provider_config.api_key_env,
@@ -291,8 +290,13 @@ fn apply_llm_defaults(config: &mut Config, provider: Option<String>, model: Opti
     if let Some(provider) = provider {
         config.llm.default_provider = provider;
     }
-    if let Some(model) = model {
-        config.llm.default_model = model;
+    if let Some(model) = model
+        && let Some(provider) = config
+            .providers
+            .iter_mut()
+            .find(|provider| provider.name == config.llm.default_provider)
+    {
+        provider.default_model = model;
     }
 }
 
@@ -336,6 +340,7 @@ fn is_complete_outcome(outcome: &CheckOutcome) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::{Config, DEFAULT_CONFIG_TOML};
     use crate::git::CommitHash;
     use crate::llm::result::{
         CheckOutcome, CheckResult, CheckTarget, CheckUsage, CheckUserInfoRequest,
@@ -343,7 +348,33 @@ mod tests {
     use crate::review::ReviewResult;
     use std::process::ExitCode;
 
-    use super::{check_exit_code, review_exit_code};
+    use super::{apply_llm_defaults, check_exit_code, review_exit_code};
+
+    #[test]
+    fn provider_override_uses_that_providers_default_model() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+
+        apply_llm_defaults(&mut config, Some("openai".into()), None);
+
+        let (provider, model) = config
+            .resolve_provider(&config.llm.default_provider, None)
+            .unwrap();
+        assert_eq!(provider.name, "openai");
+        assert_eq!(model.name, "gpt-5.4-mini");
+    }
+
+    #[test]
+    fn model_override_replaces_the_selected_providers_default_model() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+
+        apply_llm_defaults(&mut config, Some("openai".into()), Some("gpt-5.4".into()));
+
+        let (provider, model) = config
+            .resolve_provider(&config.llm.default_provider, Some("gpt-5.4"))
+            .unwrap();
+        assert_eq!(provider.name, "openai");
+        assert_eq!(model.name, "gpt-5.4");
+    }
 
     fn success_outcome() -> CheckOutcome {
         CheckOutcome::success(CheckResult {

@@ -22,7 +22,6 @@ pub struct ReviewConfig {
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct LlmConfig {
     pub default_provider: String,
-    pub default_model: String,
     pub confidence_threshold: f64,
     pub max_iterations: u32,
 }
@@ -31,6 +30,7 @@ pub struct LlmConfig {
 pub struct ProviderConfig {
     pub name: String,
     pub api_key_env: String,
+    pub default_model: String,
     pub base_url: Option<String>,
     pub models: Vec<ModelConfig>,
 }
@@ -43,12 +43,13 @@ pub struct ModelConfig {
 }
 
 impl Config {
-    /// Finds the named provider and model, returning references to both.
+    /// Finds the named provider and selected model, returning references to both.
+    /// Uses the provider's default model when `model_name` is absent.
     /// Returns `InvalidConfig` if either is absent.
     pub fn resolve_provider(
         &self,
         provider_name: &str,
-        model_name: &str,
+        model_name: Option<&str>,
     ) -> Result<(&ProviderConfig, &ModelConfig), PeerError> {
         let provider = self
             .providers
@@ -58,6 +59,7 @@ impl Config {
                 message: format!("provider '{provider_name}' not found in config"),
                 source: None,
             })?;
+        let model_name = model_name.unwrap_or(&provider.default_model);
 
         let model = provider
             .models
@@ -181,21 +183,19 @@ mod tests {
     #[test]
     fn resolve_provider_returns_provider_and_model() {
         let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
-        let (provider, model) = config
-            .resolve_provider("mistral", "mistral-large-2512")
-            .unwrap();
+        let (provider, model) = config.resolve_provider("mistral", None).unwrap();
         assert_eq!(provider.name, "mistral");
         assert_eq!(provider.api_key_env, "MISTRAL_API_KEY");
-        assert_eq!(model.name, "mistral-large-2512");
-        assert_eq!(model.input_per_1m_usd, 0.5);
-        assert_eq!(model.output_per_1m_usd, 1.5);
+        assert_eq!(model.name, "mistral-medium-3-5");
+        assert_eq!(model.input_per_1m_usd, 1.5);
+        assert_eq!(model.output_per_1m_usd, 7.5);
     }
 
     #[test]
     fn resolve_provider_fails_when_provider_missing() {
         let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         assert!(matches!(
-            config.resolve_provider("nonexistent", "mistral-large-latest"),
+            config.resolve_provider("nonexistent", None),
             Err(PeerError::InvalidConfig { source: None, .. })
         ));
     }
@@ -204,7 +204,7 @@ mod tests {
     fn resolve_provider_fails_when_model_missing() {
         let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         assert!(matches!(
-            config.resolve_provider("mistral", "no-such-model"),
+            config.resolve_provider("mistral", Some("no-such-model")),
             Err(PeerError::InvalidConfig { source: None, .. })
         ));
     }
@@ -220,7 +220,6 @@ mod tests {
                 review: ReviewConfig { max_commits: 10 },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
-                    default_model: "mistral-large-2512".into(),
                     confidence_threshold: 0.8,
                     max_iterations: 5,
                 },
@@ -228,6 +227,7 @@ mod tests {
                     ProviderConfig {
                         name: "mistral".into(),
                         api_key_env: "MISTRAL_API_KEY".into(),
+                        default_model: "mistral-medium-3-5".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {
@@ -250,6 +250,7 @@ mod tests {
                     ProviderConfig {
                         name: "openai".into(),
                         api_key_env: "OPENAI_API_KEY".into(),
+                        default_model: "gpt-5.4-mini".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {
@@ -272,6 +273,7 @@ mod tests {
                     ProviderConfig {
                         name: "anthropic".into(),
                         api_key_env: "ANTHROPIC_API_KEY".into(),
+                        default_model: "claude-sonnet-5".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {
@@ -289,6 +291,7 @@ mod tests {
                     ProviderConfig {
                         name: "gemini".into(),
                         api_key_env: "GEMINI_API_KEY".into(),
+                        default_model: "gemini-3.5-flash".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {

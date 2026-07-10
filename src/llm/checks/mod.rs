@@ -101,8 +101,7 @@ pub async fn handler(
     project_root: PathBuf,
     review_context: &ReviewContext,
 ) -> Result<CheckOutcome, CheckCommandError> {
-    let (provider_config, _) =
-        config.resolve_provider(&config.llm.default_provider, &config.llm.default_model)?;
+    let (provider_config, _) = config.resolve_provider(&config.llm.default_provider, None)?;
     let provider_name = provider_config.name.clone();
 
     let provider = create_provider(
@@ -171,10 +170,9 @@ where
 {
     let confidence_threshold = Confidence::try_from(execution.config.llm.confidence_threshold)?;
     let max_iterations = execution.config.llm.max_iterations;
-    let (_, model_config) = execution.config.resolve_provider(
-        &execution.config.llm.default_provider,
-        &execution.config.llm.default_model,
-    )?;
+    let (_, model_config) = execution
+        .config
+        .resolve_provider(&execution.config.llm.default_provider, None)?;
     let run_config = CheckRunConfig {
         provider: execution.provider_name,
         model: &model_config.name,
@@ -530,13 +528,13 @@ mod tests {
             review: ReviewConfig { max_commits: 10 },
             llm: LlmConfig {
                 default_provider: "test".to_string(),
-                default_model: "test-model".to_string(),
                 confidence_threshold: 0.8,
                 max_iterations: 3,
             },
             providers: vec![ProviderConfig {
                 name: "test".to_string(),
                 api_key_env: "UNUSED_API_KEY".to_string(),
+                default_model: "test-model".to_string(),
                 base_url: None,
                 models: vec![ModelConfig {
                     name: "test-model".to_string(),
