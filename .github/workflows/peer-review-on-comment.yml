@@ -19,7 +19,7 @@ jobs:
       pull-requests: write
     uses: ./.github/workflows/peer-review-comment.yml
     with:
-      version: "0.1.0"
+      version: "0.1.1"
       provider: mistral
       model: mistral-large-latest
     secrets: inherit
