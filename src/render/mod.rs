@@ -501,6 +501,15 @@ fn render_markdown_result(result: &CheckResult) -> String {
 }
 
 fn render_github_result(result: &CheckResult, repo: &str) -> String {
+    let rendered = render_github_result_body(result, repo);
+    if check_status(&result.findings) == "ok" {
+        render_folded_github_result(result, &rendered)
+    } else {
+        rendered
+    }
+}
+
+fn render_github_result_body(result: &CheckResult, repo: &str) -> String {
     let mut output = String::new();
     writeln!(output, "## Check: {}", result.check).unwrap();
     writeln!(output).unwrap();
@@ -551,6 +560,13 @@ fn render_github_result(result: &CheckResult, repo: &str) -> String {
     writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
 
     output.trim_end().to_string()
+}
+
+fn render_folded_github_result(result: &CheckResult, rendered: &str) -> String {
+    format!(
+        "<details>\n<summary>Check: {} - Status: ok</summary>\n\n{}\n</details>",
+        result.check, rendered
+    )
 }
 
 fn render_markdown_error(error: &CheckCommandErrorOutput) -> String {
@@ -1118,6 +1134,42 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     }
 
     #[test]
+    fn folds_ok_checks_for_github_review_result() {
+        let result = success_review_result();
+
+        let rendered = render_review_result(
+            &result,
+            RenderOptions::Github {
+                repo: "sgkim126/peer".to_string(),
+            },
+            console(),
+        )
+        .unwrap();
+
+        assert!(rendered.contains("<details>\n<summary>Check: size - Status: ok</summary>"));
+        assert!(rendered.contains("</details>\n\n## Check: intent"));
+        assert!(rendered.contains("- **Status:** issue"));
+    }
+
+    #[test]
+    fn keeps_non_ok_github_review_outcomes_expanded() {
+        let result = mixed_review_result();
+
+        let rendered = render_review_result(
+            &result,
+            RenderOptions::Github {
+                repo: "sgkim126/peer".to_string(),
+            },
+            console(),
+        )
+        .unwrap();
+
+        assert!(!rendered.contains("<summary>Check: intent - Status: ok</summary>"));
+        assert!(rendered.contains("\n\n## Check: security"));
+        assert!(rendered.contains("- **Status:** needs_user_info"));
+    }
+
+    #[test]
     fn styles_terminal_output_when_color_is_enabled() {
         let envelope: CheckCommandOutput =
             serde_json::from_value(success_envelope_with_finding()).unwrap();
@@ -1292,6 +1344,22 @@ A critical issue was found.
         .unwrap();
 
         assert!(rendered.contains("- **Target:** `HEAD~2..HEAD`"));
+    }
+
+    #[test]
+    fn folds_ok_check_for_github() {
+        let rendered = render(
+            &success_envelope().to_string(),
+            RenderOptions::Github {
+                repo: "sgkim126/peer".to_string(),
+            },
+            console(),
+        )
+        .unwrap();
+
+        assert!(rendered.starts_with("<details>\n<summary>Check: size - Status: ok</summary>"));
+        assert!(rendered.contains("- **Status:** ok"));
+        assert!(rendered.ends_with("</details>"));
     }
 
     #[test]
