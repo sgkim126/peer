@@ -302,13 +302,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn preserves_exhausted_result_metadata() {
-        let provider = MockProvider::new([
-            Ok(response(output("abc1234", 0.7))),
-            Err(LlmCallError::ContextOverflow {
-                message: "context is full".to_string(),
-            }),
-        ]);
+    async fn accepts_low_confidence_result_without_retrying() {
+        let provider = MockProvider::new([Ok(response(output("abc1234", 0.7)))]);
         let executor = FakeToolExecutor::default();
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
@@ -326,13 +321,11 @@ mod tests {
         .unwrap();
         let result = success_result(&outcome);
 
-        assert!(result.is_exhausted);
+        assert!(!result.is_exhausted);
         assert_eq!(result.confidence.as_f64(), 0.7);
-        assert_eq!(
-            result.exhaustion_reason.as_deref(),
-            Some("LLM context length exceeded: context is full")
-        );
-        assert_eq!(result.iterations, 2);
+        assert_eq!(result.exhaustion_reason, None);
+        assert_eq!(result.iterations, 1);
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[tokio::test]

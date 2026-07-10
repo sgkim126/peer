@@ -809,7 +809,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn returns_exhausted_result_when_confidence_stays_below_threshold() {
+    async fn accepts_low_confidence_result_without_retrying() {
         let repository = init_repository().await;
         let console = Console::default();
         let provider = MockProvider::new([Ok(LlmCallResult {
@@ -846,14 +846,12 @@ mod tests {
         .unwrap();
         let result = success_result(&outcome);
 
-        assert!(result.is_exhausted);
+        assert!(!result.is_exhausted);
         assert_eq!(result.summary, "uncertain");
         assert_eq!(result.confidence.as_f64(), 0.7);
         assert_eq!(result.iterations, 1);
-        assert_eq!(
-            result.exhaustion_reason.as_deref(),
-            Some("maximum iterations reached")
-        );
+        assert_eq!(result.exhaustion_reason, None);
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[tokio::test]

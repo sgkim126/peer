@@ -8,14 +8,13 @@ use crate::llm::provider::{
 };
 use crate::llm::result::CheckOutput;
 
-const LOW_CONFIDENCE_REFINEMENT_INSTRUCTION: &str = "Your previous check result was below the required confidence threshold. Continue the analysis, use additional tools if needed, and submit a revised check result.";
-
 pub struct AgentRequest<'a> {
     pub model: &'a str,
     pub conversation: &'a [ConversationTurn],
     pub tools: &'a [ToolSpec],
     pub output_schema: &'a serde_json::Value,
     pub validate_output: &'a dyn Fn(&CheckOutput) -> Result<(), String>,
+    #[allow(dead_code)]
     pub confidence_threshold: Confidence,
     pub max_iterations: u32,
     pub console: Console,
@@ -34,6 +33,7 @@ pub struct AgentUserInfoRequest {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum AgentRunOutcome {
     Completed(AgentRunResult),
     Exhausted {
@@ -48,6 +48,7 @@ pub enum AgentRunOutcome {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub enum AgentExhaustionReason {
     MaxIterations,
     LlmCall(LlmCallError),
@@ -70,10 +71,8 @@ where
 {
     let mut conversation = request.conversation.to_vec();
     let mut usage = RawUsage::default();
-    let mut best_low_confidence_output: Option<CheckOutput> = None;
-
     for iteration in 1..=request.max_iterations {
-        let result = match provider
+        let result = provider
             .send(LlmRequest {
                 model: request.model,
                 conversation: &conversation,
@@ -82,23 +81,7 @@ where
                     output_schema: request.output_schema,
                 },
             })
-            .await
-        {
-            Ok(result) => result,
-            Err(error) => {
-                let Some(output) = best_low_confidence_output else {
-                    return Err(error);
-                };
-                return Ok(AgentRunOutcome::Exhausted {
-                    result: AgentRunResult {
-                        output,
-                        usage,
-                        iterations: iteration,
-                    },
-                    reason: AgentExhaustionReason::LlmCall(error),
-                });
-            }
-        };
+            .await?;
         usage += result.usage;
 
         match result.response {
@@ -114,29 +97,11 @@ where
                     continue;
                 }
 
-                request.console.debug(format_args!(
-                    "llm iteration {iteration}: check output confidence={} threshold={}",
-                    output.confidence.as_f64(),
-                    request.confidence_threshold.as_f64()
-                ));
-                if output.confidence >= request.confidence_threshold {
-                    return Ok(AgentRunOutcome::Completed(AgentRunResult {
-                        output,
-                        usage,
-                        iterations: iteration,
-                    }));
-                }
-
-                conversation.push(ConversationTurn::AssistantCheckOutput(output.clone()));
-                conversation.push(ConversationTurn::User(
-                    LOW_CONFIDENCE_REFINEMENT_INSTRUCTION.to_string(),
-                ));
-                if best_low_confidence_output
-                    .as_ref()
-                    .is_none_or(|best| output.confidence >= best.confidence)
-                {
-                    best_low_confidence_output = Some(output);
-                }
+                return Ok(AgentRunOutcome::Completed(AgentRunResult {
+                    output,
+                    usage,
+                    iterations: iteration,
+                }));
             }
             LlmResponse::ToolCalls(tool_calls) => {
                 request.console.debug(format_args!(
@@ -181,17 +146,6 @@ where
                 });
             }
         }
-    }
-
-    if let Some(output) = best_low_confidence_output {
-        return Ok(AgentRunOutcome::Exhausted {
-            result: AgentRunResult {
-                output,
-                usage,
-                iterations: request.max_iterations,
-            },
-            reason: AgentExhaustionReason::MaxIterations,
-        });
     }
 
     Err(LlmCallError::Permanent {
@@ -368,19 +322,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retries_when_check_output_confidence_is_below_threshold() {
-        let provider = MockProvider::new([
-            Ok(call_result(
-                LlmResponse::CheckOutput(check_output_with_confidence("uncertain", 0.7)),
-                10,
-                5,
-            )),
-            Ok(call_result(
-                LlmResponse::CheckOutput(check_output_with_confidence("revised", 0.9)),
-                20,
-                7,
-            )),
-        ]);
+    async fn accepts_check_output_below_confidence_threshold() {
+        let provider = MockProvider::new([Ok(call_result(
+            LlmResponse::CheckOutput(check_output_with_confidence("uncertain", 0.7)),
+            10,
+            5,
+        ))]);
         let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
 
@@ -390,21 +337,11 @@ mod tests {
                 .unwrap(),
         );
 
-        assert_eq!(result.output.summary, "revised");
-        assert_eq!(result.iterations, 2);
-        assert_eq!(result.usage.input_tokens, 30);
-        assert_eq!(result.usage.output_tokens, 12);
-
-        let requests = provider.requests();
-        assert_eq!(requests.len(), 2);
-        let ConversationTurn::AssistantCheckOutput(previous) = &requests[1].conversation[0] else {
-            panic!("expected previous check output");
-        };
-        assert_eq!(previous.summary, "uncertain");
-        let ConversationTurn::User(instruction) = &requests[1].conversation[1] else {
-            panic!("expected refinement instruction");
-        };
-        assert_eq!(instruction, LOW_CONFIDENCE_REFINEMENT_INSTRUCTION);
+        assert_eq!(result.output.summary, "uncertain");
+        assert_eq!(result.iterations, 1);
+        assert_eq!(result.usage.input_tokens, 10);
+        assert_eq!(result.usage.output_tokens, 5);
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[tokio::test]
@@ -464,75 +401,6 @@ mod tests {
             panic!("expected validation refinement instruction");
         };
         assert!(instruction.contains("summary must be valid"));
-    }
-
-    #[tokio::test]
-    async fn returns_highest_confidence_output_when_confidence_remains_below_threshold() {
-        let provider = MockProvider::new([
-            Ok(call_result(
-                LlmResponse::CheckOutput(check_output_with_confidence("first", 0.7)),
-                10,
-                5,
-            )),
-            Ok(call_result(
-                LlmResponse::CheckOutput(check_output_with_confidence("second", 0.6)),
-                20,
-                7,
-            )),
-        ]);
-        let executor = FakeToolExecutor::default();
-        let schema = json!({ "type": "object" });
-
-        let outcome = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 2))
-            .await
-            .unwrap();
-
-        let AgentRunOutcome::Exhausted { result, reason } = outcome else {
-            panic!("expected exhausted agent run");
-        };
-        assert_eq!(result.output.summary, "first");
-        assert_eq!(result.output.confidence.as_f64(), 0.7);
-        assert_eq!(result.iterations, 2);
-        assert_eq!(result.usage.input_tokens, 30);
-        assert_eq!(result.usage.output_tokens, 12);
-        assert!(matches!(reason, AgentExhaustionReason::MaxIterations));
-        assert_eq!(provider.requests().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn returns_last_low_confidence_output_when_later_llm_call_fails() {
-        let provider = MockProvider::new([
-            Ok(call_result(
-                LlmResponse::CheckOutput(check_output_with_confidence("uncertain", 0.7)),
-                10,
-                5,
-            )),
-            Err(LlmCallError::Transient {
-                message: "request timed out".to_string(),
-                source: Box::new(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "request timed out",
-                )),
-            }),
-        ]);
-        let executor = FakeToolExecutor::default();
-        let schema = json!({ "type": "object" });
-
-        let outcome = run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
-            .await
-            .unwrap();
-
-        let AgentRunOutcome::Exhausted { result, reason } = outcome else {
-            panic!("expected exhausted agent run");
-        };
-        assert_eq!(result.output.summary, "uncertain");
-        assert_eq!(result.iterations, 2);
-        assert_eq!(result.usage.input_tokens, 10);
-        assert_eq!(result.usage.output_tokens, 5);
-        assert!(matches!(
-            reason,
-            AgentExhaustionReason::LlmCall(LlmCallError::Transient { .. })
-        ));
     }
 
     #[tokio::test]
