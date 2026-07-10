@@ -285,9 +285,11 @@ jobs:
             const fs = require('fs');
             const bodyPath = '${{ steps.peer.outputs.stdout-path }}';
             const output = fs.readFileSync(bodyPath, 'utf8').trim();
+            const triggerComment = context.payload.comment;
             const metadata = [
               `provider: ${{ steps.trigger.outputs.provider }}`,
               `model: ${{ steps.trigger.outputs.model }}`,
+              `Triggered by [comment](${triggerComment.html_url})`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
 
