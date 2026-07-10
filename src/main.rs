@@ -48,6 +48,7 @@ async fn main() -> ExitCode {
             body_file,
             comments_file,
             format,
+            ..
         } => {
             if title.is_none() {
                 eprintln!("warning: review title was not provided.");
@@ -250,7 +251,7 @@ async fn main() -> ExitCode {
             }
             print_check_result(result, console)
         }
-        Command::Render { format } => {
+        Command::Render { format, .. } => {
             let mut input = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut input) {
                 eprintln!("failed to read render input: {error}");

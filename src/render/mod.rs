@@ -39,6 +39,7 @@ fn render_check_output_impl(
         OutputFormat::Json => render_json(output),
         OutputFormat::Terminal => Ok(render_terminal(output, use_color)),
         OutputFormat::Markdown => Ok(render_markdown(output)),
+        OutputFormat::Github => unimplemented!(),
     }
 }
 
@@ -79,6 +80,9 @@ fn render_check_result_impl(
             log_result_usage(result, console);
             Ok(render_markdown_result(result))
         }
+        OutputFormat::Github => {
+            unimplemented!()
+        }
     }
 }
 
@@ -90,7 +94,7 @@ fn render_review_result_impl(
 ) -> Result<String, RenderError> {
     match format {
         OutputFormat::Json => render_review_json(result, console),
-        OutputFormat::Terminal | OutputFormat::Markdown => result
+        OutputFormat::Terminal | OutputFormat::Markdown | OutputFormat::Github => result
             .outcomes
             .iter()
             .map(|outcome| render_check_outcome_impl(outcome, format, console, use_color))
@@ -113,6 +117,9 @@ fn render_check_outcome_impl(
             OutputFormat::Json => unreachable!("review json renders the full review result"),
             OutputFormat::Terminal => render_terminal_user_info_request(request, use_color),
             OutputFormat::Markdown => render_markdown_user_info_request(request),
+            OutputFormat::Github => {
+                unimplemented!()
+            }
         }),
     }
 }
@@ -339,11 +346,15 @@ fn render_check_outcome_for_command(
         CheckOutcome::Success { check } => match format {
             OutputFormat::Terminal => render_terminal_result(check, use_color),
             OutputFormat::Markdown => render_markdown_result(check),
+            OutputFormat::Github => unimplemented!(),
             OutputFormat::Json => unreachable!("json check output is rendered from the envelope"),
         },
         CheckOutcome::NeedsUserInfo { request } => match format {
             OutputFormat::Terminal => render_terminal_user_info_request(request, use_color),
             OutputFormat::Markdown => render_markdown_user_info_request(request),
+            OutputFormat::Github => {
+                unimplemented!()
+            }
             OutputFormat::Json => unreachable!("json check output is rendered from the envelope"),
         },
     }

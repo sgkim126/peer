@@ -43,6 +43,9 @@ pub enum Command {
 
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
+
+        #[arg(long)]
+        repo: Option<String>,
     },
 
     Extract {
@@ -64,6 +67,9 @@ pub enum Command {
     Render {
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
+
+        #[arg(long)]
+        repo: Option<String>,
     },
 }
 
@@ -104,6 +110,7 @@ pub enum OutputFormat {
     Json,
     Terminal,
     Markdown,
+    Github,
 }
 
 #[cfg(test)]
@@ -138,6 +145,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 format: OutputFormat::Terminal,
+                repo: None,
             }
         );
     }
@@ -157,6 +165,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 format: OutputFormat::Json,
+                repo: None,
             }
         );
     }
@@ -176,6 +185,35 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 format: OutputFormat::Markdown,
+                repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn review_with_github_format_and_repo() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "main",
+            "--format",
+            "github",
+            "--repo",
+            "sgkim126/peer",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "main".into(),
+                provider: None,
+                model: None,
+                skip_checks: vec![],
+                title: None,
+                body_file: None,
+                comments_file: None,
+                format: OutputFormat::Github,
+                repo: Some("sgkim126/peer".into()),
             }
         );
     }
@@ -205,6 +243,7 @@ mod tests {
                 body_file: Some(PathBuf::from("body.md")),
                 comments_file: Some(PathBuf::from("comments.json")),
                 format: OutputFormat::Terminal,
+                repo: None,
             }
         );
     }
@@ -236,6 +275,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 format: OutputFormat::Terminal,
+                repo: None,
             }
         );
     }
@@ -263,6 +303,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 format: OutputFormat::Terminal,
+                repo: None,
             }
         );
     }
@@ -482,7 +523,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Render {
-                format: OutputFormat::Terminal
+                format: OutputFormat::Terminal,
+                repo: None,
             }
         );
     }
@@ -494,7 +536,28 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Render {
-                format: OutputFormat::Json
+                format: OutputFormat::Json,
+                repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn render_with_github_format_and_repo() {
+        let cli = parse(&[
+            "peer",
+            "render",
+            "--format",
+            "github",
+            "--repo",
+            "sgkim126/peer",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Render {
+                format: OutputFormat::Github,
+                repo: Some("sgkim126/peer".into()),
             }
         );
     }
