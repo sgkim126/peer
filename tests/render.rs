@@ -24,6 +24,13 @@ fn run_render(format: &str, input: &str) -> std::process::Output {
     run_render_with_args(&["render", "--format", format], input)
 }
 
+fn run_render_github(input: &str) -> std::process::Output {
+    run_render_with_args(
+        &["render", "--format", "github", "--repo", "sgkim126/peer"],
+        input,
+    )
+}
+
 fn run_render_verbose(format: &str, input: &str) -> std::process::Output {
     run_render_with_args(&["--verbose", "render", "--format", format], input)
 }
@@ -144,6 +151,50 @@ fn renders_markdown_output_from_stdin() {
     assert!(output.contains("- **Status:** ok"));
     assert!(output.contains("### Findings\n\nNone."));
     assert!(output.contains("### Metadata"));
+}
+
+#[test]
+fn renders_github_output_from_stdin() {
+    let output = run_render_github(&success_envelope().to_string());
+
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+
+    let output = String::from_utf8(output.stdout).unwrap();
+    assert!(output.starts_with("<details>\n<summary>Check: size - Status: ok</summary>"));
+    assert!(
+        output
+            .contains("- **Target:** [`abc1234`](https://github.com/sgkim126/peer/commit/abc1234)")
+    );
+    assert!(output.contains("- **Status:** ok"));
+    assert!(output.ends_with("</details>\n"));
+}
+
+#[test]
+fn rejects_github_render_without_repo() {
+    let output = run_render("github", &success_envelope().to_string());
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "error: --format github requires --repo <owner/name>\n"
+    );
+}
+
+#[test]
+fn rejects_repo_with_non_github_render_format() {
+    let output = run_render_with_args(
+        &["render", "--format", "markdown", "--repo", "sgkim126/peer"],
+        &success_envelope().to_string(),
+    );
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "error: --repo can only be used with --format github\n"
+    );
 }
 
 #[test]
