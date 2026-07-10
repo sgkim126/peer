@@ -22,9 +22,6 @@ jobs:
           - runner: ubuntu-latest
             artifact-name: peer-linux-x86_64
             binary-name: peer
-          - runner: macos-latest
-            artifact-name: peer-macos-arm64
-            binary-name: peer
 
     steps:
       - name: Checkout
