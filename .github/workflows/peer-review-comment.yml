@@ -143,6 +143,22 @@ jobs:
             core.setOutput('model', model);
             core.setOutput('debug', String(debug));
 
+      - name: Mark peer review started
+        if: steps.trigger.outputs.should-run == 'true'
+        id: reaction
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const { data: reaction } = await github.rest.reactions.createForIssueComment({
+              owner,
+              repo,
+              comment_id: context.payload.comment.id,
+              content: 'eyes',
+            });
+
+            core.setOutput('reaction-id', String(reaction.id));
+
       - name: Checkout pull request
         if: steps.trigger.outputs.should-run == 'true'
         uses: actions/checkout@v7
@@ -283,6 +299,35 @@ jobs:
               repo: context.repo.repo,
               issue_number: Number('${{ steps.trigger.outputs.pr-number }}'),
               body,
+            });
+
+      - name: Update peer review reaction
+        if: always() && steps.trigger.outputs.should-run == 'true'
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const { owner, repo } = context.repo;
+            const commentId = context.payload.comment.id;
+            const reactionId = '${{ steps.reaction.outputs.reaction-id }}';
+
+            if (reactionId) {
+              try {
+                await github.rest.reactions.deleteForIssueComment({
+                  owner,
+                  repo,
+                  comment_id: commentId,
+                  reaction_id: Number(reactionId),
+                });
+              } catch (error) {
+                core.warning(`Failed to delete eyes reaction: ${error.message}`);
+              }
+            }
+
+            await github.rest.reactions.createForIssueComment({
+              owner,
+              repo,
+              comment_id: commentId,
+              content: '${{ steps.peer.outputs.exit-code }}' === '0' ? 'rocket' : 'confused',
             });
 
       - name: Fail if peer review failed
