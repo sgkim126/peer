@@ -29,6 +29,10 @@ inputs:
     description: Path to a JSON file containing review comment threads.
     required: false
     default: ""
+  debug:
+    description: Enable peer debug logging.
+    required: false
+    default: "false"
 
 outputs:
   exit-code:
@@ -122,6 +126,7 @@ runs:
         PEER_REVIEW_TITLE: ${{ inputs.title }}
         PEER_REVIEW_BODY_FILE: ${{ inputs.body-file }}
         PEER_REVIEW_COMMENTS_FILE: ${{ inputs.comments-file }}
+        PEER_REVIEW_DEBUG: ${{ inputs.debug }}
       run: |
         set -euo pipefail
 
@@ -151,6 +156,9 @@ runs:
           --repo "$PEER_REVIEW_REPO"
         )
 
+        if [ "$PEER_REVIEW_DEBUG" = "true" ]; then
+          args=(--debug "${args[@]}")
+        fi
         if [ -n "$PEER_REVIEW_TITLE" ]; then
           args+=(--title "$PEER_REVIEW_TITLE")
         fi

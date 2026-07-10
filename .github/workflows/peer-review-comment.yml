@@ -15,6 +15,11 @@ on:
         description: LLM model name.
         required: true
         type: string
+      debug:
+        description: Enable peer debug logging.
+        required: false
+        default: false
+        type: boolean
     secrets:
       MISTRAL_API_KEY:
         required: false
@@ -72,9 +77,15 @@ jobs:
             const tokens = body.slice(trigger.length).trim().split(/\s+/).filter(Boolean);
             let provider = ${{ toJSON(inputs.provider) }};
             let model = ${{ toJSON(inputs.model) }};
+            let debug = ${{ toJSON(inputs.debug) }};
 
             for (let i = 0; i < tokens.length; i += 1) {
               const token = tokens[i];
+
+              if (token === '--debug') {
+                debug = true;
+                continue;
+              }
 
               if (token === '--provider') {
                 const value = tokens[++i];
@@ -130,6 +141,7 @@ jobs:
             core.setOutput('title', pull.title ?? '');
             core.setOutput('provider', provider);
             core.setOutput('model', model);
+            core.setOutput('debug', String(debug));
 
       - name: Checkout pull request
         if: steps.trigger.outputs.should-run == 'true'
@@ -242,6 +254,7 @@ jobs:
           title: ${{ steps.trigger.outputs.title }}
           body-file: ${{ steps.context.outputs.body-file }}
           comments-file: ${{ steps.context.outputs.comments-file }}
+          debug: ${{ steps.trigger.outputs.debug }}
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}

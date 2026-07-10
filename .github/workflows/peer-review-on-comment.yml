@@ -22,4 +22,5 @@ jobs:
       version: "0.1.1"
       provider: mistral
       model: mistral-large-latest
+      debug: true
     secrets: inherit
