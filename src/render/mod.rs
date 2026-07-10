@@ -204,7 +204,7 @@ fn render_check_outcome_impl(
             RenderOptions::Json => unreachable!("review json renders the full review result"),
             RenderOptions::Terminal => render_terminal_user_info_request(request, use_color),
             RenderOptions::Markdown => render_markdown_user_info_request(request),
-            RenderOptions::Github { .. } => render_markdown_user_info_request(request),
+            RenderOptions::Github { .. } => render_github_user_info_request(request),
         }),
     }
 }
@@ -234,6 +234,16 @@ fn render_markdown_user_info_request(request: &CheckUserInfoRequest) -> String {
         request.check,
         display_target(&request.target),
         questions
+    )
+}
+
+fn render_github_user_info_request(request: &CheckUserInfoRequest) -> String {
+    let rendered = render_markdown_user_info_request(request);
+    format!(
+        "<details>\n<summary>Check: {} - Status: needs_user_info - Target: {}</summary>\n\n{}\n</details>",
+        request.check,
+        display_target(&request.target),
+        rendered
     )
 }
 
@@ -427,7 +437,7 @@ fn render_markdown(output: &CheckCommandOutput) -> String {
 fn render_github(output: &CheckCommandOutput, repo: &str) -> String {
     match output.as_outcome() {
         Ok(CheckOutcome::Success { check }) => render_github_result(check, repo),
-        Ok(CheckOutcome::NeedsUserInfo { request }) => render_markdown_user_info_request(request),
+        Ok(CheckOutcome::NeedsUserInfo { request }) => render_github_user_info_request(request),
         Err(error) => render_markdown_error(error),
     }
 }
@@ -501,15 +511,6 @@ fn render_markdown_result(result: &CheckResult) -> String {
 }
 
 fn render_github_result(result: &CheckResult, repo: &str) -> String {
-    let rendered = render_github_result_body(result, repo);
-    if check_status(&result.findings) == "ok" {
-        render_folded_github_result(result, &rendered)
-    } else {
-        rendered
-    }
-}
-
-fn render_github_result_body(result: &CheckResult, repo: &str) -> String {
     let mut output = String::new();
     writeln!(output, "## Check: {}", result.check).unwrap();
     writeln!(output).unwrap();
@@ -559,15 +560,12 @@ fn render_github_result_body(result: &CheckResult, repo: &str) -> String {
     .unwrap();
     writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
 
-    output.trim_end().to_string()
-}
-
-fn render_folded_github_result(result: &CheckResult, rendered: &str) -> String {
     format!(
-        "<details>\n<summary>Check: {} - Status: ok - Target: {}</summary>\n\n{}\n</details>",
+        "<details>\n<summary>Check: {} - Status: {} - Target: {}</summary>\n\n{}\n</details>",
         result.check,
+        check_status(&result.findings),
         display_target(&result.target),
-        rendered
+        output.trim_end()
     )
 }
 
@@ -1136,7 +1134,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     }
 
     #[test]
-    fn folds_ok_checks_for_github_review_result() {
+    fn folds_all_checks_for_github_review_result() {
         let result = success_review_result();
 
         let rendered = render_review_result(
@@ -1148,15 +1146,19 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         )
         .unwrap();
 
+        assert!(
+            rendered.contains(
+                "<details>\n<summary>Check: size - Status: ok - Target: abc1234</summary>"
+            )
+        );
         assert!(rendered.contains(
-            "<details>\n<summary>Check: size - Status: ok - Target: abc1234</summary>"
+            "</details>\n\n<details>\n<summary>Check: intent - Status: issue - Target: abc1234</summary>"
         ));
-        assert!(rendered.contains("</details>\n\n## Check: intent"));
         assert!(rendered.contains("- **Status:** issue"));
     }
 
     #[test]
-    fn keeps_non_ok_github_review_outcomes_expanded() {
+    fn folds_non_ok_github_review_outcomes() {
         let result = mixed_review_result();
 
         let rendered = render_review_result(
@@ -1168,8 +1170,12 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         )
         .unwrap();
 
-        assert!(!rendered.contains("<summary>Check: intent - Status: ok - Target: abc1234</summary>"));
-        assert!(rendered.contains("\n\n## Check: security"));
+        assert!(
+            rendered.contains("<summary>Check: intent - Status: issue - Target: abc1234</summary>")
+        );
+        assert!(rendered.contains(
+            "<summary>Check: security - Status: needs_user_info - Target: abc1234</summary>"
+        ));
         assert!(rendered.contains("- **Status:** needs_user_info"));
     }
 
@@ -1293,6 +1299,9 @@ A critical issue was found.
         assert_eq!(
             rendered,
             "\
+<details>
+<summary>Check: size - Status: issue - Target: abc1234</summary>
+
 ## Check: size
 
 - **Target:** [`abc1234`](https://github.com/sgkim126/peer/commit/abc1234)
@@ -1307,7 +1316,8 @@ A critical issue was found.
 ### Metadata
 
 - **Confidence:** 85%
-- **Iterations:** 2"
+- **Iterations:** 2
+</details>"
         );
     }
 
