@@ -6,7 +6,6 @@ max_commits = 10
 [llm]
 default_provider = "mistral"
 default_model = "mistral-large-2512"
-confidence_threshold = 0.8
 max_iterations = 5
 
 [[providers]]

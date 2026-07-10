@@ -30,7 +30,6 @@ pub struct ReviewConfig {
 pub struct LlmConfig {
     pub default_provider: String,
     pub default_model: String,
-    pub confidence_threshold: f64,
     pub max_iterations: NonZeroU32,
 }
 
@@ -299,7 +298,6 @@ max_commits = 10
 [llm]
 default_provider = "mistral"
 default_model = "mistral-large-latest"
-confidence_threshold = 0.8
 max_iterations = 5
 "#,
         );
@@ -322,7 +320,6 @@ max_commits = 10
 [llm]
 default_provider = "mistral"
 default_model = "mistral-large-latest"
-confidence_threshold = 0.8
 max_iterations = 5
 
 [[providers]]
@@ -442,7 +439,6 @@ models = [
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
                     default_model: "mistral-large-2512".into(),
-                    confidence_threshold: 0.8,
                     max_iterations: NonZeroU32::new(5).unwrap(),
                 },
                 providers: vec![
