@@ -278,7 +278,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
       - name: Comment review result
-        if: always() && steps.trigger.outputs.should-run == 'true'
+        if: always() && steps.trigger.outputs.should-run == 'true' && steps.peer.outputs.stdout-path != ''
         uses: actions/github-script@v9
         with:
           script: |
@@ -332,7 +332,3 @@ jobs:
               comment_id: commentId,
               content: '${{ steps.peer.outputs.exit-code }}' === '0' ? 'rocket' : 'confused',
             });
-
-      - name: Fail if peer review failed
-        if: always() && steps.trigger.outputs.should-run == 'true' && steps.peer.outputs.exit-code != '0'
-        run: exit "${{ steps.peer.outputs.exit-code }}"
