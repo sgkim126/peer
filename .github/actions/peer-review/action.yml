@@ -153,6 +153,17 @@ runs:
           args+=(--comments-file "$PEER_REVIEW_COMMENTS_FILE")
         fi
 
+        {
+          echo "### peer review command"
+          echo
+          echo '```bash'
+          printf 'peer'
+          printf ' %q' "${args[@]}"
+          printf '\n'
+          echo '```'
+          echo
+        } >> "$GITHUB_STEP_SUMMARY"
+
         set +e
         peer "${args[@]}" >"$stdout" 2>"$stderr"
         code=$?
