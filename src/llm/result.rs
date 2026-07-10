@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::git::CommitHash;
 use crate::llm::agent::{AgentRunOutcome, AgentRunResult};
-use crate::llm::confidence::Confidence;
 use crate::llm::provider::RawUsage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
@@ -50,7 +49,6 @@ pub struct CheckUsage {
 pub struct CheckOutput {
     pub summary: String,
     pub findings: Vec<Finding>,
-    pub confidence: Confidence,
 }
 
 impl CheckUsage {
@@ -200,11 +198,10 @@ mod tests {
         }
     }
 
-    fn check_output(commit: &str, confidence: f64) -> CheckOutput {
+    fn check_output(commit: &str) -> CheckOutput {
         CheckOutput {
             summary: "summary".to_string(),
             findings: vec![finding(commit, Severity::Medium)],
-            confidence: Confidence::try_from(confidence).unwrap(),
         }
     }
 
@@ -294,7 +291,7 @@ mod tests {
     #[test]
     fn completed_agent_outcome_becomes_non_exhausted_check_result() {
         let target = CommitHash::new("abc1234").unwrap();
-        let outcome = AgentRunOutcome::Completed(agent_result(check_output("abc1234", 0.9)));
+        let outcome = AgentRunOutcome::Completed(agent_result(check_output("abc1234")));
 
         let result = CheckResult::from_agent_outcome(
             "security",
@@ -318,7 +315,7 @@ mod tests {
     #[test]
     fn exhausted_agent_outcome_preserves_best_output_and_reason() {
         let outcome = AgentRunOutcome::Exhausted {
-            result: agent_result(check_output("def5678", 0.7)),
+            result: agent_result(check_output("def5678")),
             reason: AgentExhaustionReason::MaxIterations,
         };
 
@@ -346,7 +343,7 @@ mod tests {
     fn llm_call_exhaustion_reason_preserves_error_message() {
         let target = CommitHash::new("abc1234").unwrap();
         let outcome = AgentRunOutcome::Exhausted {
-            result: agent_result(check_output("abc1234", 0.7)),
+            result: agent_result(check_output("abc1234")),
             reason: AgentExhaustionReason::LlmCall(LlmCallError::Transient {
                 message: "request timed out".to_string(),
                 source: Box::new(std::io::Error::new(

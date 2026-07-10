@@ -15,9 +15,7 @@ pub enum ConversationTurn {
         call_id: String,
         result: serde_json::Value,
     },
-    /// A final check output produced by the assistant. The agent may retain
-    /// it in the conversation and request further analysis when its
-    /// confidence is below the configured threshold.
+    /// A final check output produced by the assistant.
     AssistantCheckOutput(CheckOutput),
 }
 

@@ -231,19 +231,13 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::llm::confidence::Confidence;
     use crate::llm::provider::{LlmCallResult, LlmResponse};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
 
     fn check_output(summary: &str) -> CheckOutput {
-        check_output_with_confidence(summary, 0.9)
-    }
-
-    fn check_output_with_confidence(summary: &str, confidence: f64) -> CheckOutput {
         CheckOutput {
             summary: summary.to_string(),
             findings: Vec::new(),
-            confidence: Confidence::try_from(confidence).unwrap(),
         }
     }
 
@@ -319,9 +313,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepts_low_confidence_check_output() {
+    async fn accepts_check_output() {
         let provider = MockProvider::new([Ok(call_result(
-            LlmResponse::CheckOutput(check_output_with_confidence("uncertain", 0.7)),
+            LlmResponse::CheckOutput(check_output("uncertain")),
             10,
             5,
         ))]);
@@ -344,7 +338,7 @@ mod tests {
     #[tokio::test]
     async fn accepts_valid_check_output() {
         let provider = MockProvider::new([Ok(call_result(
-            LlmResponse::CheckOutput(check_output_with_confidence("enough", 0.8)),
+            LlmResponse::CheckOutput(check_output("enough")),
             10,
             5,
         ))]);

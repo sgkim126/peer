@@ -411,13 +411,8 @@ fn output_schema() -> serde_json::Value {
                     "required": ["commit", "severity", "message"]
                 }
             },
-            "confidence": {
-                "type": "number",
-                "minimum": 0.0,
-                "maximum": 1.0
-            }
         },
-        "required": ["summary", "findings", "confidence"]
+        "required": ["summary", "findings"]
     })
 }
 
@@ -431,7 +426,6 @@ mod tests {
     use crate::config::{LlmConfig, ModelConfig, ProviderConfig, ReviewConfig};
     use crate::console::Console;
     use crate::git::run_git;
-    use crate::llm::confidence::Confidence;
     use crate::llm::provider::{LlmCallError, LlmCallResult, LlmResponse, RawUsage, ToolCall};
     use crate::llm::result::{CheckOutcome, CheckResult, Finding, Severity};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
@@ -506,7 +500,6 @@ mod tests {
                 message: "message".to_string(),
                 location: None,
             }],
-            confidence: Confidence::try_from(0.9).unwrap(),
         }
     }
 
@@ -578,7 +571,6 @@ mod tests {
             response: LlmResponse::CheckOutput(CheckOutput {
                 summary: "done".to_string(),
                 findings: Vec::new(),
-                confidence: Confidence::try_from(0.9).unwrap(),
             }),
             usage: RawUsage {
                 input_tokens: 100,
@@ -705,7 +697,6 @@ mod tests {
                 response: LlmResponse::CheckOutput(CheckOutput {
                     summary: "done".to_string(),
                     findings: Vec::new(),
-                    confidence: Confidence::try_from(0.9).unwrap(),
                 }),
                 usage: RawUsage {
                     input_tokens: 20,
@@ -796,14 +787,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepts_low_confidence_result_without_retrying() {
+    async fn accepts_valid_result_without_retrying() {
         let repository = init_repository().await;
         let console = Console::default();
         let provider = MockProvider::new([Ok(LlmCallResult {
             response: LlmResponse::CheckOutput(CheckOutput {
                 summary: "uncertain".to_string(),
                 findings: Vec::new(),
-                confidence: Confidence::try_from(0.7).unwrap(),
             }),
             usage: RawUsage {
                 input_tokens: 100,

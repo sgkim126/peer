@@ -664,8 +664,7 @@ mod tests {
                 "name": STRUCTURED_OUTPUT_TOOL_NAME,
                 "input": {
                     "summary": "looks good",
-                    "findings": [],
-                    "confidence": 0.9
+                    "findings": []
                 }
             }],
             "usage": {
@@ -683,7 +682,6 @@ mod tests {
         };
         assert_eq!(output.summary, "looks good");
         assert_eq!(output.findings, vec![]);
-        assert_eq!(output.confidence.as_f64(), 0.9);
     }
 
     #[test]
@@ -691,7 +689,7 @@ mod tests {
         let body = json!({
             "content": [{
                 "type": "text",
-                "text": "{\"summary\":\"content json\",\"findings\":[],\"confidence\":0.8}"
+                "text": "{\"summary\":\"content json\",\"findings\":[]}"
             }],
             "usage": {
                 "input_tokens": 10,
@@ -706,7 +704,6 @@ mod tests {
         };
         assert_eq!(output.summary, "content json");
         assert_eq!(output.findings, vec![]);
-        assert_eq!(output.confidence.as_f64(), 0.8);
     }
 
     #[test]

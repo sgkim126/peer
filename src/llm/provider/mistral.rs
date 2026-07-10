@@ -643,7 +643,7 @@ mod tests {
                         "type": "function",
                         "function": {
                             "name": STRUCTURED_OUTPUT_TOOL_NAME,
-                            "arguments": "{\"summary\":\"looks good\",\"findings\":[],\"confidence\":0.9}"
+                            "arguments": "{\"summary\":\"looks good\",\"findings\":[]}"
                         }
                     }]
                 }
@@ -663,7 +663,6 @@ mod tests {
         };
         assert_eq!(output.summary, "looks good");
         assert_eq!(output.findings, vec![]);
-        assert_eq!(output.confidence.as_f64(), 0.9);
     }
 
     #[test]
@@ -672,7 +671,7 @@ mod tests {
             "choices": [{
                 "message": {
                     "role": "assistant",
-                    "content": "{\"summary\":\"content json\",\"findings\":[],\"confidence\":0.8}"
+                    "content": "{\"summary\":\"content json\",\"findings\":[]}"
                 }
             }],
             "usage": {
@@ -688,7 +687,6 @@ mod tests {
         };
         assert_eq!(output.summary, "content json");
         assert_eq!(output.findings, vec![]);
-        assert_eq!(output.confidence.as_f64(), 0.8);
     }
 
     #[test]

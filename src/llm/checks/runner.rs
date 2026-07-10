@@ -147,7 +147,6 @@ mod tests {
     use crate::cache::CacheKey;
     use crate::git::CommitHash;
     use crate::llm::checks::{PreparedCheck, PreparedCheckTarget};
-    use crate::llm::confidence::Confidence;
     use crate::llm::provider::{ConversationTurn, LlmCallResult, LlmResponse, RawUsage};
     use crate::llm::result::{CheckOutput, Finding, Severity};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
@@ -196,7 +195,7 @@ mod tests {
         review_context: &'a ReviewContext,
     }
 
-    fn output(commit: &str, confidence: f64) -> CheckOutput {
+    fn output(commit: &str) -> CheckOutput {
         CheckOutput {
             summary: "summary".to_string(),
             findings: vec![Finding {
@@ -205,7 +204,6 @@ mod tests {
                 message: "finding".to_string(),
                 location: None,
             }],
-            confidence: Confidence::try_from(confidence).unwrap(),
         }
     }
 
@@ -266,7 +264,7 @@ mod tests {
 
     #[tokio::test]
     async fn runs_prepared_check_and_builds_check_result() {
-        let provider = MockProvider::new([Ok(response(output("abc1234", 0.9)))]);
+        let provider = MockProvider::new([Ok(response(output("abc1234")))]);
         let executor = FakeToolExecutor::default();
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
@@ -298,8 +296,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepts_low_confidence_result_without_retrying() {
-        let provider = MockProvider::new([Ok(response(output("abc1234", 0.7)))]);
+    async fn accepts_valid_result_without_retrying() {
+        let provider = MockProvider::new([Ok(response(output("abc1234")))]);
         let executor = FakeToolExecutor::default();
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
@@ -326,8 +324,8 @@ mod tests {
     #[tokio::test]
     async fn retries_output_for_the_wrong_target() {
         let provider = MockProvider::new([
-            Ok(response(output("def5678", 0.9))),
-            Ok(response(output("abc1234", 0.9))),
+            Ok(response(output("def5678"))),
+            Ok(response(output("abc1234"))),
         ]);
         let executor = FakeToolExecutor::default();
         let check = TestCheck {
@@ -361,7 +359,7 @@ mod tests {
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
         };
-        let first_provider = MockProvider::new([Ok(response(output("abc1234", 0.9)))]);
+        let first_provider = MockProvider::new([Ok(response(output("abc1234")))]);
 
         let first_outcome = run_check(
             &check,
@@ -468,7 +466,7 @@ mod tests {
         .await
         .unwrap();
 
-        let second_provider = MockProvider::new([Ok(response(output("abc1234", 0.9)))]);
+        let second_provider = MockProvider::new([Ok(response(output("abc1234")))]);
         let second_outcome = run_check(
             &check,
             &extractor(),

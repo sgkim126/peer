@@ -736,8 +736,7 @@ mod tests {
                             "name": STRUCTURED_OUTPUT_TOOL_NAME,
                             "args": {
                                 "summary": "looks good",
-                                "findings": [],
-                                "confidence": 0.9
+                                "findings": []
                             }
                         }
                     }]
@@ -758,7 +757,6 @@ mod tests {
         };
         assert_eq!(output.summary, "looks good");
         assert_eq!(output.findings, vec![]);
-        assert_eq!(output.confidence.as_f64(), 0.9);
     }
 
     #[test]
@@ -767,7 +765,7 @@ mod tests {
             "candidates": [{
                 "content": {
                     "parts": [{
-                        "text": "{\"summary\":\"content json\",\"findings\":[],\"confidence\":0.8}"
+                        "text": "{\"summary\":\"content json\",\"findings\":[]}"
                     }]
                 }
             }],
@@ -784,7 +782,6 @@ mod tests {
         };
         assert_eq!(output.summary, "content json");
         assert_eq!(output.findings, vec![]);
-        assert_eq!(output.confidence.as_f64(), 0.8);
     }
 
     #[test]

@@ -188,7 +188,7 @@ mod tests {
         assert_eq!(prepared.tools.len(), 6);
         assert_eq!(
             prepared.output_schema["required"],
-            serde_json::json!(["summary", "findings", "confidence"])
+            serde_json::json!(["summary", "findings"])
         );
     }
 
@@ -201,8 +201,7 @@ mod tests {
                 "commit": "abc1234",
                 "severity": "high",
                 "message": "Untrusted input is unwrapped."
-            }],
-            "confidence": 0.9
+            }]
         }))
         .unwrap();
         let wrong: CheckOutput = serde_json::from_value(serde_json::json!({
@@ -211,8 +210,7 @@ mod tests {
                 "commit": "def5678",
                 "severity": "high",
                 "message": "Wrong target."
-            }],
-            "confidence": 0.9
+            }]
         }))
         .unwrap();
 
