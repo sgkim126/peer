@@ -44,6 +44,7 @@ jobs:
             const event = context.payload;
             const issue = event.issue;
             const comment = event.comment;
+            const trigger = '@peer review';
 
             if (context.eventName !== 'issue_comment') {
               core.info(`Skipping: expected issue_comment, got ${context.eventName}.`);
@@ -57,8 +58,43 @@ jobs:
               return;
             }
 
-            if (comment?.body?.trim() !== '@peer review') {
-              core.info('Skipping: comment body is not @peer review.');
+            const body = comment?.body?.trim() ?? '';
+            if (!body.match(/^@peer review(?:\s|$)/)) {
+              core.info('Skipping: comment body does not start with @peer review.');
+              core.setOutput('should-run', 'false');
+              return;
+            }
+
+            const tokens = body.slice(trigger.length).trim().split(/\s+/).filter(Boolean);
+            let provider = ${{ toJSON(inputs.provider) }};
+            let model = ${{ toJSON(inputs.model) }};
+
+            for (let i = 0; i < tokens.length; i += 1) {
+              const token = tokens[i];
+
+              if (token === '--provider') {
+                const value = tokens[++i];
+                if (!value || value.startsWith('--')) {
+                  core.setFailed('Missing value for --provider.');
+                  core.setOutput('should-run', 'false');
+                  return;
+                }
+                provider = value;
+                continue;
+              }
+
+              if (token === '--model') {
+                const value = tokens[++i];
+                if (!value || value.startsWith('--')) {
+                  core.setFailed('Missing value for --model.');
+                  core.setOutput('should-run', 'false');
+                  return;
+                }
+                model = value;
+                continue;
+              }
+
+              core.setFailed(`Unsupported @peer review argument: ${token}`);
               core.setOutput('should-run', 'false');
               return;
             }
@@ -88,6 +124,8 @@ jobs:
             core.setOutput('pr-number', String(issue.number));
             core.setOutput('base-sha', pull.base.sha);
             core.setOutput('title', pull.title ?? '');
+            core.setOutput('provider', provider);
+            core.setOutput('model', model);
 
       - name: Checkout pull request
         if: steps.trigger.outputs.should-run == 'true'
@@ -139,7 +177,7 @@ jobs:
             const threads = [];
             for (const comment of issueComments) {
               const body = comment.body ?? '';
-              if (body.trim() === '@peer review') {
+              if (body.trim().match(/^@peer review(?:\s|$)/)) {
                 continue;
               }
               if (comment.user?.login === 'github-actions[bot]') {
@@ -193,8 +231,8 @@ jobs:
         uses: ./.peer-action/.github/actions/peer-review
         with:
           version: ${{ inputs.version }}
-          provider: ${{ inputs.provider }}
-          model: ${{ inputs.model }}
+          provider: ${{ steps.trigger.outputs.provider }}
+          model: ${{ steps.trigger.outputs.model }}
           target: ${{ steps.trigger.outputs.base-sha }}..HEAD
           title: ${{ steps.trigger.outputs.title }}
           body-file: ${{ steps.context.outputs.body-file }}
@@ -214,8 +252,8 @@ jobs:
             const bodyPath = '${{ steps.peer.outputs.stdout-path }}';
             const output = fs.readFileSync(bodyPath, 'utf8').trim();
             const metadata = [
-              `provider: ${{ inputs.provider }}`,
-              `model: ${{ inputs.model }}`,
+              `provider: ${{ steps.trigger.outputs.provider }}`,
+              `model: ${{ steps.trigger.outputs.model }}`,
             ].join('\n');
 
             const body = output
