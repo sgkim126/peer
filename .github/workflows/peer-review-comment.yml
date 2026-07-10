@@ -58,7 +58,7 @@ jobs:
             const event = context.payload;
             const issue = event.issue;
             const comment = event.comment;
-            const trigger = '@peer review';
+            const trigger = '!peer review';
 
             if (context.eventName !== 'issue_comment') {
               core.info(`Skipping: expected issue_comment, got ${context.eventName}.`);
@@ -73,8 +73,8 @@ jobs:
             }
 
             const body = comment?.body?.trim() ?? '';
-            if (!body.match(/^@peer review(?:\s|$)/)) {
-              core.info('Skipping: comment body does not start with @peer review.');
+            if (!body.match(/^!peer review(?:\s|$)/)) {
+              core.info('Skipping: comment body does not start with !peer review.');
               core.setOutput('should-run', 'false');
               return;
             }
@@ -120,7 +120,7 @@ jobs:
                 continue;
               }
 
-              core.setFailed(`Unsupported @peer review argument: ${token}`);
+              core.setFailed(`Unsupported !peer review argument: ${token}`);
               core.setOutput('should-run', 'false');
               return;
             }
@@ -221,7 +221,7 @@ jobs:
             const threads = [];
             for (const comment of issueComments) {
               const body = comment.body ?? '';
-              if (body.trim().match(/^@peer review(?:\s|$)/)) {
+              if (body.trim().match(/^!peer review(?:\s|$)/)) {
                 continue;
               }
               if (comment.user?.login === 'github-actions[bot]') {

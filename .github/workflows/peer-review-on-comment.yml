@@ -12,7 +12,7 @@ permissions:
 
 jobs:
   peer-review:
-    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '@peer review')
+    if: github.event.issue.pull_request && startsWith(github.event.comment.body, '!peer review')
     permissions:
       contents: read
       issues: write
