@@ -848,7 +848,6 @@ mod tests {
 
         assert!(!result.is_exhausted);
         assert_eq!(result.summary, "uncertain");
-        assert_eq!(result.confidence.as_f64(), 0.7);
         assert_eq!(result.iterations, 1);
         assert_eq!(result.exhaustion_reason, None);
         assert_eq!(provider.requests().len(), 1);

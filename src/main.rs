@@ -382,7 +382,6 @@ mod tests {
             target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
             summary: "ok".to_string(),
             findings: Vec::new(),
-            confidence: 1.0.try_into().unwrap(),
             iterations: 1,
             is_exhausted: false,
             exhaustion_reason: None,

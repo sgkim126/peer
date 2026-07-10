@@ -132,7 +132,6 @@ mod tests {
     use crate::git::GitError;
     use crate::llm::checks::CheckCommandError;
     use crate::llm::checks::runner::CheckRunError;
-    use crate::llm::confidence::Confidence;
     use crate::llm::provider::LlmCallError;
     use crate::llm::result::{CheckTarget, CheckUsage};
 
@@ -142,7 +141,6 @@ mod tests {
             target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
             summary: "The commit is appropriately sized.".to_string(),
             findings: Vec::new(),
-            confidence: Confidence::try_from(0.9).unwrap(),
             iterations: 1,
             is_exhausted: false,
             exhaustion_reason: None,
@@ -170,7 +168,6 @@ mod tests {
                         "target": "abc1234",
                         "summary": "The commit is appropriately sized.",
                         "findings": [],
-                        "confidence": 0.9,
                         "iterations": 1,
                         "is_exhausted": false,
                         "exhaustion_reason": null,

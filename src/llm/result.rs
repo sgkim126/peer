@@ -80,7 +80,6 @@ pub struct CheckResult {
     pub target: CheckTarget,
     pub summary: String,
     pub findings: Vec<Finding>,
-    pub confidence: Confidence,
     pub iterations: u32,
     pub is_exhausted: bool,
     pub exhaustion_reason: Option<String>,
@@ -138,7 +137,6 @@ impl CheckResult {
             target,
             summary: output.summary,
             findings: output.findings,
-            confidence: output.confidence,
             iterations,
             is_exhausted,
             exhaustion_reason,
@@ -311,7 +309,6 @@ mod tests {
         assert_eq!(result.target, CheckTarget::Commit(target));
         assert!(!result.is_exhausted);
         assert_eq!(result.exhaustion_reason, None);
-        assert_eq!(result.confidence.as_f64(), 0.9);
         assert_eq!(result.iterations, 2);
         assert_eq!(result.usage.input_tokens, 1_000);
         assert_eq!(result.usage.output_tokens, 500);
@@ -343,7 +340,6 @@ mod tests {
             result.exhaustion_reason.as_deref(),
             Some("maximum iterations reached")
         );
-        assert_eq!(result.confidence.as_f64(), 0.7);
     }
 
     #[test]

@@ -45,7 +45,6 @@ fn success_envelope() -> serde_json::Value {
                 "target": "abc1234",
                 "summary": "The commit is appropriately sized.",
                 "findings": [],
-                "confidence": 0.9,
                 "iterations": 1,
                 "is_exhausted": false,
                 "exhaustion_reason": null,
@@ -77,7 +76,7 @@ The commit is appropriately sized.
 
 Findings: none
 
-Confidence: 90% | Iterations: 1
+Iterations: 1
 "
     );
 }
@@ -90,7 +89,7 @@ fn renders_usage_from_stdin_with_verbose() {
     assert!(
         String::from_utf8(output.stdout)
             .unwrap()
-            .contains("Confidence: 90% | Iterations: 1")
+            .contains("Iterations: 1")
     );
     assert!(
         String::from_utf8(output.stderr)

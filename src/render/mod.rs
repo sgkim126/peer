@@ -414,9 +414,7 @@ fn render_terminal_result(result: &CheckResult, use_color: bool) -> String {
     writeln!(output).unwrap();
     write!(
         output,
-        "{} {:.0}% | {} {}",
-        terminal_label("Confidence:", use_color),
-        result.confidence.as_f64() * 100.0,
+        "{} {}",
         terminal_label("Iterations:", use_color),
         result.iterations
     )
@@ -510,12 +508,6 @@ fn render_markdown_result(result: &CheckResult) -> String {
     writeln!(output).unwrap();
     writeln!(output, "### Metadata").unwrap();
     writeln!(output).unwrap();
-    writeln!(
-        output,
-        "- **Confidence:** {:.0}%",
-        result.confidence.as_f64() * 100.0
-    )
-    .unwrap();
     writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
 
     output.trim_end().to_string()
@@ -563,12 +555,6 @@ fn render_github_result(result: &CheckResult, repo: &str) -> String {
     writeln!(output).unwrap();
     writeln!(output, "### Metadata").unwrap();
     writeln!(output).unwrap();
-    writeln!(
-        output,
-        "- **Confidence:** {:.0}%",
-        result.confidence.as_f64() * 100.0
-    )
-    .unwrap();
     writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
 
     format!(
@@ -849,7 +835,6 @@ mod tests {
                     "target": "abc1234",
                     "summary": "The commit is appropriately sized.",
                     "findings": [],
-                    "confidence": 0.9,
                     "iterations": 1,
                     "is_exhausted": false,
                     "exhaustion_reason": null,
@@ -875,7 +860,6 @@ mod tests {
             "file": "src/main.rs",
             "line": 42
         }]);
-        check["confidence"] = json!(0.85);
         check["iterations"] = json!(2);
         envelope
     }
@@ -1109,7 +1093,7 @@ A critical issue was found.
 Findings:
 - [critical] User input reaches a shell command. (abc1234 src/main.rs:42)
 
-Confidence: 85% | Iterations: 2"
+Iterations: 2"
         );
     }
 
@@ -1427,7 +1411,6 @@ A critical issue was found.
 
 ### Metadata
 
-- **Confidence:** 85%
 - **Iterations:** 2"
         );
     }
@@ -1462,7 +1445,6 @@ A critical issue was found.
 
 ### Metadata
 
-- **Confidence:** 85%
 - **Iterations:** 2
 </details>"
         );
