@@ -48,8 +48,15 @@ async fn main() -> ExitCode {
             body_file,
             comments_file,
             format,
-            ..
+            repo,
         } => {
+            let render_options = match render::RenderOptions::from_cli(format, repo) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             if title.is_none() {
                 eprintln!("warning: review title was not provided.");
             }
@@ -175,7 +182,7 @@ async fn main() -> ExitCode {
                 console.debug(format_args!("{error:?}"));
             }
 
-            let rendered = render::render_review_result(&result, format, console);
+            let rendered = render::render_review_result(&result, render_options, console);
             match rendered {
                 Ok(rendered) => {
                     println!("{rendered}");
@@ -251,14 +258,21 @@ async fn main() -> ExitCode {
             }
             print_check_result(result, console)
         }
-        Command::Render { format, .. } => {
+        Command::Render { format, repo } => {
+            let render_options = match render::RenderOptions::from_cli(format, repo) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let mut input = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut input) {
                 eprintln!("failed to read render input: {error}");
                 return ExitCode::FAILURE;
             }
 
-            match render::render(&input, format, console) {
+            match render::render(&input, render_options, console) {
                 Ok(output) => {
                     println!("{output}");
                 }
@@ -289,7 +303,7 @@ fn print_check_result(
     let exit_code = check_exit_code(&result);
     let output = CheckCommandOutput::from(result);
 
-    match render::render_check_output(&output, cli::OutputFormat::Json, console) {
+    match render::render_check_output(&output, render::RenderOptions::Json, console) {
         Ok(json) => {
             println!("{json}");
             exit_code
