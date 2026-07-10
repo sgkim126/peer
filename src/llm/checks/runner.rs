@@ -4,7 +4,6 @@ use crate::cache::CacheStore;
 use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::agent::{AgentRequest, AgentRunOutcome, ToolExecutor, run_agent};
-use crate::llm::confidence::Confidence;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::{LlmCallError, LlmProvider};
 use crate::llm::result::{CheckOutcome, CheckOutput, CheckResult, CheckUsage};
@@ -14,7 +13,6 @@ use super::CheckDefinition;
 pub struct CheckRunConfig<'a> {
     pub provider: &'a str,
     pub model: &'a str,
-    pub confidence_threshold: Confidence,
     pub max_iterations: u32,
     pub input_per_1m_usd: f64,
     pub output_per_1m_usd: f64,
@@ -95,7 +93,6 @@ where
             tools: &prepared.tools,
             output_schema: &prepared.output_schema,
             validate_output: &validate_output,
-            confidence_threshold: config.confidence_threshold,
             max_iterations: config.max_iterations,
             console: config.console,
         },
@@ -150,6 +147,7 @@ mod tests {
     use crate::cache::CacheKey;
     use crate::git::CommitHash;
     use crate::llm::checks::{PreparedCheck, PreparedCheckTarget};
+    use crate::llm::confidence::Confidence;
     use crate::llm::provider::{ConversationTurn, LlmCallResult, LlmResponse, RawUsage};
     use crate::llm::result::{CheckOutput, Finding, Severity};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
@@ -225,7 +223,6 @@ mod tests {
         CheckRunConfig {
             provider: "test",
             model: "test-model",
-            confidence_threshold: Confidence::try_from(0.8).unwrap(),
             max_iterations: 2,
             input_per_1m_usd: 2.0,
             output_per_1m_usd: 6.0,
@@ -238,7 +235,6 @@ mod tests {
         CheckRunConfig {
             provider: "test",
             model: "test-model",
-            confidence_threshold: Confidence::try_from(0.8).unwrap(),
             max_iterations: 2,
             input_per_1m_usd: 2.0,
             output_per_1m_usd: 6.0,

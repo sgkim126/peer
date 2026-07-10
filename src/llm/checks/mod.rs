@@ -24,7 +24,6 @@ use crate::llm::checks::quality::QualityCheck;
 use crate::llm::checks::runner::{CheckRunConfig, CheckRunError, run_check};
 use crate::llm::checks::security::SecurityCheck;
 use crate::llm::checks::size::SizeCheck;
-use crate::llm::confidence::{Confidence, ConfidenceError};
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::{
     ConversationTurn, LlmProvider, ProviderCreationError, ToolSpec, create_provider,
@@ -37,7 +36,6 @@ use crate::llm::tool_executor::PeerToolExecutor;
 #[derive(Debug)]
 pub enum CheckCommandError {
     Config(crate::error::PeerError),
-    InvalidConfidence(ConfidenceError),
     Provider(ProviderCreationError),
     Run(CheckRunError),
 }
@@ -45,12 +43,6 @@ pub enum CheckCommandError {
 impl From<crate::error::PeerError> for CheckCommandError {
     fn from(err: crate::error::PeerError) -> Self {
         Self::Config(err)
-    }
-}
-
-impl From<ConfidenceError> for CheckCommandError {
-    fn from(err: ConfidenceError) -> Self {
-        Self::InvalidConfidence(err)
     }
 }
 
@@ -76,7 +68,6 @@ impl fmt::Display for CheckCommandError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Config(error) => error.fmt(f),
-            Self::InvalidConfidence(error) => error.fmt(f),
             Self::Provider(error) => error.fmt(f),
             Self::Run(error) => error.fmt(f),
         }
@@ -87,7 +78,6 @@ impl std::error::Error for CheckCommandError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Config(error) => Some(error),
-            Self::InvalidConfidence(error) => Some(error),
             Self::Provider(error) => Some(error),
             Self::Run(error) => Some(error),
         }
@@ -168,7 +158,6 @@ where
     P: LlmProvider,
     E: ToolExecutor,
 {
-    let confidence_threshold = Confidence::try_from(execution.config.llm.confidence_threshold)?;
     let max_iterations = execution.config.llm.max_iterations;
     let (_, model_config) = execution
         .config
@@ -176,7 +165,6 @@ where
     let run_config = CheckRunConfig {
         provider: execution.provider_name,
         model: &model_config.name,
-        confidence_threshold,
         max_iterations,
         input_per_1m_usd: model_config.input_per_1m_usd,
         output_per_1m_usd: model_config.output_per_1m_usd,
@@ -528,7 +516,6 @@ mod tests {
             review: ReviewConfig { max_commits: 10 },
             llm: LlmConfig {
                 default_provider: "test".to_string(),
-                confidence_threshold: 0.8,
                 max_iterations: 3,
             },
             providers: vec![ProviderConfig {

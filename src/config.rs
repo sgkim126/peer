@@ -22,7 +22,6 @@ pub struct ReviewConfig {
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct LlmConfig {
     pub default_provider: String,
-    pub confidence_threshold: f64,
     pub max_iterations: u32,
 }
 
@@ -220,7 +219,6 @@ mod tests {
                 review: ReviewConfig { max_commits: 10 },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
-                    confidence_threshold: 0.8,
                     max_iterations: 5,
                 },
                 providers: vec![

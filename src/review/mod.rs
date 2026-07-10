@@ -323,7 +323,8 @@ mod tests {
 
     use super::*;
     use crate::git::run_git;
-    use crate::llm::confidence::Confidence;
+    use crate::llm::checks::runner::CheckRunError;
+    use crate::llm::provider::LlmCallError;
     use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, CheckUserInfoRequest};
 
     struct Repo {
@@ -428,7 +429,9 @@ mod tests {
         };
         let success = CheckOutcome::success(check_result());
         let needs_user_info = needs_user_info_outcome();
-        let error = CheckCommandError::from(Confidence::try_from(1.1).unwrap_err());
+        let error = CheckCommandError::Run(CheckRunError::LlmCall(LlmCallError::ContextOverflow {
+            message: "context is full".to_string(),
+        }));
         let mut results = VecDeque::from([
             Ok(success.clone()),
             Ok(needs_user_info.clone()),

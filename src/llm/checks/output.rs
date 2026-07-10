@@ -42,7 +42,6 @@ impl CheckCommandErrorOutput {
         let message = error.to_string();
         let (code, is_retryable) = match error {
             CheckCommandError::Config(error) => peer_error_classification(error),
-            CheckCommandError::InvalidConfidence(_) => (ErrorCode::ConfigInvalid, false),
             CheckCommandError::Provider(error) => provider_error_classification(error),
             CheckCommandError::Run(error) => check_run_error_classification(error),
         };

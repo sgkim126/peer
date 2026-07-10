@@ -1,7 +1,6 @@
 use std::fmt;
 
 use crate::console::Console;
-use crate::llm::confidence::Confidence;
 use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
     ToolCall, ToolSpec,
@@ -14,8 +13,6 @@ pub struct AgentRequest<'a> {
     pub tools: &'a [ToolSpec],
     pub output_schema: &'a serde_json::Value,
     pub validate_output: &'a dyn Fn(&CheckOutput) -> Result<(), String>,
-    #[allow(dead_code)]
-    pub confidence_threshold: Confidence,
     pub max_iterations: u32,
     pub console: Console,
 }
@@ -234,6 +231,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::llm::confidence::Confidence;
     use crate::llm::provider::{LlmCallResult, LlmResponse};
     use crate::llm::test_support::{FakeToolExecutor, MockProvider};
 
@@ -275,7 +273,6 @@ mod tests {
             tools,
             output_schema,
             validate_output: &accept_output,
-            confidence_threshold: Confidence::try_from(0.8).unwrap(),
             max_iterations,
             console: Console::default(),
         }
@@ -322,7 +319,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepts_check_output_below_confidence_threshold() {
+    async fn accepts_low_confidence_check_output() {
         let provider = MockProvider::new([Ok(call_result(
             LlmResponse::CheckOutput(check_output_with_confidence("uncertain", 0.7)),
             10,
@@ -345,7 +342,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn accepts_confidence_equal_to_threshold() {
+    async fn accepts_valid_check_output() {
         let provider = MockProvider::new([Ok(call_result(
             LlmResponse::CheckOutput(check_output_with_confidence("enough", 0.8)),
             10,
