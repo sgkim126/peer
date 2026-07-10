@@ -103,6 +103,14 @@ runs:
           peer init
         fi
 
+        mkdir -p .peer/cache
+
+    - name: Restore peer cache
+      uses: actions/cache@v6
+      with:
+        path: .peer/cache
+        key: peer-cache-${{ runner.os }}-${{ github.repository }}-pr-${{ github.event.issue.number }}
+
     - name: Run peer review
       id: review
       shell: bash
