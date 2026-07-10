@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::fmt::Write;
 use std::io::IsTerminal;
@@ -6,7 +7,7 @@ use crate::cli::OutputFormat;
 use crate::console::Console;
 use crate::llm::checks::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
 use crate::llm::result::{
-    CheckOutcome, CheckResult, CheckTarget, CheckUserInfoRequest, Finding, Severity,
+    CheckOutcome, CheckResult, CheckTarget, CheckUsage, CheckUserInfoRequest, Finding, Severity,
 };
 use crate::review::{ReviewCheck, ReviewCheckError, ReviewResult};
 use owo_colors::Style;
@@ -148,28 +149,13 @@ pub fn render_review_result(
 fn render_check_result_impl(
     result: &CheckResult,
     options: &RenderOptions,
-    console: Console,
     use_color: bool,
 ) -> Result<String, RenderError> {
     match options {
-        RenderOptions::Json => render_check_output_impl(
-            &CheckCommandOutput::success(result.clone()),
-            &RenderOptions::Json,
-            console,
-            use_color,
-        ),
-        RenderOptions::Terminal => {
-            log_result_usage(result, console);
-            Ok(render_terminal_result(result, use_color))
-        }
-        RenderOptions::Markdown => {
-            log_result_usage(result, console);
-            Ok(render_markdown_result(result))
-        }
-        RenderOptions::Github { repo } => {
-            log_result_usage(result, console);
-            Ok(render_github_result(result, repo))
-        }
+        RenderOptions::Json => render_json(&CheckCommandOutput::success(result.clone())),
+        RenderOptions::Terminal => Ok(render_terminal_result(result, use_color)),
+        RenderOptions::Markdown => Ok(render_markdown_result(result)),
+        RenderOptions::Github { repo } => Ok(render_github_result(result, repo)),
     }
 }
 
@@ -179,13 +165,15 @@ fn render_review_result_impl(
     console: Console,
     use_color: bool,
 ) -> Result<String, RenderError> {
+    log_review_usage(result, console);
+
     match options {
-        RenderOptions::Json => render_review_json(result, console),
+        RenderOptions::Json => render_review_json(result),
         RenderOptions::Terminal | RenderOptions::Markdown | RenderOptions::Github { .. } => {
             let outcomes = result
                 .outcomes
                 .iter()
-                .map(|outcome| render_check_outcome_impl(outcome, options, console, use_color));
+                .map(|outcome| render_check_outcome_impl(outcome, options, use_color));
             let errors = result
                 .errors
                 .iter()
@@ -202,13 +190,10 @@ fn render_review_result_impl(
 fn render_check_outcome_impl(
     outcome: &CheckOutcome,
     options: &RenderOptions,
-    console: Console,
     use_color: bool,
 ) -> Result<String, RenderError> {
     match outcome {
-        CheckOutcome::Success { check } => {
-            render_check_result_impl(check, options, console, use_color)
-        }
+        CheckOutcome::Success { check } => render_check_result_impl(check, options, use_color),
         CheckOutcome::NeedsUserInfo { request } => Ok(match options {
             RenderOptions::Json => unreachable!("review json renders the full review result"),
             RenderOptions::Terminal => render_terminal_user_info_request(request, use_color),
@@ -262,9 +247,7 @@ fn render_json(output: &CheckCommandOutput) -> Result<String, RenderError> {
     serde_json::to_string_pretty(&value).map_err(RenderError::Serialization)
 }
 
-fn render_review_json(result: &ReviewResult, console: Console) -> Result<String, RenderError> {
-    log_review_usage(result, console);
-
+fn render_review_json(result: &ReviewResult) -> Result<String, RenderError> {
     let mut value = serde_json::to_value(result).map_err(RenderError::Serialization)?;
     remove_review_usage(&mut value);
     serde_json::to_string_pretty(&value).map_err(RenderError::Serialization)
@@ -321,26 +304,45 @@ fn remove_review_usage(value: &mut serde_json::Value) {
 
 fn log_usage(output: &CheckCommandOutput, console: Console) {
     if let Ok(CheckOutcome::Success { check }) = output.as_outcome() {
-        log_result_usage(check, console);
+        log_check_usage(&check.usage, console);
     }
 }
 
 fn log_review_usage(result: &ReviewResult, console: Console) {
-    for outcome in &result.outcomes {
-        if let CheckOutcome::Success { check } = outcome {
-            log_result_usage(check, console);
-        }
+    let usages = result.outcomes.iter().filter_map(|outcome| match outcome {
+        CheckOutcome::Success { check } => Some(&check.usage),
+        CheckOutcome::NeedsUserInfo { .. } => None,
+    });
+
+    for usage in aggregate_usage_by_model(usages) {
+        log_check_usage(&usage, console);
     }
 }
 
-fn log_result_usage(result: &CheckResult, console: Console) {
+fn log_check_usage(usage: &CheckUsage, console: Console) {
     console.verbose(format_args!(
         "Usage: {} input, {} output, ${:.6} ({})",
-        result.usage.input_tokens,
-        result.usage.output_tokens,
-        result.usage.cost_usd,
-        result.usage.model
+        usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.model
     ));
+}
+
+fn aggregate_usage_by_model<'a>(
+    usages: impl IntoIterator<Item = &'a CheckUsage>,
+) -> Vec<CheckUsage> {
+    let mut totals = BTreeMap::new();
+
+    for usage in usages {
+        totals
+            .entry(usage.model.clone())
+            .and_modify(|total: &mut CheckUsage| {
+                total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
+                total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
+                total.cost_usd += usage.cost_usd;
+            })
+            .or_insert_with(|| usage.clone());
+    }
+
+    totals.into_values().collect()
 }
 
 fn render_terminal(output: &CheckCommandOutput, use_color: bool) -> String {
@@ -941,6 +943,48 @@ mod tests {
         result
     }
 
+    #[test]
+    fn aggregates_review_usage_by_model() {
+        let model1 = "other-model";
+        let input_tokens1 = 50;
+        let output_tokens1 = 10;
+        let cost_usd1 = 0.002;
+
+        let mut result = success_review_result();
+        let CheckOutcome::Success { check } = &mut result.outcomes[1] else {
+            unreachable!();
+        };
+        check.usage.model = model1.to_string();
+        check.usage.input_tokens = input_tokens1;
+        check.usage.output_tokens = output_tokens1;
+        check.usage.cost_usd = cost_usd1;
+
+        let mut another = success_result();
+        let input_tokens2 = 5;
+        let output_tokens2 = 10;
+        let cost_usd2 = 0.0001;
+        another.usage.input_tokens = input_tokens2;
+        another.usage.output_tokens = output_tokens2;
+        another.usage.cost_usd = cost_usd2;
+        result.outcomes.push(CheckOutcome::success(another));
+
+        let usages = result.outcomes.iter().filter_map(|outcome| match outcome {
+            CheckOutcome::Success { check } => Some(&check.usage),
+            CheckOutcome::NeedsUserInfo { .. } => None,
+        });
+        let totals = aggregate_usage_by_model(usages);
+
+        assert_eq!(totals.len(), 2);
+        assert_eq!(totals[0].model, model1);
+        assert_eq!(totals[0].input_tokens, input_tokens1);
+        assert_eq!(totals[0].output_tokens, output_tokens1);
+        assert_eq!(totals[0].cost_usd, cost_usd1);
+        assert_eq!(totals[1].model, "test-model");
+        assert_eq!(totals[1].input_tokens, 100 + input_tokens2);
+        assert_eq!(totals[1].output_tokens, 20 + output_tokens2);
+        assert_eq!(totals[1].cost_usd, 0.001 + cost_usd2);
+    }
+
     fn review_result_with_failed_check() -> ReviewResult {
         ReviewResult {
             outcomes: vec![],
@@ -1101,8 +1145,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_check_result_for_terminal() {
         let result = success_result_with_finding();
 
-        let rendered =
-            render_check_result_impl(&result, &RenderOptions::Terminal, console(), false).unwrap();
+        let rendered = render_check_result_impl(&result, &RenderOptions::Terminal, false).unwrap();
 
         assert!(rendered.contains("Check: size"));
         assert!(rendered.contains("Status: issue"));
@@ -1113,8 +1156,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_check_result_as_pretty_json_envelope() {
         let result = success_result();
 
-        let rendered =
-            render_check_result_impl(&result, &RenderOptions::Json, console(), false).unwrap();
+        let rendered = render_check_result_impl(&result, &RenderOptions::Json, false).unwrap();
         let value: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(value, success_envelope_without_usage());
@@ -1487,8 +1529,7 @@ A critical issue was found.
     fn renders_check_result_for_markdown() {
         let result = success_result_with_finding();
 
-        let rendered =
-            render_check_result_impl(&result, &RenderOptions::Markdown, console(), false).unwrap();
+        let rendered = render_check_result_impl(&result, &RenderOptions::Markdown, false).unwrap();
 
         assert!(rendered.contains("## Check: size"));
         assert!(rendered.contains("- **Status:** issue"));
