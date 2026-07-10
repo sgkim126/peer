@@ -58,6 +58,41 @@ fn is_github_repo_part_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')
 }
 
+#[allow(dead_code)]
+fn github_commit_url(repo: &str, commit: &str) -> String {
+    format!("https://github.com/{repo}/commit/{commit}")
+}
+
+#[allow(dead_code)]
+fn github_file_url(repo: &str, commit: &str, file: &str, line: Option<u32>) -> String {
+    let file = encode_github_path(file);
+    let mut url = format!("https://github.com/{repo}/blob/{commit}/{file}");
+    if let Some(line) = line {
+        write!(url, "#L{line}").unwrap();
+    }
+    url
+}
+
+fn encode_github_path(path: &str) -> String {
+    path.split('/')
+        .map(encode_github_path_segment)
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+fn encode_github_path_segment(segment: &str) -> String {
+    let mut encoded = String::new();
+    for byte in segment.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => write!(encoded, "%{byte:02X}").unwrap(),
+        }
+    }
+    encoded
+}
+
 pub fn render(
     input: &str,
     options: RenderOptions,
@@ -774,6 +809,38 @@ mod tests {
             RenderOptions::from_cli(OutputFormat::Github, Some("sgkim126/peer/extra".into()))
                 .unwrap_err(),
             RenderOptionsError::InvalidGithubRepo
+        );
+    }
+
+    #[test]
+    fn builds_github_commit_url() {
+        assert_eq!(
+            github_commit_url("sgkim126/peer", "abc1234"),
+            "https://github.com/sgkim126/peer/commit/abc1234"
+        );
+    }
+
+    #[test]
+    fn builds_github_file_url_with_line() {
+        assert_eq!(
+            github_file_url("sgkim126/peer", "abc1234", "src/main.rs", Some(42)),
+            "https://github.com/sgkim126/peer/blob/abc1234/src/main.rs#L42"
+        );
+    }
+
+    #[test]
+    fn builds_github_file_url_without_line() {
+        assert_eq!(
+            github_file_url("sgkim126/peer", "abc1234", "src/main.rs", None),
+            "https://github.com/sgkim126/peer/blob/abc1234/src/main.rs"
+        );
+    }
+
+    #[test]
+    fn encodes_github_file_path_segments() {
+        assert_eq!(
+            github_file_url("sgkim126/peer", "abc1234", "docs/hello world#1.md", Some(7)),
+            "https://github.com/sgkim126/peer/blob/abc1234/docs/hello%20world%231.md#L7"
         );
     }
 
