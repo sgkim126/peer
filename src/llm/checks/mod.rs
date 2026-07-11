@@ -158,7 +158,7 @@ where
     P: LlmProvider,
     E: ToolExecutor,
 {
-    let max_iterations = execution.config.llm.max_iterations;
+    let max_iterations = execution.config.max_iterations_for(check.name());
     let (_, model_config) = execution
         .config
         .resolve_provider(&execution.config.llm.default_provider, None)?;
@@ -423,7 +423,7 @@ mod tests {
     use super::*;
     use std::path::PathBuf;
 
-    use crate::config::{LlmConfig, ModelConfig, ProviderConfig, ReviewConfig};
+    use crate::config::{ChecksConfig, LlmConfig, ModelConfig, ProviderConfig, ReviewConfig};
     use crate::console::Console;
     use crate::git::run_git;
     use crate::llm::provider::{LlmCallError, LlmCallResult, LlmResponse, RawUsage, ToolCall};
@@ -511,6 +511,7 @@ mod tests {
                 default_provider: "test".to_string(),
                 max_iterations: 3,
             },
+            checks: ChecksConfig::default(),
             providers: vec![ProviderConfig {
                 name: "test".to_string(),
                 api_key_env: "UNUSED_API_KEY".to_string(),

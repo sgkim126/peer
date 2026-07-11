@@ -11,6 +11,8 @@ pub struct Config {
     pub version: u32,
     pub review: ReviewConfig,
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub checks: ChecksConfig,
     pub providers: Vec<ProviderConfig>,
 }
 
@@ -23,6 +25,26 @@ pub struct ReviewConfig {
 pub struct LlmConfig {
     pub default_provider: String,
     pub max_iterations: u32,
+}
+
+/// Per-check settings. Values omitted here fall back to `[llm]` settings.
+#[derive(Debug, Default, PartialEq, Deserialize)]
+pub struct ChecksConfig {
+    #[serde(default)]
+    pub size: CheckConfig,
+    #[serde(default)]
+    pub intent: CheckConfig,
+    #[serde(default)]
+    pub quality: CheckConfig,
+    #[serde(default)]
+    pub security: CheckConfig,
+    #[serde(default)]
+    pub coherence: CheckConfig,
+}
+
+#[derive(Debug, Default, PartialEq, Deserialize)]
+pub struct CheckConfig {
+    pub max_iterations: Option<u32>,
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -42,6 +64,20 @@ pub struct ModelConfig {
 }
 
 impl Config {
+    /// Returns the configured iteration limit for a check, falling back to `[llm]`.
+    pub fn max_iterations_for(&self, check: &str) -> u32 {
+        let override_value = match check {
+            "size" => self.checks.size.max_iterations,
+            "intent" => self.checks.intent.max_iterations,
+            "quality" => self.checks.quality.max_iterations,
+            "security" => self.checks.security.max_iterations,
+            "coherence" => self.checks.coherence.max_iterations,
+            _ => None,
+        };
+
+        override_value.unwrap_or(self.llm.max_iterations)
+    }
+
     /// Finds the named provider and selected model, returning references to both.
     /// Uses the provider's default model when `model_name` is absent.
     /// Returns `InvalidConfig` if either is absent.
@@ -219,7 +255,20 @@ mod tests {
                 review: ReviewConfig { max_commits: 10 },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
-                    max_iterations: 5,
+                    max_iterations: 3,
+                },
+                checks: ChecksConfig {
+                    size: CheckConfig::default(),
+                    intent: CheckConfig::default(),
+                    quality: CheckConfig {
+                        max_iterations: Some(5),
+                    },
+                    security: CheckConfig {
+                        max_iterations: Some(5),
+                    },
+                    coherence: CheckConfig {
+                        max_iterations: Some(10),
+                    },
                 },
                 providers: vec![
                     ProviderConfig {
@@ -307,5 +356,19 @@ mod tests {
                 ],
             }
         );
+    }
+
+    #[test]
+    fn check_max_iterations_overrides_llm_default() {
+        let mut config: Config = toml::from_str(&DEFAULT_CONFIG_TOML.replacen(
+            "[checks.security]\nmax_iterations = 5",
+            "[checks.security]\nmax_iterations = 2",
+            1,
+        ))
+        .unwrap();
+
+        assert_eq!(config.max_iterations_for("security"), 2);
+        config.checks.quality = CheckConfig::default();
+        assert_eq!(config.max_iterations_for("quality"), 3);
     }
 }

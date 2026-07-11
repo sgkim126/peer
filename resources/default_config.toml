@@ -5,7 +5,17 @@ max_commits = 10
 
 [llm]
 default_provider = "mistral"
+max_iterations = 3
+
+# Per-check overrides. Any omitted check uses `[llm].max_iterations`.
+[checks.quality]
 max_iterations = 5
+
+[checks.security]
+max_iterations = 5
+
+[checks.coherence]
+max_iterations = 10
 
 [[providers]]
 name = "mistral"
