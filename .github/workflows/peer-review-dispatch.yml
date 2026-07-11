@@ -127,11 +127,13 @@ jobs:
           script: |
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
+            const triggeredBy = context.actor;
             const metadata = [
               `provider: ${provider}`,
               model
                 ? `model: ${model}`
                 : 'model: provider default',
+              `Triggered by @${triggeredBy}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
 
@@ -254,6 +256,7 @@ jobs:
             const fs = require('fs');
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
+            const triggeredBy = context.actor;
             const stdoutPath = '${{ steps.peer.outputs.stdout-path }}';
             const exitCode = '${{ steps.peer.outputs.exit-code }}';
             let output = '';
@@ -270,6 +273,7 @@ jobs:
               model
                 ? `model: ${model}`
                 : 'model: provider default',
+              `Triggered by @${triggeredBy}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
             const status = exitCode === '0'
