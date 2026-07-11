@@ -39,6 +39,36 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Command::Prune => {
+            let cwd = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(err) => {
+                    eprintln!("cannot determine current directory.");
+                    console.debug(format_args!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let (_, project_root) = match discover(&cwd) {
+                Ok(config) => config,
+                Err(err) => {
+                    eprintln!("{err}");
+                    console.debug(format_args!("{err:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let cache_store = cache::CacheStore::new(project_root.join(".peer/cache"), console);
+            match cache_store.prune_older_versions() {
+                Ok(removed) => {
+                    println!("pruned {removed} old cache version directories");
+                    ExitCode::SUCCESS
+                }
+                Err(err) => {
+                    eprintln!("error: {err}");
+                    console.debug(format_args!("{err:?}"));
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Review {
             target,
             provider,

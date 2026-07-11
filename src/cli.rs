@@ -20,6 +20,9 @@ pub struct Cli {
 pub enum Command {
     Init,
 
+    /// Remove cache entries created by older peer versions.
+    Prune,
+
     Review {
         target: String,
 
@@ -141,6 +144,13 @@ mod tests {
         assert_eq!(cli.command, Command::Init);
         assert!(!cli.verbose);
         assert!(!cli.debug);
+    }
+
+    #[test]
+    fn prune() {
+        let cli = parse(&["peer", "prune"]);
+
+        assert_eq!(cli.command, Command::Prune);
     }
 
     #[test]

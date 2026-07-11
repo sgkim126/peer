@@ -98,3 +98,27 @@ fn default_config_contains_provider_examples_and_pricing() {
         "output pricing missing"
     );
 }
+
+#[test]
+fn prune_removes_only_older_cache_versions() {
+    let (mut cmd, tmp) = peer_in_tmp();
+    git_init(tmp.path());
+    cmd.arg("init").output().unwrap().assert_success();
+
+    let cache = tmp.path().join(".peer/cache");
+    std::fs::create_dir_all(cache.join("0.0.0")).unwrap();
+    std::fs::create_dir_all(cache.join(env!("CARGO_PKG_VERSION"))).unwrap();
+    std::fs::create_dir_all(cache.join("999.0.0")).unwrap();
+    std::fs::create_dir_all(cache.join("not-a-version")).unwrap();
+
+    let out = peer_in(&tmp).arg("prune").output().unwrap();
+    out.assert_success();
+
+    assert!(
+        String::from_utf8_lossy(&out.stdout).contains("pruned 1 old cache version directories")
+    );
+    assert!(!cache.join("0.0.0").exists());
+    assert!(cache.join(env!("CARGO_PKG_VERSION")).exists());
+    assert!(cache.join("999.0.0").exists());
+    assert!(cache.join("not-a-version").exists());
+}

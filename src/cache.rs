@@ -1,6 +1,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
+use semver::Version;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -102,6 +103,61 @@ impl CacheStore {
             .debug(format_args!("cache write: {}", path.display()));
         Ok(())
     }
+
+    /// Removes cache directories belonging to versions older than this binary.
+    pub fn prune_older_versions(&self) -> Result<usize, CachePruneError> {
+        let current_version = Version::parse(BINARY_VERSION)
+            .expect("CARGO_PKG_VERSION must be a valid semantic version");
+        prune_versions_before(&self.root, &current_version)
+    }
+}
+
+fn prune_versions_before(
+    root: &std::path::Path,
+    current_version: &Version,
+) -> Result<usize, CachePruneError> {
+    let entries = match std::fs::read_dir(root) {
+        Ok(entries) => entries,
+        Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(source) => {
+            return Err(CachePruneError::ReadDir {
+                path: root.to_path_buf(),
+                source,
+            });
+        }
+    };
+
+    let mut removed = 0;
+    for entry in entries {
+        let entry = entry.map_err(|source| CachePruneError::ReadDir {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        let path = entry.path();
+        let file_type = entry
+            .file_type()
+            .map_err(|source| CachePruneError::ReadDir {
+                path: path.clone(),
+                source,
+            })?;
+        if !file_type.is_dir() {
+            continue;
+        }
+
+        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
+            continue;
+        };
+        let Ok(version) = Version::parse(&name) else {
+            continue;
+        };
+        if version < *current_version {
+            std::fs::remove_dir_all(&path)
+                .map_err(|source| CachePruneError::Remove { path, source })?;
+            removed += 1;
+        }
+    }
+
+    Ok(removed)
 }
 
 fn cache_version(version: &str) -> String {
@@ -186,6 +242,47 @@ pub enum CacheWriteError {
         path: PathBuf,
         source: std::io::Error,
     },
+}
+
+#[derive(Debug)]
+pub enum CachePruneError {
+    ReadDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Remove {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
+impl fmt::Display for CachePruneError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ReadDir { path, source } => {
+                write!(
+                    f,
+                    "failed to read cache directory {}: {source}",
+                    path.display()
+                )
+            }
+            Self::Remove { path, source } => {
+                write!(
+                    f,
+                    "failed to remove cache directory {}: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for CachePruneError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::ReadDir { source, .. } | Self::Remove { source, .. } => Some(source),
+        }
+    }
 }
 
 impl fmt::Display for CacheWriteError {
@@ -419,5 +516,35 @@ mod tests {
             store.read_json::<Value>(&key),
             Err(CacheReadError::Deserialize { .. })
         ));
+    }
+
+    #[test]
+    fn prunes_only_older_version_directories() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("cache");
+        std::fs::create_dir_all(root.join("1.9.9")).unwrap();
+        std::fs::create_dir_all(root.join("2.0.0")).unwrap();
+        std::fs::create_dir_all(root.join("2.1.0")).unwrap();
+        std::fs::create_dir_all(root.join("not-a-version")).unwrap();
+        std::fs::write(root.join("cache-file"), "cache").unwrap();
+
+        let removed = prune_versions_before(&root, &Version::new(2, 0, 0)).unwrap();
+
+        assert_eq!(removed, 1);
+        assert!(!root.join("1.9.9").exists());
+        assert!(root.join("2.0.0").exists());
+        assert!(root.join("2.1.0").exists());
+        assert!(root.join("not-a-version").exists());
+        assert!(root.join("cache-file").exists());
+    }
+
+    #[test]
+    fn pruning_missing_cache_is_a_no_op() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        assert_eq!(
+            prune_versions_before(&tmp.path().join("cache"), &Version::new(2, 0, 0)).unwrap(),
+            0
+        );
     }
 }
