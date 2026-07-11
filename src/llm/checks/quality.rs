@@ -17,7 +17,13 @@ Assess the changed code for:
 4. Error handling, boundary conditions, and maintainability problems.
 5. Missing tests when the change introduces behavior that requires coverage.
 
-Focus on concrete issues introduced by the target commit. Do not report unrelated pre-existing problems or purely subjective style preferences. Use the required commit data supplied by the user. Use tools when file context is needed. Every finding must reference the target commit. Return no findings when no actionable issue is present."#;
+Focus on concrete issues introduced by the target commit. Security vulnerabilities or
+attacker-controlled threat paths, commit structure or size, and message-to-diff alignment are
+outside the scope of this check. Do not report unrelated pre-existing problems or purely
+subjective style preferences.
+
+Use the required commit data supplied by the user. Use tools when file context is needed. Every
+finding must reference the target commit. Return no findings when no actionable issue is present."#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QualityCheck {
@@ -140,6 +146,7 @@ mod tests {
             panic!("expected system prompt");
         };
         assert!(system.contains("general code quality"));
+        assert!(system.contains("outside the scope of this check"));
 
         let ConversationTurn::User(user) = &prepared.conversation[1] else {
             panic!("expected required data");

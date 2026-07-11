@@ -16,7 +16,12 @@ Assess whether:
 3. The message claims work that the diff does not implement.
 4. Important user-visible, compatibility, migration, or operational effects are omitted from the message.
 
-Use the required commit data supplied by the user. Use tools only when additional context is needed. Every finding must reference the target commit. Return no findings when the message and diff are aligned."#;
+Your scope is only whether the commit message and its diff agree. Do not assess code
+correctness, bugs, implementation quality, test coverage, security impact, or whether the
+commit should be split; these are outside the scope of this check. Do not report a vague or
+stylistically weak message when it accurately describes the change.
+
+Use the required commit data supplied by the user. Use tools only when additional context is needed to compare the message with the diff. Every finding must reference the target commit. Return no findings when the message and diff are aligned."#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IntentCheck {
@@ -135,6 +140,8 @@ mod tests {
             panic!("expected system prompt");
         };
         assert!(system.contains("stated intent"));
+        assert!(system.contains("whether the commit message and its diff agree"));
+        assert!(system.contains("Your scope is only whether the commit message"));
 
         let ConversationTurn::User(user) = &prepared.conversation[1] else {
             panic!("expected required data");

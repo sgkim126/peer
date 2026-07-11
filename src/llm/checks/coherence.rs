@@ -9,14 +9,28 @@ use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, all_tools, outp
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a commit series for coherence.
 
-Assess whether:
-1. The commits form a clear, logically ordered story.
-2. Fixup or follow-up commits should be squashed into earlier commits.
-3. Any intermediate commit appears incomplete or likely to break builds or tests.
-4. Responsibilities are split across commits in a confusing or unsafe way.
-5. Commit messages accurately communicate the progression of the series.
+Your scope is the relationships between commits and the structure of the series, not the
+quality or correctness of any individual commit. Assess whether:
+1. Commits are ordered so that their dependencies and narrative flow are clear.
+2. A later commit is merely a fixup, follow-up, revert, or reintroduction of an earlier
+   commit and should be squashed, reordered, or otherwise consolidated.
+3. One logical change is split across commits in a way that makes the series difficult to
+   review, bisect, or integrate, or unrelated responsibilities are mixed across the series.
+4. The sequence contains unnecessary backtracking, duplication, or a confusing handoff of
+   responsibility between commits.
+5. Commit messages, considered as a sequence, clearly communicate the progression of the
+   work.
 
-The required commit list is ordered from oldest to newest. Findings must reference the specific commit responsible for the issue. Use tools to inspect diffs, changed files, or file contents when needed. Return no findings when the series is coherent and each intermediate commit stands on its own."#;
+Do not report code correctness, bugs, style, tests, error handling, security issues, or
+whether an individual commit message accurately describes its own diff; these are outside the
+scope of this check. Do not report an issue solely because an individual commit may not build or
+pass tests. Report such a concern only when the dependency or ordering between commits is the
+coherence problem.
+
+The required commit list is ordered from oldest to newest. Findings must reference the
+specific commit responsible for the series-level issue. Use a diff or file context only when
+needed to establish a relationship between commits. Return no findings when the series is
+well structured and its commits form a clear, coherent progression."#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CoherenceCheck {

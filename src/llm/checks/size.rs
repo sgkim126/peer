@@ -1,22 +1,35 @@
 use serde::Serialize;
 
 use crate::cache::CacheKey;
-use crate::extract::{CommitDiff, CommitFiles, CommitMessage, ExtractError, Extractor};
+use crate::extract::{CommitDiff, CommitFiles, ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
 use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, all_tools, output_schema};
 
-const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for size and completeness.
+const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for scope and atomicity.
 
-Assess whether the commit:
-1. Has one coherent purpose rather than mixing unrelated changes.
-2. Combines refactoring and behavior changes in a way that should be split.
-3. Is too large to review or revert safely as one unit.
-4. Appears incomplete or requires missing companion changes.
+Your scope is only the structure of this commit as a reviewable, reversible unit. Assess
+whether:
+1. The commit mixes unrelated responsibilities that should be separate commits.
+2. Independent refactoring and behavioral work are combined without a structural reason.
+3. The change is so broad that splitting it into independently reviewable units would make
+   the history clearer or safer to revert.
+4. The commit is so narrow that a clearly required, directly related companion change is
+   missing, leaving the commit's stated structural unit incomplete.
 
-Use the required commit data supplied by the user. Use tools only when additional context is needed. Every finding must reference the target commit. Return no findings when the commit is appropriately scoped and complete."#;
+Do not assess code correctness, bugs, error handling, test coverage, security impact,
+or whether the commit message describes the diff accurately; these are outside the scope of
+this check.
+For completeness, report only an obvious missing change that is necessary to make this commit's
+own structural unit whole, not a possible implementation improvement, edge case, or missing
+test. Do not request or use commit-message data. A large commit is not a finding by itself:
+report only a concrete, meaningful split of unrelated or independent work.
+
+Use the required commit data supplied by the user. Use tools only when additional file context
+is needed to judge the change's structural boundaries. Every finding must reference the target
+commit. Return no findings when the commit is a coherent, appropriately atomic unit."#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SizeCheck {
@@ -51,11 +64,10 @@ impl CheckDefinition for SizeCheck {
         extractor: &Extractor,
         review_context: &ReviewContext,
     ) -> Result<PreparedCheck, ExtractError> {
-        let message = extractor.commit_message(self.commit.as_ref()).await?;
         let diff = extractor.commit_diff(self.commit.as_ref()).await?;
         let files = extractor.commit_files(self.commit.as_ref()).await?;
 
-        Ok(build_prepared_check(message, diff, files, review_context))
+        Ok(build_prepared_check(diff, files, review_context))
     }
 }
 
@@ -66,15 +78,13 @@ struct SizeCheckCacheParams<'a> {
 }
 
 fn build_prepared_check(
-    message: CommitMessage,
     diff: CommitDiff,
     files: CommitFiles,
     review_context: &ReviewContext,
 ) -> PreparedCheck {
-    let target = message.hash.clone();
+    let target = diff.hash.clone();
     let required_data = serde_json::json!({
         "target_commit": target,
-        "commit_message": message.message,
         "changed_files": files.files,
         "diff": diff.diff,
     });
@@ -92,7 +102,7 @@ fn build_prepared_check(
         ],
         tools: all_tools(),
         output_schema: output_schema(),
-        target: PreparedCheckTarget::Commit(message.hash),
+        target: PreparedCheckTarget::Commit(diff.hash),
     }
 }
 
@@ -108,10 +118,6 @@ mod tests {
     fn prepared_check() -> PreparedCheck {
         let target = hash("abc1234");
         build_prepared_check(
-            CommitMessage {
-                hash: target.clone(),
-                message: "Add size check".to_string(),
-            },
             CommitDiff {
                 hash: target.clone(),
                 diff: "diff --git a/src/a.rs b/src/a.rs\n+new line".to_string(),
@@ -145,13 +151,15 @@ mod tests {
         let ConversationTurn::System(system) = &prepared.conversation[0] else {
             panic!("expected system prompt");
         };
-        assert!(system.contains("size and completeness"));
+        assert!(system.contains("scope and atomicity"));
+        assert!(system.contains("Do not request or use commit-message data"));
+        assert!(system.contains("clearly required, directly related companion change"));
 
         let ConversationTurn::User(user) = &prepared.conversation[1] else {
             panic!("expected required data");
         };
         assert!(user.contains("\"target_commit\": \"abc1234\""));
-        assert!(user.contains("\"commit_message\": \"Add size check\""));
+        assert!(!user.contains("commit_message"));
         assert!(user.contains("\"path\": \"src/a.rs\""));
         assert!(user.contains("+new line"));
         assert!(!user.contains("Review context:"));
@@ -161,10 +169,6 @@ mod tests {
     fn prepared_conversation_contains_review_context_when_present() {
         let target = hash("abc1234");
         let prepared = build_prepared_check(
-            CommitMessage {
-                hash: target.clone(),
-                message: "Add size check".to_string(),
-            },
             CommitDiff {
                 hash: target.clone(),
                 diff: "diff --git a/src/a.rs b/src/a.rs\n+new line".to_string(),

@@ -17,7 +17,15 @@ Think like an attacker and assess whether the target commit introduces:
 4. Validation, deserialization, memory-safety, race, or denial-of-service vulnerabilities.
 5. Unsafe defaults, trust-boundary violations, or security-relevant regressions.
 
-Trace attacker-controlled inputs to sensitive operations. Distinguish exploitable issues from general code-quality concerns, and report only security findings introduced by the target commit. Use the required commit data supplied by the user. Use tools when surrounding file context is needed. Every finding must reference the target commit. Return no findings when no credible security issue is present."#;
+Trace attacker-controlled inputs to sensitive operations. Report a finding only when there is a
+credible security impact or exploit path. Do not report non-exploitable correctness bugs,
+general validation or error-handling concerns, code style, test coverage, commit scope, or
+message-to-diff alignment; these are outside the scope of this check. Report only security
+findings introduced by the target commit.
+
+Use the required commit data supplied by the user. Use tools when surrounding file context is
+needed. Every finding must reference the target commit. Return no findings when no credible
+security issue is present."#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SecurityCheck {
@@ -142,6 +150,8 @@ mod tests {
         assert!(system.contains("adversarial security review"));
         assert!(system.contains("Think like an attacker"));
         assert!(system.contains("attacker-controlled inputs"));
+        assert!(system.contains("credible security impact or exploit path"));
+        assert!(system.contains("outside the scope of this check"));
     }
 
     #[test]
