@@ -123,16 +123,22 @@ jobs:
         env:
           REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
           REVIEW_MODEL: ${{ steps.review.outputs.model }}
+          REVIEW_SKIP_CHECKS: ${{ steps.review.outputs.skip-checks }}
+          REVIEW_ONLY_CHECKS: ${{ steps.review.outputs.only-checks }}
         with:
           script: |
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
+            const skipChecks = process.env.REVIEW_SKIP_CHECKS;
+            const onlyChecks = process.env.REVIEW_ONLY_CHECKS;
             const triggeredBy = context.actor;
             const metadata = [
               `provider: ${provider}`,
               model
                 ? `model: ${model}`
                 : 'model: provider default',
+              ...(onlyChecks ? [`checks run (--only-check): ${onlyChecks}`] : []),
+              ...(skipChecks ? [`checks skipped (--skip-check): ${skipChecks}`] : []),
               `Triggered by @${triggeredBy}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
@@ -253,11 +259,15 @@ jobs:
         env:
           REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
           REVIEW_MODEL: ${{ steps.review.outputs.model }}
+          REVIEW_SKIP_CHECKS: ${{ steps.review.outputs.skip-checks }}
+          REVIEW_ONLY_CHECKS: ${{ steps.review.outputs.only-checks }}
         with:
           script: |
             const fs = require('fs');
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
+            const skipChecks = process.env.REVIEW_SKIP_CHECKS;
+            const onlyChecks = process.env.REVIEW_ONLY_CHECKS;
             const triggeredBy = context.actor;
             const stdoutPath = '${{ steps.peer.outputs.stdout-path }}';
             const exitCode = '${{ steps.peer.outputs.exit-code }}';
@@ -275,6 +285,8 @@ jobs:
               model
                 ? `model: ${model}`
                 : 'model: provider default',
+              ...(onlyChecks ? [`checks run (--only-check): ${onlyChecks}`] : []),
+              ...(skipChecks ? [`checks skipped (--skip-check): ${skipChecks}`] : []),
               `Triggered by @${triggeredBy}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
