@@ -71,7 +71,7 @@ runs:
             ;;
         esac
 
-        archive="peer-linux-x86_64-${tag}.tar.gz"
+        archive="peer-linux-x86_64-${version}.tar.gz"
         install_dir="$RUNNER_TEMP/peer-bin"
 
         mkdir -p "$install_dir"

@@ -67,11 +67,11 @@ jobs:
           mkdir -p dist
           cp "target/release/${{ matrix.binary-name }}" "dist/${{ matrix.binary-name }}"
           chmod +x "dist/${{ matrix.binary-name }}"
-          tar -C dist -czf "${{ matrix.artifact-name }}-v${{ steps.package.outputs.version }}.tar.gz" "${{ matrix.binary-name }}"
+          tar -C dist -czf "${{ matrix.artifact-name }}-${{ steps.package.outputs.version }}.tar.gz" "${{ matrix.binary-name }}"
 
       - name: Upload binary
         uses: actions/upload-artifact@v7
         with:
-          name: ${{ matrix.artifact-name }}-v${{ steps.package.outputs.version }}
-          path: ${{ matrix.artifact-name }}-v${{ steps.package.outputs.version }}.tar.gz
+          name: ${{ matrix.artifact-name }}-${{ steps.package.outputs.version }}
+          path: ${{ matrix.artifact-name }}-${{ steps.package.outputs.version }}.tar.gz
           if-no-files-found: error
