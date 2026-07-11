@@ -39,7 +39,7 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Command::Prune => {
+        Command::Prune { all } => {
             let cwd = match std::env::current_dir() {
                 Ok(cwd) => cwd,
                 Err(err) => {
@@ -57,9 +57,18 @@ async fn main() -> ExitCode {
                 }
             };
             let cache_store = cache::CacheStore::new(project_root.join(".peer/cache"), console);
-            match cache_store.prune_older_versions() {
+            let result = if all {
+                cache_store.prune_all()
+            } else {
+                cache_store.prune_older_versions()
+            };
+            match result {
                 Ok(removed) => {
-                    println!("pruned {removed} old cache version directories");
+                    if all {
+                        println!("pruned {removed} cache entries");
+                    } else {
+                        println!("pruned {removed} old cache version directories");
+                    }
                     ExitCode::SUCCESS
                 }
                 Err(err) => {

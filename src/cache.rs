@@ -106,15 +106,36 @@ impl CacheStore {
 
     /// Removes cache directories belonging to versions older than this binary.
     pub fn prune_older_versions(&self) -> Result<usize, CachePruneError> {
-        let current_version = Version::parse(BINARY_VERSION)
-            .expect("CARGO_PKG_VERSION must be a valid semantic version");
-        prune_versions_before(&self.root, &current_version)
+        let current_version = Version::parse(&format!("{}.0", cache_version(BINARY_VERSION)))
+            .expect("CARGO_PKG_VERSION must contain a major and minor version");
+        prune_entries(&self.root, |entry, file_type| {
+            if !file_type.is_dir() {
+                return false;
+            }
+
+            entry
+                .file_name()
+                .to_str()
+                .and_then(|name| {
+                    Version::parse(name)
+                        .or_else(|_| Version::parse(&format!("{name}.0")))
+                        .ok()
+                })
+                .is_some_and(|version| {
+                    Version::new(version.major, version.minor, 0) < current_version
+                })
+        })
+    }
+
+    /// Removes every cache entry, including entries for the current version.
+    pub fn prune_all(&self) -> Result<usize, CachePruneError> {
+        prune_entries(&self.root, |_, _| true)
     }
 }
 
-fn prune_versions_before(
+fn prune_entries(
     root: &std::path::Path,
-    current_version: &Version,
+    mut should_remove: impl FnMut(&std::fs::DirEntry, &std::fs::FileType) -> bool,
 ) -> Result<usize, CachePruneError> {
     let entries = match std::fs::read_dir(root) {
         Ok(entries) => entries,
@@ -140,21 +161,17 @@ fn prune_versions_before(
                 path: path.clone(),
                 source,
             })?;
-        if !file_type.is_dir() {
+        if !should_remove(&entry, &file_type) {
             continue;
         }
 
-        let Some(name) = entry.file_name().to_str().map(str::to_owned) else {
-            continue;
-        };
-        let Ok(version) = Version::parse(&name) else {
-            continue;
-        };
-        if version < *current_version {
+        let result = if file_type.is_dir() {
             std::fs::remove_dir_all(&path)
-                .map_err(|source| CachePruneError::Remove { path, source })?;
-            removed += 1;
-        }
+        } else {
+            std::fs::remove_file(&path)
+        };
+        result.map_err(|source| CachePruneError::Remove { path, source })?;
+        removed += 1;
     }
 
     Ok(removed)
@@ -519,32 +536,47 @@ mod tests {
     }
 
     #[test]
-    fn prunes_only_older_version_directories() {
+    fn prunes_only_older_cache_version_directories() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path().join("cache");
-        std::fs::create_dir_all(root.join("1.9.9")).unwrap();
-        std::fs::create_dir_all(root.join("2.0.0")).unwrap();
-        std::fs::create_dir_all(root.join("2.1.0")).unwrap();
+        std::fs::create_dir_all(root.join("0.0")).unwrap();
+        std::fs::create_dir_all(root.join(cache_version(BINARY_VERSION))).unwrap();
+        std::fs::create_dir_all(root.join("999.0")).unwrap();
         std::fs::create_dir_all(root.join("not-a-version")).unwrap();
         std::fs::write(root.join("cache-file"), "cache").unwrap();
+        let store = CacheStore::new(&root, Console::default());
 
-        let removed = prune_versions_before(&root, &Version::new(2, 0, 0)).unwrap();
+        let removed = store.prune_older_versions().unwrap();
 
         assert_eq!(removed, 1);
-        assert!(!root.join("1.9.9").exists());
-        assert!(root.join("2.0.0").exists());
-        assert!(root.join("2.1.0").exists());
+        assert!(!root.join("0.0").exists());
+        assert!(root.join(cache_version(BINARY_VERSION)).exists());
+        assert!(root.join("999.0").exists());
         assert!(root.join("not-a-version").exists());
         assert!(root.join("cache-file").exists());
     }
 
     #[test]
+    fn prunes_all_cache_entries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("cache");
+        std::fs::create_dir_all(root.join("0.1")).unwrap();
+        std::fs::create_dir_all(root.join("not-a-version")).unwrap();
+        std::fs::write(root.join("cache-file"), "cache").unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        let removed = store.prune_all().unwrap();
+
+        assert_eq!(removed, 3);
+        assert!(root.is_dir());
+        assert!(std::fs::read_dir(root).unwrap().next().is_none());
+    }
+
+    #[test]
     fn pruning_missing_cache_is_a_no_op() {
         let tmp = tempfile::tempdir().unwrap();
+        let store = CacheStore::new(tmp.path().join("cache"), Console::default());
 
-        assert_eq!(
-            prune_versions_before(&tmp.path().join("cache"), &Version::new(2, 0, 0)).unwrap(),
-            0
-        );
+        assert_eq!(store.prune_older_versions().unwrap(), 0);
     }
 }

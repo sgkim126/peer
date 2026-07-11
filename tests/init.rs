@@ -122,3 +122,22 @@ fn prune_removes_only_older_cache_versions() {
     assert!(cache.join("999.0.0").exists());
     assert!(cache.join("not-a-version").exists());
 }
+
+#[test]
+fn prune_all_removes_current_and_other_cache_entries() {
+    let (mut cmd, tmp) = peer_in_tmp();
+    git_init(tmp.path());
+    cmd.arg("init").output().unwrap().assert_success();
+
+    let cache = tmp.path().join(".peer/cache");
+    std::fs::create_dir_all(cache.join("0.0")).unwrap();
+    std::fs::create_dir_all(cache.join("not-a-version")).unwrap();
+    std::fs::write(cache.join("cache-file"), "cache").unwrap();
+
+    let out = peer_in(&tmp).args(["prune", "--all"]).output().unwrap();
+    out.assert_success();
+
+    assert!(String::from_utf8_lossy(&out.stdout).contains("pruned 3 cache entries"));
+    assert!(cache.is_dir());
+    assert!(std::fs::read_dir(cache).unwrap().next().is_none());
+}

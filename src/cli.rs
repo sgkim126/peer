@@ -21,7 +21,11 @@ pub enum Command {
     Init,
 
     /// Remove cache entries created by older peer versions.
-    Prune,
+    Prune {
+        /// Remove all cache entries, including those for the current version.
+        #[arg(long)]
+        all: bool,
+    },
 
     Review {
         target: String,
@@ -150,7 +154,14 @@ mod tests {
     fn prune() {
         let cli = parse(&["peer", "prune"]);
 
-        assert_eq!(cli.command, Command::Prune);
+        assert_eq!(cli.command, Command::Prune { all: false });
+    }
+
+    #[test]
+    fn prune_all() {
+        let cli = parse(&["peer", "prune", "--all"]);
+
+        assert_eq!(cli.command, Command::Prune { all: true });
     }
 
     #[test]
