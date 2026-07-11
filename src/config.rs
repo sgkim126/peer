@@ -16,6 +16,8 @@ pub struct Config {
     pub version: u32,
     pub review: ReviewConfig,
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub checks: ChecksConfig,
     pub providers: Vec<ProviderConfig>,
 }
 
@@ -30,6 +32,28 @@ pub struct ReviewConfig {
 pub struct LlmConfig {
     pub default_provider: String,
     pub max_iterations: NonZeroU32,
+}
+
+/// Per-check settings. Values omitted here fall back to `[llm]` settings.
+#[derive(Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChecksConfig {
+    #[serde(default)]
+    pub size: CheckConfig,
+    #[serde(default)]
+    pub intent: CheckConfig,
+    #[serde(default)]
+    pub quality: CheckConfig,
+    #[serde(default)]
+    pub security: CheckConfig,
+    #[serde(default)]
+    pub coherence: CheckConfig,
+}
+
+#[derive(Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckConfig {
+    pub max_iterations: Option<NonZeroU32>,
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -51,6 +75,21 @@ pub struct ModelConfig {
 }
 
 impl Config {
+    /// Returns the configured iteration limit for a check, falling back to `[llm]`.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn max_iterations_for(&self, check: &str) -> NonZeroU32 {
+        let override_value = match check {
+            "size" => self.checks.size.max_iterations,
+            "intent" => self.checks.intent.max_iterations,
+            "quality" => self.checks.quality.max_iterations,
+            "security" => self.checks.security.max_iterations,
+            "coherence" => self.checks.coherence.max_iterations,
+            _ => None,
+        };
+
+        override_value.unwrap_or(self.llm.max_iterations)
+    }
+
     /// Finds the named provider and selected model, returning references to both.
     /// Uses the provider's default model when `model_name` is absent.
     /// Returns `InvalidConfig` if either is absent.
@@ -274,7 +313,7 @@ mod tests {
     #[test]
     fn fails_when_max_iterations_is_zero() {
         let tmp =
-            init_dir(&DEFAULT_CONFIG_TOML.replace("max_iterations = 5", "max_iterations = 0"));
+            init_dir(&DEFAULT_CONFIG_TOML.replacen("max_iterations = 3", "max_iterations = 0", 1));
 
         assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
@@ -443,7 +482,20 @@ models = [
                 },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
-                    max_iterations: NonZeroU32::new(5).unwrap(),
+                    max_iterations: NonZeroU32::new(3).unwrap(),
+                },
+                checks: ChecksConfig {
+                    size: CheckConfig::default(),
+                    intent: CheckConfig::default(),
+                    quality: CheckConfig {
+                        max_iterations: NonZeroU32::new(5),
+                    },
+                    security: CheckConfig {
+                        max_iterations: NonZeroU32::new(5),
+                    },
+                    coherence: CheckConfig {
+                        max_iterations: NonZeroU32::new(10),
+                    },
                 },
                 providers: vec![
                     ProviderConfig {
@@ -530,6 +582,26 @@ models = [
                     }
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn check_max_iterations_overrides_llm_default() {
+        let mut config: Config = toml::from_str(&DEFAULT_CONFIG_TOML.replacen(
+            "[checks.security]\nmax_iterations = 5",
+            "[checks.security]\nmax_iterations = 2",
+            1,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            config.max_iterations_for("security"),
+            NonZeroU32::new(2).unwrap()
+        );
+        config.checks.quality = CheckConfig::default();
+        assert_eq!(
+            config.max_iterations_for("quality"),
+            NonZeroU32::new(3).unwrap()
         );
     }
 }
