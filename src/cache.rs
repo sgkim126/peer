@@ -6,6 +6,8 @@ use serde::de::DeserializeOwned;
 
 use crate::console::Console;
 
+const BINARY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug, Clone)]
 pub struct CacheStore {
     root: PathBuf,
@@ -22,6 +24,7 @@ impl CacheStore {
 
     pub fn path_for(&self, key: &CacheKey) -> PathBuf {
         self.root
+            .join(safe_segment(&cache_version(BINARY_VERSION)))
             .join(safe_segment(&key.tool))
             .join(safe_segment(&key.provider))
             .join(safe_segment(&key.model))
@@ -99,6 +102,10 @@ impl CacheStore {
             .debug(format_args!("cache write: {}", path.display()));
         Ok(())
     }
+}
+
+fn cache_version(version: &str) -> String {
+    version.split('.').take(2).collect::<Vec<_>>().join(".")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -285,12 +292,19 @@ mod tests {
         assert_eq!(
             store.path_for(&key),
             Path::new(".peer/cache")
+                .join(cache_version(BINARY_VERSION))
                 .join("tool")
                 .join("provider")
                 .join("model")
                 .join(prefix)
                 .join(format!("{}.json", key.params_hash))
         );
+    }
+
+    #[test]
+    fn cache_version_ignores_patch_number() {
+        assert_eq!(cache_version("1.2.3"), "1.2");
+        assert_eq!(cache_version("1.2.4"), "1.2");
     }
 
     #[test]
@@ -310,6 +324,7 @@ mod tests {
         assert_eq!(
             store.path_for(&key),
             Path::new(".peer/cache")
+                .join(cache_version(BINARY_VERSION))
                 .join("tool_name")
                 .join("provider_name")
                 .join("model_name")
@@ -335,6 +350,7 @@ mod tests {
         assert_eq!(
             store.path_for(&key),
             Path::new(".peer/cache")
+                .join(cache_version(BINARY_VERSION))
                 .join("_")
                 .join("_")
                 .join("_")
