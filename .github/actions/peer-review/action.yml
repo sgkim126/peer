@@ -11,6 +11,18 @@ inputs:
   model:
     description: LLM model name to pass to peer review.
     required: false
+  skip-checks:
+    description: Comma-separated checks to skip.
+    required: false
+    default: ""
+  only-checks:
+    description: Comma-separated checks to run exclusively.
+    required: false
+    default: ""
+  cache-key:
+    description: Cache key for peer's review cache. Leave empty to disable caching.
+    required: false
+    default: ""
   target:
     description: Git revision or range to review.
     required: true
@@ -114,10 +126,11 @@ runs:
         mkdir -p .peer/cache
 
     - name: Restore peer cache
+      if: inputs.cache-key != ''
       uses: actions/cache@v6
       with:
         path: .peer/cache
-        key: peer-cache-${{ runner.os }}-${{ github.repository }}-pr-${{ github.event.issue.number }}
+        key: ${{ inputs.cache-key }}
 
     - name: Run peer review
       id: review
@@ -125,6 +138,8 @@ runs:
       env:
         PEER_REVIEW_PROVIDER: ${{ inputs.provider }}
         PEER_REVIEW_MODEL: ${{ inputs.model }}
+        PEER_REVIEW_SKIP_CHECKS: ${{ inputs.skip-checks }}
+        PEER_REVIEW_ONLY_CHECKS: ${{ inputs.only-checks }}
         PEER_REVIEW_TARGET: ${{ inputs.target }}
         PEER_REVIEW_REPO: ${{ inputs.repo }}
         PEER_REVIEW_TITLE: ${{ inputs.title }}
@@ -166,6 +181,16 @@ runs:
         fi
         if [ -n "$PEER_REVIEW_MODEL" ]; then
           args+=(--model "$PEER_REVIEW_MODEL")
+        fi
+        if [ -n "$PEER_REVIEW_SKIP_CHECKS" ] && [ -n "$PEER_REVIEW_ONLY_CHECKS" ]; then
+          echo 'Only one of skip-checks or only-checks may be specified.' >&2
+          exit 2
+        fi
+        if [ -n "$PEER_REVIEW_SKIP_CHECKS" ]; then
+          args+=(--skip-check "$PEER_REVIEW_SKIP_CHECKS")
+        fi
+        if [ -n "$PEER_REVIEW_ONLY_CHECKS" ]; then
+          args+=(--only-check "$PEER_REVIEW_ONLY_CHECKS")
         fi
         if [ "$PEER_REVIEW_DEBUG" = "true" ]; then
           args=(--debug "${args[@]}")

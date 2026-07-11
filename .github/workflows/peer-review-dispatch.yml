@@ -1,0 +1,285 @@
+name: Peer Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review.
+        required: true
+        type: number
+      provider:
+        description: LLM provider.
+        required: true
+        type: choice
+        options:
+          - openai
+          - anthropic
+          - gemini
+          - mistral
+      model:
+        description: Optional model override. Leave empty to use the provider default.
+        required: false
+        default: ""
+        type: string
+      check_mode:
+        description: How to apply the selected review checks.
+        required: true
+        default: all
+        type: choice
+        options:
+          - all
+          - skip-check
+          - only-check
+      check_size:
+        description: Select the size check for the chosen mode.
+        required: false
+        default: false
+        type: boolean
+      check_intent:
+        description: Select the intent check for the chosen mode.
+        required: false
+        default: false
+        type: boolean
+      check_quality:
+        description: Select the quality check for the chosen mode.
+        required: false
+        default: false
+        type: boolean
+      check_security:
+        description: Select the security check for the chosen mode.
+        required: false
+        default: false
+        type: boolean
+      check_coherence:
+        description: Select the coherence check for the chosen mode.
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review:
+    name: Peer review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate inputs and load pull request
+        id: review
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const prNumber = Number(${{ toJSON(inputs.pr_number) }});
+            if (!Number.isSafeInteger(prNumber) || prNumber < 1) {
+              core.setFailed('pr_number must be a positive integer.');
+              return;
+            }
+
+            const provider = ${{ toJSON(inputs.provider) }};
+            const allowedProviders = new Set(['openai', 'anthropic', 'gemini', 'mistral']);
+            if (!allowedProviders.has(provider)) {
+              core.setFailed(`Unsupported provider: ${provider}`);
+              return;
+            }
+
+            const checkMode = ${{ toJSON(inputs.check_mode) }};
+            const checks = [
+              ['size', ${{ toJSON(inputs.check_size) }}],
+              ['intent', ${{ toJSON(inputs.check_intent) }}],
+              ['quality', ${{ toJSON(inputs.check_quality) }}],
+              ['security', ${{ toJSON(inputs.check_security) }}],
+              ['coherence', ${{ toJSON(inputs.check_coherence) }}],
+            ].filter(([, selected]) => selected).map(([check]) => check);
+            if (checkMode === 'all' && checks.length > 0) {
+              core.setFailed('Select checks only with skip-check or only-check mode.');
+              return;
+            }
+            if ((checkMode === 'skip-check' || checkMode === 'only-check') && checks.length === 0) {
+              core.setFailed(`Select at least one check when using ${checkMode}.`);
+              return;
+            }
+
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            core.setOutput('pr-number', String(prNumber));
+            core.setOutput('base-sha', pull.base.sha);
+            core.setOutput('head-sha', pull.head.sha);
+            core.setOutput('title', pull.title ?? '');
+            core.setOutput('provider', provider);
+            core.setOutput('model', (${{ toJSON(inputs.model) }} ?? '').trim());
+            core.setOutput('skip-checks', checkMode === 'skip-check' ? checks.join(',') : '');
+            core.setOutput('only-checks', checkMode === 'only-check' ? checks.join(',') : '');
+
+      - name: Create peer review placeholder
+        id: placeholder
+        uses: actions/github-script@v9
+        env:
+          REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
+          REVIEW_MODEL: ${{ steps.review.outputs.model }}
+        with:
+          script: |
+            const provider = process.env.REVIEW_PROVIDER;
+            const model = process.env.REVIEW_MODEL;
+            const metadata = [
+              `provider: ${provider}`,
+              model
+                ? `model: ${model}`
+                : 'model: provider default',
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join('\n');
+
+            const { data: comment } = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ steps.review.outputs.pr-number }}'),
+              body: `${metadata}\n\n⏳ peer review in progress.`,
+            });
+
+            core.setOutput('comment-id', String(comment.id));
+
+      - name: Checkout pull request
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ steps.review.outputs.pr-number }}/head
+          fetch-depth: 0
+
+      - name: Checkout peer actions
+        uses: actions/checkout@v7
+        with:
+          repository: sgkim126/peer
+          ref: main
+          path: .peer-action
+
+      - name: Prepare review context
+        id: context
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const fs = require('fs');
+            const os = require('os');
+            const path = require('path');
+            const prNumber = Number('${{ steps.review.outputs.pr-number }}');
+
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+
+            const issueComments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: prNumber,
+              per_page: 100,
+            });
+            const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+              per_page: 100,
+            });
+
+            const threads = [];
+            for (const comment of issueComments) {
+              if (comment.user?.login === 'github-actions[bot]') continue;
+              threads.push({ comments: [{
+                author: comment.user?.login ?? 'unknown',
+                body: comment.body ?? '',
+              }] });
+            }
+
+            const reviewThreads = new Map();
+            for (const comment of reviewComments) {
+              if (comment.user?.login === 'github-actions[bot]') continue;
+              const root = String(comment.in_reply_to_id ?? comment.id);
+              const thread = reviewThreads.get(root) ?? {
+                commit: comment.commit_id,
+                location: comment.path && (comment.line ?? comment.original_line)
+                  ? { path: comment.path, line: comment.line ?? comment.original_line }
+                  : undefined,
+                comments: [],
+              };
+              thread.comments.push({
+                author: comment.user?.login ?? 'unknown',
+                body: comment.body ?? '',
+              });
+              reviewThreads.set(root, thread);
+            }
+            threads.push(...reviewThreads.values());
+
+            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peer-review-'));
+            const bodyFile = path.join(dir, 'body.md');
+            const commentsFile = path.join(dir, 'comments.json');
+            fs.writeFileSync(bodyFile, pull.body ?? '');
+            fs.writeFileSync(commentsFile, JSON.stringify(threads, null, 2));
+            core.setOutput('body-file', bodyFile);
+            core.setOutput('comments-file', commentsFile);
+
+      - name: Run peer review
+        id: peer
+        uses: ./.peer-action/.github/actions/peer-review
+        with:
+          version: "0.1.5"
+          provider: ${{ steps.review.outputs.provider }}
+          model: ${{ steps.review.outputs.model }}
+          skip-checks: ${{ steps.review.outputs.skip-checks }}
+          only-checks: ${{ steps.review.outputs.only-checks }}
+          cache-key: peer-cache-${{ runner.os }}-${{ github.repository }}-pr-${{ steps.review.outputs.pr-number }}
+          target: ${{ steps.review.outputs.base-sha }}..${{ steps.review.outputs.head-sha }}
+          repo: ${{ github.repository }}
+          title: ${{ steps.review.outputs.title }}
+          body-file: ${{ steps.context.outputs.body-file }}
+          comments-file: ${{ steps.context.outputs.comments-file }}
+        env:
+          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+
+      - name: Update peer review placeholder
+        if: always() && steps.placeholder.outputs.comment-id != ''
+        uses: actions/github-script@v9
+        env:
+          REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
+          REVIEW_MODEL: ${{ steps.review.outputs.model }}
+        with:
+          script: |
+            const fs = require('fs');
+            const provider = process.env.REVIEW_PROVIDER;
+            const model = process.env.REVIEW_MODEL;
+            const stdoutPath = '${{ steps.peer.outputs.stdout-path }}';
+            const exitCode = '${{ steps.peer.outputs.exit-code }}';
+            let output = '';
+            if (stdoutPath) {
+              try {
+                output = fs.readFileSync(stdoutPath, 'utf8').trim();
+              } catch (error) {
+                core.warning(`Could not read peer review output: ${error.message}`);
+              }
+            }
+
+            const metadata = [
+              `provider: ${provider}`,
+              model
+                ? `model: ${model}`
+                : 'model: provider default',
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join('\n');
+            const status = exitCode === '0'
+              ? '✅ peer review completed.'
+              : `❌ peer review failed (exit code: ${exitCode || 'unknown'}).`;
+            const body = output ? `${metadata}\n\n${status}\n\n${output}` : `${metadata}\n\n${status}`;
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: Number('${{ steps.placeholder.outputs.comment-id }}'),
+              body,
+            });
