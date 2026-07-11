@@ -5,6 +5,11 @@ pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Provider-specific opaque state that must be replayed with the tool call.
+    ///
+    /// Gemini calls this a thought signature and requires it to retain its reasoning
+    /// context across stateless function-calling requests.
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

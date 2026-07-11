@@ -172,9 +172,9 @@ fn parse_response(
 fn parse_check_response(parts: &[serde_json::Value]) -> Result<LlmResponse, LlmCallError> {
     let tool_calls = parts
         .iter()
-        .filter_map(|part| part.get("functionCall"))
+        .filter(|part| part.get("functionCall").is_some())
         .enumerate()
-        .map(|(index, value)| parse_tool_call(index, value))
+        .map(|(index, part)| parse_tool_call(index, part))
         .collect::<Result<Vec<_>, _>>()?;
 
     if !tool_calls.is_empty() {
@@ -210,7 +210,10 @@ fn text_part<'a>(
         .ok_or_else(|| permanent_parse_error(missing_message))
 }
 
-fn parse_tool_call(index: usize, value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
+fn parse_tool_call(index: usize, part: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
+    let value = part
+        .get("functionCall")
+        .ok_or_else(|| permanent_parse_error("missing function call"))?;
     let name = required_string(value, "/name")?.to_string();
     let arguments = value
         .get("args")
@@ -221,6 +224,10 @@ fn parse_tool_call(index: usize, value: &serde_json::Value) -> Result<ToolCall, 
         id: gemini_call_id(index, &name),
         name,
         arguments,
+        thought_signature: part
+            .get("thoughtSignature")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned),
     })
 }
 
@@ -394,12 +401,16 @@ fn content(turn: &ConversationTurn) -> Result<serde_json::Value, LlmCallError> {
 }
 
 fn gemini_function_call(tool_call: &ToolCall) -> serde_json::Value {
-    json!({
+    let mut part = json!({
         "functionCall": {
             "name": tool_call.name,
             "args": tool_call.arguments,
         }
-    })
+    });
+    if let Some(signature) = &tool_call.thought_signature {
+        part["thoughtSignature"] = json!(signature);
+    }
+    part
 }
 
 fn tools(tool_specs: &[ToolSpec], output_schema: &serde_json::Value) -> Vec<serde_json::Value> {
@@ -569,6 +580,7 @@ mod tests {
                 id: "gemini:0:commit_diff".to_string(),
                 name: "commit_diff".to_string(),
                 arguments: json!({ "hash": "abc1234" }),
+                thought_signature: None,
             }]),
             ConversationTurn::ToolResult {
                 call_id: "gemini:0:commit_diff".to_string(),
@@ -598,6 +610,11 @@ mod tests {
         assert_eq!(
             http.body["contents"][0]["parts"][0]["functionCall"]["args"]["hash"],
             "abc1234"
+        );
+        assert!(
+            http.body["contents"][0]["parts"][0]
+                .get("thoughtSignature")
+                .is_none()
         );
         assert_eq!(http.body["contents"][1]["role"], "user");
         assert_eq!(
@@ -752,6 +769,55 @@ mod tests {
         assert_eq!(tool_calls[0].id, "gemini:0:commit_diff");
         assert_eq!(tool_calls[0].name, "commit_diff");
         assert_eq!(tool_calls[0].arguments, json!({ "hash": "abc1234" }));
+        assert_eq!(tool_calls[0].thought_signature, None);
+    }
+
+    #[test]
+    fn preserves_function_call_thought_signature_in_the_next_request() {
+        let body = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [{
+                        "functionCall": {
+                            "name": "commit_diff",
+                            "args": { "hash": "abc1234" }
+                        },
+                        "thoughtSignature": "opaque-signature"
+                    }]
+                }
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "candidatesTokenCount": 25
+            }
+        });
+        let result = parse_success_check(&body).unwrap();
+        let LlmResponse::ToolCalls(tool_calls) = result.response else {
+            panic!("expected tool calls");
+        };
+        assert_eq!(
+            tool_calls[0].thought_signature.as_deref(),
+            Some("opaque-signature")
+        );
+
+        let builder = GeminiRequestBuilder::new(Secret::new("test-api-key"), None);
+        let schema = output_schema();
+        let conversation = [ConversationTurn::AssistantToolCalls(tool_calls)];
+        let http = builder
+            .build(LlmRequest {
+                model: "gemini-3.5-flash",
+                conversation: &conversation,
+                output_mode: LlmOutputMode::Check {
+                    tools: &[],
+                    output_schema: &schema,
+                },
+            })
+            .unwrap();
+
+        assert_eq!(
+            http.body["contents"][0]["parts"][0]["thoughtSignature"],
+            "opaque-signature"
+        );
     }
 
     #[test]

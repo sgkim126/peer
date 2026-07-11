@@ -505,6 +505,7 @@ mod tests {
                 id: "call-1".to_string(),
                 name: "tool".to_string(),
                 arguments: serde_json::json!({}),
+                thought_signature: None,
             }]),
             usage: RawUsage::default(),
         })]);

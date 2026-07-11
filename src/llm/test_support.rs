@@ -258,6 +258,7 @@ mod tests {
             arguments: json!({
                 "hash": "abc1234"
             }),
+            thought_signature: None,
         };
 
         let result = executor.execute(call.clone()).await;

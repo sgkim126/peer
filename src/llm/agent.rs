@@ -402,6 +402,7 @@ mod tests {
             id: "call-1".to_string(),
             name: "commit_diff".to_string(),
             arguments: json!({ "hash": "abc1234" }),
+            thought_signature: None,
         };
         let provider = MockProvider::new([
             Ok(call_result(
@@ -462,6 +463,7 @@ mod tests {
             id: "call-1".to_string(),
             name: "commit_diff".to_string(),
             arguments: json!({ "hash": "abc1234" }),
+            thought_signature: None,
         };
         let provider = MockProvider::new([
             Ok(call_result(LlmResponse::ToolCalls(vec![tool_call]), 10, 5)),
@@ -497,6 +499,7 @@ mod tests {
                     "What production auth policy applies here, and why it affects this security check?"
                 ]
             }),
+            thought_signature: None,
         };
         let provider = MockProvider::new([Ok(call_result(
             LlmResponse::ToolCalls(vec![tool_call]),
@@ -532,11 +535,13 @@ mod tests {
             arguments: json!({
                 "questions": ["Which deployment flag is enabled, and why does it affect this check?"]
             }),
+            thought_signature: None,
         };
         let diff_call = ToolCall {
             id: "call-diff".to_string(),
             name: "get_commit_diff".to_string(),
             arguments: json!({ "revision": "abc1234" }),
+            thought_signature: None,
         };
         let provider = MockProvider::new([Ok(call_result(
             LlmResponse::ToolCalls(vec![diff_call, info_call]),

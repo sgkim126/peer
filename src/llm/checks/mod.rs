@@ -684,6 +684,7 @@ mod tests {
             arguments: json!({
                 "revision": "HEAD"
             }),
+            thought_signature: None,
         };
         let provider = MockProvider::new([
             Ok(LlmCallResult {

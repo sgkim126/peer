@@ -259,6 +259,7 @@ mod tests {
             arguments: json!({
                 "questions": ["Which deployment policy applies, and why does it affect this check?"]
             }),
+            thought_signature: None,
         }
     }
 

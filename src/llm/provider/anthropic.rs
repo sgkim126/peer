@@ -218,6 +218,7 @@ fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> 
         id,
         name,
         arguments,
+        thought_signature: None,
     })
 }
 
@@ -511,6 +512,7 @@ mod tests {
                 id: "call-1".to_string(),
                 name: "commit_diff".to_string(),
                 arguments: json!({ "hash": "abc1234" }),
+                thought_signature: None,
             }]),
             ConversationTurn::ToolResult {
                 call_id: "call-1".to_string(),
