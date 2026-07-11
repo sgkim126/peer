@@ -523,6 +523,105 @@ mod tests {
         (result, provider)
     }
 
+    fn grep_search_call() -> ToolCall {
+        ToolCall {
+            id: "grep-1".to_string(),
+            name: "grep_search".to_string(),
+            arguments: json!({
+                "query": "validate_token",
+                "revision": "HEAD",
+                "path": "src",
+                "context_lines": 2,
+            }),
+            thought_signature: None,
+        }
+    }
+
+    async fn run_check_after_grep_search<C>(
+        repository: &tempfile::TempDir,
+        check: C,
+    ) -> (
+        CheckResult,
+        MockProvider,
+        FakeToolExecutor,
+        ToolCall,
+        serde_json::Value,
+    )
+    where
+        C: CheckDefinition,
+    {
+        let console = Console::default();
+        let tool_call = grep_search_call();
+        let search_result = json!({
+            "lines": ["HEAD:src/auth.rs:10:validate_token(token);"],
+            "truncated": false,
+        });
+        let provider = MockProvider::new([
+            Ok(LlmCallResult {
+                response: LlmResponse::ToolCalls(vec![tool_call.clone()]),
+                usage: RawUsage {
+                    input_tokens: 10,
+                    output_tokens: 5,
+                },
+            }),
+            Ok(LlmCallResult {
+                response: LlmResponse::CheckOutput(CheckOutput {
+                    summary: "done".to_string(),
+                    findings: Vec::new(),
+                }),
+                usage: RawUsage {
+                    input_tokens: 20,
+                    output_tokens: 10,
+                },
+            }),
+        ]);
+        let tool_executor = FakeToolExecutor::new([Ok(search_result.clone())]);
+        let extractor = Extractor::new(repository.path().to_path_buf(), console);
+
+        let outcome = run_definition_with(
+            check,
+            CheckExecution {
+                console,
+                config: &test_config(),
+                provider_name: "test",
+                cache: None,
+                extractor: &extractor,
+                provider: &provider,
+                tool_executor: &tool_executor,
+                review_context: &ReviewContext::default(),
+            },
+        )
+        .await
+        .unwrap();
+
+        (
+            success_result(&outcome).clone(),
+            provider,
+            tool_executor,
+            tool_call,
+            search_result,
+        )
+    }
+
+    fn assert_grep_search_follow_up(
+        provider: &MockProvider,
+        tool_executor: &FakeToolExecutor,
+        tool_call: ToolCall,
+        search_result: serde_json::Value,
+    ) {
+        assert_eq!(tool_executor.calls(), vec![tool_call.clone()]);
+
+        let requests = provider.requests();
+        assert_eq!(requests.len(), 2);
+        let Some(ConversationTurn::ToolResult { call_id, result }) =
+            requests[1].conversation.last()
+        else {
+            panic!("expected grep search result in follow-up request");
+        };
+        assert_eq!(call_id, &tool_call.id);
+        assert_eq!(result, &search_result);
+    }
+
     #[tokio::test]
     async fn runs_size_check_with_injected_dependencies() {
         let repository = init_repository().await;
@@ -565,6 +664,32 @@ mod tests {
         let (result, _) = run_check_with_repository(&repository, check).await;
 
         assert_eq!(result.check, "security");
+    }
+
+    #[tokio::test]
+    async fn quality_check_can_complete_after_grep_search() {
+        let repository = init_repository().await;
+        let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
+        let check = QualityCheck::try_new("HEAD", &extractor).await.unwrap();
+        let (result, provider, tool_executor, tool_call, search_result) =
+            run_check_after_grep_search(&repository, check).await;
+
+        assert_eq!(result.check, "quality");
+        assert_eq!(result.iterations, 2);
+        assert_grep_search_follow_up(&provider, &tool_executor, tool_call, search_result);
+    }
+
+    #[tokio::test]
+    async fn security_check_can_complete_after_grep_search() {
+        let repository = init_repository().await;
+        let extractor = Extractor::new(repository.path().to_path_buf(), Console::default());
+        let check = SecurityCheck::try_new("HEAD", &extractor).await.unwrap();
+        let (result, provider, tool_executor, tool_call, search_result) =
+            run_check_after_grep_search(&repository, check).await;
+
+        assert_eq!(result.check, "security");
+        assert_eq!(result.iterations, 2);
+        assert_grep_search_follow_up(&provider, &tool_executor, tool_call, search_result);
     }
 
     #[tokio::test]
