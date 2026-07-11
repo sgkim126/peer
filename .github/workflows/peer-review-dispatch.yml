@@ -239,6 +239,8 @@ jobs:
           title: ${{ steps.review.outputs.title }}
           body-file: ${{ steps.context.outputs.body-file }}
           comments-file: ${{ steps.context.outputs.comments-file }}
+          debug: "true"
+          verbose: "true"
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
