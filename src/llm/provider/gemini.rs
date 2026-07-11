@@ -384,7 +384,9 @@ fn content(turn: &ConversationTurn) -> Result<serde_json::Value, LlmCallError> {
             "parts": [{
                 "functionResponse": {
                     "name": gemini_call_name(call_id)?,
-                    "response": result,
+                    // Gemini requires `response` to be a JSON object. Tool results can
+                    // also be strings or arrays, so keep their value under a stable key.
+                    "response": { "result": result },
                 }
             }],
         })),
@@ -603,8 +605,43 @@ mod tests {
             "commit_diff"
         );
         assert_eq!(
-            http.body["contents"][1]["parts"][0]["functionResponse"]["response"]["diff"],
+            http.body["contents"][1]["parts"][0]["functionResponse"]["response"]["result"]["diff"],
             "+hello"
+        );
+    }
+
+    #[test]
+    fn wraps_non_object_tool_results_in_a_gemini_response_object() {
+        let builder = GeminiRequestBuilder::new(Secret::new("test-api-key"), None);
+        let schema = output_schema();
+        let conversation = [
+            ConversationTurn::ToolResult {
+                call_id: "gemini:0:get_commits_in_range".to_string(),
+                result: json!(["abc1234", "def5678"]),
+            },
+            ConversationTurn::ToolResult {
+                call_id: "gemini:1:get_commit_message".to_string(),
+                result: json!("Add CLI command structure"),
+            },
+        ];
+        let request = LlmRequest {
+            model: "gemini-2.5-pro",
+            conversation: &conversation,
+            output_mode: LlmOutputMode::Check {
+                tools: &[],
+                output_schema: &schema,
+            },
+        };
+
+        let http = builder.build(request).unwrap();
+
+        assert_eq!(
+            http.body["contents"][0]["parts"][0]["functionResponse"]["response"],
+            json!({ "result": ["abc1234", "def5678"] })
+        );
+        assert_eq!(
+            http.body["contents"][1]["parts"][0]["functionResponse"]["response"],
+            json!({ "result": "Add CLI command structure" })
         );
     }
 
