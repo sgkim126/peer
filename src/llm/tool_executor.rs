@@ -46,6 +46,19 @@ impl PeerToolExecutor {
                     .await?;
                 Ok(ExtractData::FileContent(result))
             }
+            "grep_search" => {
+                let arguments: GrepSearchArguments = parse_arguments(&call)?;
+                let result = self
+                    .extractor
+                    .grep_search(
+                        &arguments.query,
+                        &arguments.revision,
+                        arguments.path.as_deref().map(Path::new),
+                        arguments.context_lines.unwrap_or_default(),
+                    )
+                    .await?;
+                Ok(ExtractData::GrepSearch(result))
+            }
             _ => Err(ToolExecutionError::UnknownTool {
                 name: call.name.clone(),
             }),
@@ -78,6 +91,14 @@ struct FileContentArguments {
     revision: String,
 }
 
+#[derive(Deserialize)]
+struct GrepSearchArguments {
+    query: String,
+    revision: String,
+    path: Option<String>,
+    context_lines: Option<u8>,
+}
+
 fn parse_arguments<T>(call: &ToolCall) -> Result<T, ToolExecutionError>
 where
     T: for<'de> Deserialize<'de>,
@@ -102,6 +123,7 @@ fn tool_result_json(data: ExtractData) -> Result<serde_json::Value, ToolExecutio
         ExtractData::FileContent(FileContent::Binary { size, .. }) => {
             Ok(serde_json::json!({ "type": "binary", "size": size }))
         }
+        ExtractData::GrepSearch(result) => Ok(serde_json::to_value(result)?),
     }
 }
 
@@ -241,6 +263,138 @@ mod tests {
             .unwrap();
 
         assert_eq!(result, serde_json::json!("test message"));
+    }
+
+    #[tokio::test]
+    async fn grep_search_uses_the_requested_commit_snapshot() {
+        let repository = tempfile::tempdir().unwrap();
+        let console = Console::default();
+        run_git(&["init"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["config", "user.email", "test@example.com"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        run_git(&["config", "user.name", "Test"], repository.path(), console)
+            .await
+            .unwrap();
+        std::fs::create_dir_all(repository.path().join("src")).unwrap();
+        std::fs::write(
+            repository.path().join("src/auth.rs"),
+            "fn authenticate() {\n    validate_token();\n}\n",
+        )
+        .unwrap();
+        run_git(&["add", "src/auth.rs"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "add authentication"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        std::fs::write(
+            repository.path().join("src/auth.rs"),
+            "fn authenticate() {}\n",
+        )
+        .unwrap();
+        let executor =
+            PeerToolExecutor::new(Extractor::new(repository.path().to_path_buf(), console));
+
+        let result = executor
+            .execute(call(
+                "grep_search",
+                serde_json::json!({
+                    "query": "validate_token",
+                    "revision": "HEAD",
+                    "path": "src",
+                    "context_lines": 1
+                }),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(result["truncated"], false);
+        assert!(
+            result["lines"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|line| line.as_str().unwrap().contains("validate_token"))
+        );
+    }
+
+    #[tokio::test]
+    async fn grep_search_returns_an_empty_result_when_there_is_no_match() {
+        let repository = tempfile::tempdir().unwrap();
+        let console = Console::default();
+        run_git(&["init"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["config", "user.email", "test@example.com"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        run_git(&["config", "user.name", "Test"], repository.path(), console)
+            .await
+            .unwrap();
+        std::fs::write(repository.path().join("file.txt"), "content\n").unwrap();
+        run_git(&["add", "file.txt"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "add file"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        let executor =
+            PeerToolExecutor::new(Extractor::new(repository.path().to_path_buf(), console));
+
+        let result = executor
+            .execute(call(
+                "grep_search",
+                serde_json::json!({ "query": "missing", "revision": "HEAD" }),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            serde_json::json!({ "lines": [], "truncated": false })
+        );
+    }
+
+    #[tokio::test]
+    async fn grep_search_rejects_invalid_arguments() {
+        let executor =
+            PeerToolExecutor::new(Extractor::new(PathBuf::from("/unused"), Console::default()));
+
+        let error = executor
+            .execute(call(
+                "grep_search",
+                serde_json::json!({
+                    "query": "",
+                    "revision": "HEAD",
+                    "context_lines": 6
+                }),
+            ))
+            .await
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "invalid arguments for grep_search: query must not be empty"
+        );
     }
 
     #[test]

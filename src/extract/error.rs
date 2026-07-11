@@ -7,6 +7,7 @@ pub enum ExtractError {
     Git(GitError),
     InvalidTwoDotRange(String),
     InvalidRevision(String),
+    InvalidGrepSearchArguments(String),
 }
 
 impl fmt::Display for ExtractError {
@@ -21,6 +22,9 @@ impl fmt::Display for ExtractError {
             Self::InvalidRevision(rev) => {
                 write!(f, "{rev} is not a valid revision")
             }
+            Self::InvalidGrepSearchArguments(message) => {
+                write!(f, "invalid arguments for grep_search: {message}")
+            }
         }
     }
 }
@@ -31,6 +35,7 @@ impl std::error::Error for ExtractError {
             Self::Git(source) => Some(source),
             Self::InvalidTwoDotRange(_) => None,
             Self::InvalidRevision(_) => None,
+            Self::InvalidGrepSearchArguments(_) => None,
         }
     }
 }
