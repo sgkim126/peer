@@ -777,6 +777,7 @@ version = "0.2.0"
 dependencies = [
  "blake3",
  "clap",
+ "futures-util",
  "owo-colors",
  "reqwest",
  "semver",
