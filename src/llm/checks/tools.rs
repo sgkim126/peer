@@ -59,6 +59,37 @@ pub fn get_file_content() -> ToolSpec {
     }
 }
 
+pub fn grep_search() -> ToolSpec {
+    ToolSpec {
+        name: "grep_search".to_string(),
+        description: "Searches a commit snapshot with a regular expression and returns matching lines with optional surrounding context.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "query": {
+                    "type": "string",
+                    "description": "Regular expression to search for."
+                },
+                "revision": {
+                    "type": "string",
+                    "description": "Git revision whose snapshot to search."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional repository-root-relative file or directory to search."
+                },
+                "context_lines": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 10,
+                    "description": "Optional number of surrounding lines to return for each match."
+                }
+            },
+            "required": ["query", "revision"]
+        }),
+    }
+}
+
 pub fn request_user_info() -> ToolSpec {
     ToolSpec {
         name: "request_user_info".to_string(),
@@ -92,5 +123,25 @@ fn revision_tool(name: &str, description: &str) -> ToolSpec {
             },
             "required": ["revision"]
         }),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn grep_search_requires_query_and_revision() {
+        let tool = grep_search();
+
+        assert_eq!(tool.name, "grep_search");
+        assert_eq!(
+            tool.parameters["required"],
+            serde_json::json!(["query", "revision"])
+        );
+        assert_eq!(
+            tool.parameters["properties"]["context_lines"]["maximum"],
+            10
+        );
     }
 }

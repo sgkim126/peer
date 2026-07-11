@@ -99,6 +99,7 @@ fn build_prepared_check(
             tools::get_commit_diff(),
             tools::get_changed_files(),
             tools::get_file_content(),
+            tools::grep_search(),
             tools::request_user_info(),
         ],
         output_schema: output_schema(),
@@ -198,7 +199,21 @@ mod tests {
             prepared.result_target(),
             CheckTarget::Commit(hash("abc1234"))
         );
-        assert_eq!(prepared.tools.len(), 4);
+        let tool_names = prepared
+            .tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tool_names,
+            [
+                "get_commit_diff",
+                "get_changed_files",
+                "get_file_content",
+                "grep_search",
+                "request_user_info",
+            ]
+        );
         assert_eq!(
             prepared.output_schema["required"],
             serde_json::json!(["summary", "findings"])
