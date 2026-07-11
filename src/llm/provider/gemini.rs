@@ -388,15 +388,6 @@ fn content(turn: &ConversationTurn) -> Result<serde_json::Value, LlmCallError> {
                 }
             }],
         })),
-        ConversationTurn::AssistantCheckOutput(output) => Ok(json!({
-            "role": "model",
-            "parts": [{
-                "text": serde_json::to_string(output).map_err(|error| LlmCallError::Permanent {
-                    message: "failed to encode assistant check output".to_string(),
-                    source: Box::new(error),
-                })?,
-            }],
-        })),
     }
 }
 

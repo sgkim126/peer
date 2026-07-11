@@ -322,17 +322,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retries_output_for_the_wrong_target() {
-        let provider = MockProvider::new([
-            Ok(response(output("def5678"))),
-            Ok(response(output("abc1234"))),
-        ]);
+    async fn returns_error_for_output_with_wrong_target() {
+        let provider = MockProvider::new([Ok(response(output("def5678")))]);
         let executor = FakeToolExecutor::default();
         let check = TestCheck {
             target: CommitHash::new("abc1234").unwrap(),
         };
 
-        let outcome = run_check(
+        let error = run_check(
             &check,
             &extractor(),
             &provider,
@@ -341,14 +338,13 @@ mod tests {
             &ReviewContext::default(),
         )
         .await
-        .unwrap();
-        let result = success_result(&outcome);
+        .unwrap_err();
 
-        assert_eq!(
-            result.findings[0].commit,
-            CommitHash::new("abc1234").unwrap()
-        );
-        assert_eq!(result.iterations, 2);
+        assert!(matches!(
+            error,
+            CheckRunError::LlmCall(LlmCallError::Permanent { .. })
+        ));
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[tokio::test]

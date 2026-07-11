@@ -1,5 +1,4 @@
 use super::response::ToolCall;
-use crate::llm::result::CheckOutput;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConversationTurn {
@@ -15,8 +14,6 @@ pub enum ConversationTurn {
         call_id: String,
         result: serde_json::Value,
     },
-    /// A final check output produced by the assistant.
-    AssistantCheckOutput(CheckOutput),
 }
 
 #[derive(Debug, Clone, PartialEq)]

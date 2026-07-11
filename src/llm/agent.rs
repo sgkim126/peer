@@ -87,11 +87,10 @@ where
                     request.console.debug(format_args!(
                         "llm iteration {iteration}: invalid check output: {error}"
                     ));
-                    conversation.push(ConversationTurn::AssistantCheckOutput(output));
-                    conversation.push(ConversationTurn::User(
-                        invalid_output_refinement_instruction(&error),
-                    ));
-                    continue;
+                    return Err(LlmCallError::Permanent {
+                        message: format!("invalid check output: {error}"),
+                        source: Box::new(AgentError::InvalidCheckOutput),
+                    });
                 }
 
                 return Ok(AgentRunOutcome::Completed(AgentRunResult {
@@ -154,15 +153,6 @@ where
     })
 }
 
-fn invalid_output_refinement_instruction<E>(error: &E) -> String
-where
-    E: fmt::Display,
-{
-    format!(
-        "Your previous check result was invalid: {error}. Correct the result and submit it again."
-    )
-}
-
 fn tool_result_json(result: ToolExecutionResult) -> serde_json::Value {
     match result {
         Ok(value) => value,
@@ -200,6 +190,7 @@ fn parse_user_info_request(tool_call: &ToolCall) -> Result<AgentUserInfoRequest,
 
 #[derive(Debug)]
 enum AgentError {
+    InvalidCheckOutput,
     InvalidUserInfoRequest,
     LoopExhausted,
     UnexpectedTextResponse,
@@ -208,6 +199,7 @@ enum AgentError {
 impl fmt::Display for AgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidCheckOutput => f.write_str("invalid check output"),
             Self::InvalidUserInfoRequest => f.write_str("invalid user info request"),
             Self::LoopExhausted => f.write_str("agent loop exhausted"),
             Self::UnexpectedTextResponse => f.write_str("unexpected text response"),
@@ -357,19 +349,12 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn retries_when_check_output_validation_fails() {
-        let provider = MockProvider::new([
-            Ok(call_result(
-                LlmResponse::CheckOutput(check_output("invalid")),
-                10,
-                5,
-            )),
-            Ok(call_result(
-                LlmResponse::CheckOutput(check_output("valid")),
-                20,
-                7,
-            )),
-        ]);
+    async fn returns_error_when_check_output_validation_fails() {
+        let provider = MockProvider::new([Ok(call_result(
+            LlmResponse::CheckOutput(check_output("invalid")),
+            10,
+            5,
+        ))]);
         let executor = FakeToolExecutor::default();
         let schema = json!({ "type": "object" });
         let validate = |output: &CheckOutput| {
@@ -382,16 +367,14 @@ mod tests {
         let mut request = agent_request(&[], &[], &schema, 2);
         request.validate_output = &validate;
 
-        let result = completed(run_agent(&provider, &executor, request).await.unwrap());
+        let error = run_agent(&provider, &executor, request).await.unwrap_err();
 
-        assert_eq!(result.output.summary, "valid");
-        assert_eq!(result.iterations, 2);
-        let requests = provider.requests();
-        assert_eq!(requests.len(), 2);
-        let ConversationTurn::User(instruction) = &requests[1].conversation[1] else {
-            panic!("expected validation refinement instruction");
-        };
-        assert!(instruction.contains("summary must be valid"));
+        assert!(matches!(error, LlmCallError::Permanent { .. }));
+        assert_eq!(
+            error.to_string(),
+            "permanent LLM call failure: invalid check output: summary must be valid"
+        );
+        assert_eq!(provider.requests().len(), 1);
     }
 
     #[tokio::test]
