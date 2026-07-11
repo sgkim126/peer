@@ -29,8 +29,21 @@ pub enum Command {
         #[arg(long)]
         model: Option<String>,
 
-        #[arg(long = "skip-check", value_enum, value_delimiter = ',')]
+        #[arg(
+            long = "skip-check",
+            value_enum,
+            value_delimiter = ',',
+            conflicts_with = "only_checks"
+        )]
         skip_checks: Vec<ReviewCheckKind>,
+
+        #[arg(
+            long = "only-check",
+            value_enum,
+            value_delimiter = ',',
+            conflicts_with = "skip_checks"
+        )]
+        only_checks: Vec<ReviewCheckKind>,
 
         #[arg(long)]
         title: Option<String>,
@@ -141,6 +154,7 @@ mod tests {
                 provider: None,
                 model: None,
                 skip_checks: vec![],
+                only_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -161,6 +175,7 @@ mod tests {
                 provider: None,
                 model: None,
                 skip_checks: vec![],
+                only_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -181,6 +196,7 @@ mod tests {
                 provider: None,
                 model: None,
                 skip_checks: vec![],
+                only_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -209,6 +225,7 @@ mod tests {
                 provider: None,
                 model: None,
                 skip_checks: vec![],
+                only_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -239,6 +256,7 @@ mod tests {
                 provider: None,
                 model: None,
                 skip_checks: vec![],
+                only_checks: vec![],
                 title: Some("Add review context".into()),
                 body_file: Some(PathBuf::from("body.md")),
                 comments_file: Some(PathBuf::from("comments.json")),
@@ -271,6 +289,7 @@ mod tests {
                     ReviewCheckKind::Security,
                     ReviewCheckKind::Coherence,
                 ],
+                only_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -278,6 +297,55 @@ mod tests {
                 repo: None,
             }
         );
+    }
+
+    #[test]
+    fn review_with_only_checks() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "HEAD~3..HEAD",
+            "--only-check",
+            "size,security",
+            "--only-check",
+            "coherence",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD~3..HEAD".into(),
+                provider: None,
+                model: None,
+                skip_checks: vec![],
+                only_checks: vec![
+                    ReviewCheckKind::Size,
+                    ReviewCheckKind::Security,
+                    ReviewCheckKind::Coherence,
+                ],
+                title: None,
+                body_file: None,
+                comments_file: None,
+                format: OutputFormat::Terminal,
+                repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn review_rejects_combining_only_and_skip_checks() {
+        let error = Cli::try_parse_from([
+            "peer",
+            "review",
+            "HEAD",
+            "--only-check",
+            "size",
+            "--skip-check",
+            "security",
+        ])
+        .unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
@@ -299,6 +367,7 @@ mod tests {
                 provider: Some("openai".into()),
                 model: Some("gpt-5.4-mini".into()),
                 skip_checks: vec![],
+                only_checks: vec![],
                 title: None,
                 body_file: None,
                 comments_file: None,

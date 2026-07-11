@@ -60,6 +60,15 @@ pub enum ReviewCheck {
 }
 
 impl ReviewPlan {
+    pub fn with_only_checks(mut self, selected: &[ReviewCheckKind]) -> Self {
+        if selected.is_empty() {
+            return self;
+        }
+
+        self.checks.retain(|check| selected.contains(&check.kind()));
+        self
+    }
+
     pub fn without_checks(mut self, skipped: &[ReviewCheckKind]) -> Self {
         if skipped.is_empty() {
             return self;
@@ -733,6 +742,27 @@ mod tests {
                         revision: commit_hash.to_string()
                     },
                 ]
+            }
+        );
+    }
+
+    #[test]
+    fn selects_only_requested_single_commit_checks() {
+        let target = ReviewTarget::Commit(CommitHash::new("abc1234").unwrap());
+        let plan = plan_checks(&target)
+            .with_only_checks(&[ReviewCheckKind::Intent, ReviewCheckKind::Security]);
+
+        assert_eq!(
+            plan,
+            ReviewPlan {
+                checks: vec![
+                    ReviewCheck::Intent {
+                        revision: "abc1234".to_string(),
+                    },
+                    ReviewCheck::Security {
+                        revision: "abc1234".to_string(),
+                    },
+                ],
             }
         );
     }

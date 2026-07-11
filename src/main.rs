@@ -44,6 +44,7 @@ async fn main() -> ExitCode {
             provider,
             model,
             skip_checks,
+            only_checks,
             title,
             body_file,
             comments_file,
@@ -119,7 +120,9 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            let plan = review::plan_checks(&review_target).without_checks(&skip_checks);
+            let plan = review::plan_checks(&review_target)
+                .with_only_checks(&only_checks)
+                .without_checks(&skip_checks);
             console.debug(format_args!("{plan:?}"));
 
             let (provider_config, model_config) =
