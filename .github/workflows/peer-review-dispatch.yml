@@ -234,7 +234,7 @@ jobs:
         id: peer
         uses: ./.peer-action/.github/actions/peer-review
         with:
-          version: "0.1.9"
+          version: "0.2.0"
           provider: ${{ steps.review.outputs.provider }}
           model: ${{ steps.review.outputs.model }}
           skip-checks: ${{ steps.review.outputs.skip-checks }}
