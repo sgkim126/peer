@@ -5,7 +5,8 @@ use crate::extract::{CommitList, CommitMessage, ExtractError, Extractor};
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
-use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, all_tools, output_schema};
+use super::tools;
+use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a commit series for coherence.
 
@@ -115,7 +116,14 @@ fn build_prepared_check(
             ConversationTurn::System(SYSTEM_PROMPT.to_string()),
             ConversationTurn::User(user_prompt),
         ],
-        tools: all_tools(),
+        tools: vec![
+            tools::get_commit_message(),
+            tools::get_commit_diff(),
+            tools::get_changed_files(),
+            tools::get_commits_in_range(),
+            tools::get_file_content(),
+            tools::request_user_info(),
+        ],
         output_schema: output_schema(),
         target: PreparedCheckTarget::Range {
             revision: commit_list.range,

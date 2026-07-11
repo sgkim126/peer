@@ -6,7 +6,8 @@ use crate::git::CommitHash;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
-use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, all_tools, output_schema};
+use super::tools;
+use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for scope and atomicity.
 
@@ -100,7 +101,12 @@ fn build_prepared_check(
             ConversationTurn::System(SYSTEM_PROMPT.to_string()),
             ConversationTurn::User(user_prompt),
         ],
-        tools: all_tools(),
+        tools: vec![
+            tools::get_commit_diff(),
+            tools::get_changed_files(),
+            tools::get_file_content(),
+            tools::request_user_info(),
+        ],
         output_schema: output_schema(),
         target: PreparedCheckTarget::Commit(diff.hash),
     }
@@ -204,10 +210,8 @@ mod tests {
         assert_eq!(
             names,
             [
-                "get_commit_message",
                 "get_commit_diff",
                 "get_changed_files",
-                "get_commits_in_range",
                 "get_file_content",
                 "request_user_info",
             ]
@@ -218,7 +222,7 @@ mod tests {
     fn follow_up_tools_accept_revisions() {
         let prepared = prepared_check();
 
-        for tool_name in ["get_commit_message", "get_commit_diff", "get_changed_files"] {
+        for tool_name in ["get_commit_diff", "get_changed_files"] {
             let tool = prepared
                 .tools
                 .iter()

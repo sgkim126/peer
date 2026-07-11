@@ -6,7 +6,8 @@ use crate::git::CommitHash;
 use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
-use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, all_tools, output_schema};
+use super::tools;
+use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for alignment between its stated intent and its actual changes.
 
@@ -92,7 +93,13 @@ fn build_prepared_check(
             ConversationTurn::System(SYSTEM_PROMPT.to_string()),
             ConversationTurn::User(user_prompt),
         ],
-        tools: all_tools(),
+        tools: vec![
+            tools::get_commit_message(),
+            tools::get_commit_diff(),
+            tools::get_changed_files(),
+            tools::get_file_content(),
+            tools::request_user_info(),
+        ],
         output_schema: output_schema(),
         target: PreparedCheckTarget::Commit(message.hash),
     }
@@ -189,7 +196,7 @@ mod tests {
             prepared.result_target(),
             CheckTarget::Commit(hash("abc1234"))
         );
-        assert_eq!(prepared.tools.len(), 6);
+        assert_eq!(prepared.tools.len(), 5);
         assert_eq!(
             prepared.output_schema["required"],
             serde_json::json!(["summary", "findings"])
