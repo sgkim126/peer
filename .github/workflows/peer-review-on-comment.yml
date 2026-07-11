@@ -19,7 +19,7 @@ jobs:
       pull-requests: write
     uses: ./.github/workflows/peer-review-comment.yml
     with:
-      version: "0.1.4"
+      version: "0.1.5"
       debug: true
       verbose: true
     secrets: inherit
