@@ -151,6 +151,7 @@ jobs:
             });
 
             core.setOutput('comment-id', String(comment.id));
+            core.setOutput('comment-url', comment.html_url);
 
       - name: Checkout pull request
         uses: actions/checkout@v7
@@ -301,3 +302,17 @@ jobs:
               comment_id: Number('${{ steps.placeholder.outputs.comment-id }}'),
               body,
             });
+
+      - name: Add peer review comment to summary
+        if: always() && steps.placeholder.outputs.comment-url != ''
+        uses: actions/github-script@v9
+        with:
+          script: |
+            await core.summary
+              .addLink(
+                'Pull request #${{ steps.review.outputs.pr-number }}',
+                '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}',
+              )
+              .addHeading('Peer Review')
+              .addLink('View peer review comment', '${{ steps.placeholder.outputs.comment-url }}')
+              .write();
