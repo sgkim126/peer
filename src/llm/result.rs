@@ -47,6 +47,7 @@ pub struct CheckUsage {
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct CheckOutput {
+    #[serde(default)]
     pub summary: String,
     pub findings: Vec<Finding>,
 }
@@ -265,6 +266,17 @@ mod tests {
 
         assert!(matches!(commit, CheckTarget::Commit(_)));
         assert_eq!(range, CheckTarget::Range("HEAD~3..HEAD".to_string()));
+    }
+
+    #[test]
+    fn check_output_allows_a_missing_summary() {
+        let output: CheckOutput = serde_json::from_value(serde_json::json!({
+            "findings": []
+        }))
+        .unwrap();
+
+        assert!(output.summary.is_empty());
+        assert!(output.findings.is_empty());
     }
 
     #[test]

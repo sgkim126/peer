@@ -278,7 +278,7 @@ mod tests {
         );
         assert_eq!(
             prepared.output_schema["required"],
-            serde_json::json!(["summary", "findings"])
+            serde_json::json!(["findings"])
         );
     }
 

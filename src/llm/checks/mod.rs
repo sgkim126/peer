@@ -327,7 +327,7 @@ fn output_schema() -> serde_json::Value {
                 }
             },
         },
-        "required": ["summary", "findings"]
+        "required": ["findings"]
     })
 }
 

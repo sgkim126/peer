@@ -246,7 +246,7 @@ mod tests {
         assert_eq!(prepared.tools[2].name, "request_user_info");
         assert_eq!(
             prepared.output_schema["required"],
-            serde_json::json!(["summary", "findings"])
+            serde_json::json!(["findings"])
         );
     }
 
