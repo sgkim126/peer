@@ -9,6 +9,8 @@ use crate::llm::provider::{
 };
 use crate::llm::result::CheckOutput;
 
+const REQUEST_USER_INFO_TOOL_NAME: &str = "request_user_info";
+
 pub struct AgentRequest<'a> {
     pub model: &'a str,
     pub conversation: &'a [ConversationTurn],
@@ -71,12 +73,25 @@ where
     let mut conversation = request.conversation.to_vec();
     let mut usage = RawUsage::default();
     for iteration in 1..=request.max_iterations {
+        // Reserve the final turn for either emitting the structured check output or asking the
+        // user for indispensable information. This prevents a late repository lookup from
+        // consuming the turn needed to submit the result.
+        let tools = if iteration == request.max_iterations {
+            request
+                .tools
+                .iter()
+                .filter(|tool| tool.name == REQUEST_USER_INFO_TOOL_NAME)
+                .cloned()
+                .collect::<Vec<_>>()
+        } else {
+            request.tools.to_vec()
+        };
         let result = provider
             .send(LlmRequest {
                 model: request.model,
                 conversation: &conversation,
                 output_mode: LlmOutputMode::Check {
-                    tools: request.tools,
+                    tools: &tools,
                     output_schema: request.output_schema,
                 },
             })
@@ -113,7 +128,7 @@ where
                 ));
                 if let Some(tool_call) = tool_calls
                     .iter()
-                    .find(|tool_call| tool_call.name == "request_user_info")
+                    .find(|tool_call| tool_call.name == REQUEST_USER_INFO_TOOL_NAME)
                 {
                     let user_info_request = parse_user_info_request(tool_call)?;
                     return Ok(AgentRunOutcome::NeedsUserInfo {
@@ -239,7 +254,7 @@ mod tests {
 
     use super::*;
     use crate::llm::provider::{LlmCallResult, LlmResponse};
-    use crate::llm::test_support::{FakeToolExecutor, MockProvider};
+    use crate::llm::test_support::{FakeToolExecutor, MockProvider, RecordedLlmOutputMode};
 
     fn check_output(summary: &str) -> CheckOutput {
         CheckOutput {
@@ -498,6 +513,54 @@ mod tests {
         };
         assert_eq!(call_id, "call-1");
         assert_eq!(result, &json!({ "diff": "+hello" }));
+    }
+
+    #[tokio::test]
+    async fn final_iteration_exposes_only_user_info_tool() {
+        let tool_call = ToolCall {
+            id: "call-1".to_string(),
+            name: "commit_diff".to_string(),
+            arguments: json!({ "hash": "abc1234" }),
+            thought_signature: None,
+        };
+        let provider = MockProvider::new([
+            Ok(call_result(LlmResponse::ToolCalls(vec![tool_call]), 10, 5)),
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output("done")),
+                20,
+                7,
+            )),
+        ]);
+        let executor = FakeToolExecutor::new([Ok(json!({ "diff": "+hello" }))]);
+        let tools = [
+            ToolSpec {
+                name: "commit_diff".to_string(),
+                description: "Read a commit diff".to_string(),
+                parameters: json!({ "type": "object" }),
+            },
+            ToolSpec {
+                name: REQUEST_USER_INFO_TOOL_NAME.to_string(),
+                description: "Ask the user for necessary context".to_string(),
+                parameters: json!({ "type": "object" }),
+            },
+        ];
+        let schema = json!({ "type": "object" });
+
+        run_agent(&provider, &executor, agent_request(&[], &tools, &schema, 2))
+            .await
+            .unwrap();
+
+        let requests = provider.requests();
+        let RecordedLlmOutputMode::Check { tools, .. } = &requests[1].output_mode else {
+            panic!("expected check output mode");
+        };
+        assert_eq!(
+            tools
+                .iter()
+                .map(|tool| tool.name.as_str())
+                .collect::<Vec<_>>(),
+            [REQUEST_USER_INFO_TOOL_NAME]
+        );
     }
 
     #[tokio::test]
