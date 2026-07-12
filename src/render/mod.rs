@@ -161,16 +161,19 @@ fn render_check_output_impl(
         RenderFormat::Terminal => Ok(append_check_usage(
             render_terminal(output, use_color),
             output,
+            &options.format,
             include_usage,
         )),
         RenderFormat::Markdown => Ok(append_check_usage(
             render_markdown(output),
             output,
+            &options.format,
             include_usage,
         )),
         RenderFormat::Github { repo } => Ok(append_check_usage(
             render_github(output, repo),
             output,
+            &options.format,
             include_usage,
         )),
     }
@@ -245,7 +248,13 @@ fn render_review_result_impl(
                 .chain(errors)
                 .collect::<Result<Vec<_>, _>>()
                 .map(|rendered| {
-                    append_review_usage(rendered.join("\n\n"), result, options, include_usage)
+                    append_review_usage(
+                        rendered.join("\n\n"),
+                        result,
+                        options,
+                        include_usage,
+                        use_color,
+                    )
                 })
         }
     }
@@ -260,9 +269,21 @@ fn render_check_outcome_impl(
         CheckOutcome::Success { check } => render_check_result_impl(check, options, use_color),
         CheckOutcome::NeedsUserInfo { request } => Ok(match &options.format {
             RenderFormat::Json => unreachable!("review json renders the full review result"),
-            RenderFormat::Terminal => render_terminal_user_info_request(request, use_color),
-            RenderFormat::Markdown => render_markdown_user_info_request(request),
-            RenderFormat::Github { .. } => render_github_user_info_request(request),
+            RenderFormat::Terminal => append_usage_text(
+                render_terminal_user_info_request(request, use_color),
+                &request.usage,
+                options.include_usage(),
+            ),
+            RenderFormat::Markdown => append_usage_markdown(
+                render_markdown_user_info_request(request),
+                &request.usage,
+                options.include_usage(),
+            ),
+            RenderFormat::Github { .. } => append_usage_github(
+                render_github_user_info_request(request),
+                &request.usage,
+                options.include_usage(),
+            ),
         }),
     }
 }
@@ -373,6 +394,7 @@ fn remove_review_usage(value: &mut serde_json::Value) {
 fn append_check_usage(
     rendered: String,
     output: &CheckCommandOutput,
+    format: &RenderFormat,
     include_usage: bool,
 ) -> String {
     let Ok(outcome) = output.as_outcome() else {
@@ -382,7 +404,12 @@ fn append_check_usage(
         CheckOutcome::Success { check } => &check.usage,
         CheckOutcome::NeedsUserInfo { request } => &request.usage,
     };
-    append_usage_text(rendered, usage, include_usage)
+    match format {
+        RenderFormat::Terminal => append_usage_text(rendered, usage, include_usage),
+        RenderFormat::Markdown => append_usage_markdown(rendered, usage, include_usage),
+        RenderFormat::Github { .. } => append_usage_github(rendered, usage, include_usage),
+        RenderFormat::Json => unreachable!("JSON usage is serialized with the result"),
+    }
 }
 
 fn append_usage_text(rendered: String, usage: &CheckUsage, include_usage: bool) -> String {
@@ -408,10 +435,15 @@ fn append_usage_markdown(rendered: String, usage: &CheckUsage, include_usage: bo
 }
 
 fn append_usage_github(rendered: String, usage: &CheckUsage, include_usage: bool) -> String {
-    if include_usage {
-        append_usage_markdown(rendered, usage, true)
-    } else {
+    if !include_usage {
         rendered
+    } else if let Some(content) = rendered.strip_suffix("\n</details>") {
+        format!(
+            "{content}\n\n### Usage\n\n- **Input tokens:** {}\n- **Output tokens:** {}\n- **Cost:** ${:.6}\n- **Model:** {}\n</details>",
+            usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.model
+        )
+    } else {
+        append_usage_markdown(rendered, usage, true)
     }
 }
 
@@ -420,6 +452,7 @@ fn append_review_usage(
     result: &ReviewResult,
     options: &RenderOptions,
     include_usage: bool,
+    use_color: bool,
 ) -> String {
     if !include_usage {
         return rendered;
@@ -435,16 +468,61 @@ fn append_review_usage(
     }
 
     match &options.format {
-        RenderFormat::Terminal => totals.into_iter().fold(rendered, |output, usage| {
-            append_usage_text(output, &usage, true)
+        RenderFormat::Terminal => append_review_usage_terminal(rendered, &totals, use_color),
+        RenderFormat::Markdown => append_review_usage_markdown(rendered, &totals),
+        RenderFormat::Github { .. } => totals.into_iter().fold(rendered, |output, usage| {
+            append_usage_github_summary(output, &usage)
         }),
-        RenderFormat::Markdown | RenderFormat::Github { .. } => {
-            totals.into_iter().fold(rendered, |output, usage| {
-                append_usage_markdown(output, &usage, true)
-            })
-        }
         RenderFormat::Json => unreachable!("JSON usage is serialized with the result"),
     }
+}
+
+fn append_review_usage_terminal(
+    rendered: String,
+    usages: &[CheckUsage],
+    use_color: bool,
+) -> String {
+    let by_model = usages
+        .iter()
+        .map(|usage| {
+            format!(
+                "- {}: {} input, {} output, {}",
+                styled(&usage.model, Style::new().cyan().bold(), use_color),
+                usage.input_tokens,
+                usage.output_tokens,
+                styled(
+                    format!("${:.6}", usage.cost_usd),
+                    Style::new().green().bold(),
+                    use_color
+                )
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    format!("{rendered}\n\nUsage summary by model:\n{by_model}")
+}
+
+fn append_review_usage_markdown(rendered: String, usages: &[CheckUsage]) -> String {
+    let by_model = usages
+        .iter()
+        .map(|usage| {
+            format!(
+                "### {}\n\n- **Input tokens:** {}\n- **Output tokens:** {}\n- **Cost:** ${:.6}",
+                usage.model, usage.input_tokens, usage.output_tokens, usage.cost_usd
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n\n");
+
+    format!("{rendered}\n\n## Usage\n\n{by_model}")
+}
+
+fn append_usage_github_summary(rendered: String, usage: &CheckUsage) -> String {
+    format!(
+        "{rendered}\n\n<details>\n<summary>Usage: {}</summary>\n\n- **Input tokens:** {}\n- **Output tokens:** {}\n- **Cost:** ${:.6}\n</details>",
+        usage.model, usage.input_tokens, usage.output_tokens, usage.cost_usd
+    )
 }
 
 fn log_usage(output: &CheckCommandOutput, console: Console) {
@@ -1426,6 +1504,43 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     }
 
     #[test]
+    fn renders_aggregated_usage_at_review_level_in_terminal() {
+        let result = success_review_result();
+
+        let rendered = render_review_result_impl(
+            &result,
+            &RenderOptions::with_usage(RenderOptions::TERMINAL, true),
+            console(),
+            false,
+        )
+        .unwrap();
+
+        assert!(
+            rendered.ends_with(
+                "Usage summary by model:\n- test-model: 200 input, 40 output, $0.002000"
+            )
+        );
+    }
+
+    #[test]
+    fn styles_model_and_cost_in_terminal_usage_summary() {
+        let result = success_review_result();
+
+        let rendered = render_review_result_impl(
+            &result,
+            &RenderOptions::with_usage(RenderOptions::TERMINAL, true),
+            console(),
+            true,
+        )
+        .unwrap();
+        let summary = rendered.rsplit_once("Usage summary by model:").unwrap().1;
+
+        assert!(summary.contains("\u{1b}["));
+        assert!(summary.contains("test-model"));
+        assert!(summary.contains("$0.002000"));
+    }
+
+    #[test]
     fn renders_review_result_for_markdown() {
         let result = success_review_result();
 
@@ -1435,6 +1550,22 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         assert!(rendered.contains("## Check: intent"));
         assert!(rendered.contains("\n\n## Check: intent"));
         assert!(!rendered.contains("**Usage:**"));
+    }
+
+    #[test]
+    fn renders_aggregated_usage_at_review_level_in_markdown() {
+        let result = success_review_result();
+
+        let rendered = render_review_result(
+            &result,
+            RenderOptions::with_usage(RenderOptions::MARKDOWN, true),
+            console(),
+        )
+        .unwrap();
+
+        assert!(rendered.contains(
+            "\n\n## Usage\n\n### test-model\n\n- **Input tokens:** 200\n- **Output tokens:** 40\n- **Cost:** $0.002000"
+        ));
     }
 
     #[test]
@@ -1469,6 +1600,38 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
             "</details>\n\n<details>\n<summary>Check: intent - Status: issue - Target: abc1234</summary>"
         ));
         assert!(rendered.contains("- **Status:** issue"));
+    }
+
+    #[test]
+    fn folds_aggregated_usage_in_github_review_output() {
+        let mut result = success_review_result();
+        let CheckOutcome::Success { check } = &mut result.outcomes[1] else {
+            unreachable!();
+        };
+        check.usage.model = "other-model".to_string();
+        check.usage.input_tokens = 50;
+        check.usage.output_tokens = 10;
+        check.usage.cost_usd = 0.002;
+
+        let rendered = render_review_result(
+            &result,
+            RenderOptions::with_usage(RenderOptions::github("sgkim126/peer".to_string()), true),
+            console(),
+        )
+        .unwrap();
+
+        assert!(rendered.contains(
+            "<details>\n<summary>Usage: other-model</summary>\n\n- **Input tokens:** 50\n- **Output tokens:** 10\n- **Cost:** $0.002000\n</details>"
+        ));
+        assert!(rendered.contains(
+            "<details>\n<summary>Usage: test-model</summary>\n\n- **Input tokens:** 100\n- **Output tokens:** 20\n- **Cost:** $0.001000\n</details>"
+        ));
+        assert!(rendered.contains(
+            "### Usage\n\n- **Input tokens:** 100\n- **Output tokens:** 20\n- **Cost:** $0.001000\n- **Model:** test-model\n</details>"
+        ));
+        assert!(rendered.contains(
+            "### Usage\n\n- **Input tokens:** 50\n- **Output tokens:** 10\n- **Cost:** $0.002000\n- **Model:** other-model\n</details>"
+        ));
     }
 
     #[test]
