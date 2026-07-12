@@ -1,0 +1,269 @@
+name: Open Code Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number to review.
+        required: true
+        type: number
+      provider:
+        description: LLM provider. These are the providers shared with Peer Review.
+        required: true
+        type: choice
+        options:
+          - mistral
+          - openai
+          - anthropic
+          - gemini
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: write
+
+jobs:
+  review:
+    name: Open Code Review
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Validate inputs and load pull request
+        id: review
+        uses: actions/github-script@v9
+        with:
+          script: |
+            const prNumber = Number(${{ toJSON(inputs.pr_number) }});
+            if (!Number.isSafeInteger(prNumber) || prNumber < 1) {
+              core.setFailed('pr_number must be a positive integer.');
+              return;
+            }
+
+            const provider = ${{ toJSON(inputs.provider) }};
+            const providers = {
+              mistral: {
+                model: 'mistral-medium-3-5',
+                url: 'https://api.mistral.ai/v1/chat/completions',
+                useAnthropic: 'false',
+                secret: 'OCR_MISTRAL_API_KEY',
+                inputRate: 1.5,
+                outputRate: 7.5,
+              },
+              openai: {
+                model: 'gpt-5.4-mini',
+                url: 'https://api.openai.com/v1/chat/completions',
+                useAnthropic: 'false',
+                secret: 'OCR_OPENAI_API_KEY',
+                inputRate: 0.75,
+                outputRate: 4.5,
+              },
+              anthropic: {
+                model: 'claude-sonnet-5',
+                url: 'https://api.anthropic.com/v1/messages',
+                useAnthropic: 'true',
+                secret: 'OCR_ANTHROPIC_API_KEY',
+                inputRate: 2,
+                outputRate: 10,
+              },
+              gemini: {
+                model: 'gemini-3.5-flash',
+                url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
+                useAnthropic: 'false',
+                secret: 'OCR_GEMINI_API_KEY',
+                inputRate: 1.5,
+                outputRate: 9,
+              },
+            };
+            const config = providers[provider];
+            if (!config) {
+              core.setFailed(`Unsupported provider: ${provider}`);
+              return;
+            }
+
+            const { data: pull } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: prNumber,
+            });
+            core.setOutput('pr-number', String(prNumber));
+            core.setOutput('base-sha', pull.base.sha);
+            core.setOutput('head-sha', pull.head.sha);
+            core.setOutput('provider', provider);
+            core.setOutput('model', config.model);
+            core.setOutput('url', config.url);
+            core.setOutput('use-anthropic', config.useAnthropic);
+            core.setOutput('secret-name', config.secret);
+            core.setOutput('input-rate', String(config.inputRate));
+            core.setOutput('output-rate', String(config.outputRate));
+
+      - name: Create Open Code Review placeholder
+        id: placeholder
+        uses: actions/github-script@v9
+        env:
+          REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
+          REVIEW_MODEL: ${{ steps.review.outputs.model }}
+        with:
+          script: |
+            const metadata = [
+              '## Open Code Review',
+              `provider: ${process.env.REVIEW_PROVIDER}`,
+              `model: ${process.env.REVIEW_MODEL}`,
+              `Triggered by @${context.actor}`,
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join('\n');
+            const { data: comment } = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: Number('${{ steps.review.outputs.pr-number }}'),
+              body: `${metadata}\n\n⏳ Open Code Review in progress.`,
+            });
+            core.setOutput('comment-id', String(comment.id));
+            core.setOutput('comment-url', comment.html_url);
+
+      - name: Checkout pull request
+        uses: actions/checkout@v7
+        with:
+          ref: refs/pull/${{ steps.review.outputs.pr-number }}/head
+          fetch-depth: 0
+
+      - name: Install Open Code Review
+        run: |
+          npm install --global @alibaba-group/open-code-review@latest
+          ocr version
+
+      - name: Run Open Code Review
+        id: ocr
+        env:
+          OCR_LLM_URL: ${{ steps.review.outputs.url }}
+          OCR_LLM_MODEL: ${{ steps.review.outputs.model }}
+          OCR_USE_ANTHROPIC: ${{ steps.review.outputs.use-anthropic }}
+          OCR_LLM_TOKEN: ${{ steps.review.outputs.provider == 'mistral' && secrets.OCR_MISTRAL_API_KEY || steps.review.outputs.provider == 'openai' && secrets.OCR_OPENAI_API_KEY || steps.review.outputs.provider == 'anthropic' && secrets.OCR_ANTHROPIC_API_KEY || secrets.OCR_GEMINI_API_KEY }}
+        run: |
+          set -u
+          if [ -z "${OCR_LLM_TOKEN:-}" ]; then
+            echo "Required repository secret is missing or empty: ${{ steps.review.outputs.secret-name }}" >&2
+            exit 2
+          fi
+
+          result="$RUNNER_TEMP/open-code-review-result.json"
+          stderr="$RUNNER_TEMP/open-code-review-stderr.log"
+          set +e
+          ocr review --repo "$GITHUB_WORKSPACE" --from '${{ steps.review.outputs.base-sha }}' --to '${{ steps.review.outputs.head-sha }}' --format json >"$result" 2>"$stderr"
+          code=$?
+          set -e
+          echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+          echo "result-path=$result" >> "$GITHUB_OUTPUT"
+          echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      - name: Summarize token usage and estimated cost
+        id: usage
+        if: always()
+        env:
+          INPUT_RATE: ${{ steps.review.outputs.input-rate }}
+          OUTPUT_RATE: ${{ steps.review.outputs.output-rate }}
+        run: |
+          set -euo pipefail
+          usage_file="$RUNNER_TEMP/open-code-review-usage.md"
+          sessions="$HOME/.opencodereview/sessions"
+          input=0
+          output=0
+          cache_read=0
+          cache_write=0
+          requests=0
+          if [ -d "$sessions" ]; then
+            while IFS= read -r -d '' file; do
+              values="$(jq -s '[.[] | select(.type == "llm_response") | .usage // {}] | {input: (map(.prompt_tokens // 0) | add // 0), output: (map(.completion_tokens // 0) | add // 0), cache_read: (map(.cache_read_tokens // 0) | add // 0), cache_write: (map(.cache_write_tokens // 0) | add // 0), requests: length}' "$file")"
+              input=$((input + $(jq -r '.input' <<<"$values")))
+              output=$((output + $(jq -r '.output' <<<"$values")))
+              cache_read=$((cache_read + $(jq -r '.cache_read' <<<"$values")))
+              cache_write=$((cache_write + $(jq -r '.cache_write' <<<"$values")))
+              requests=$((requests + $(jq -r '.requests' <<<"$values")))
+            done < <(find "$sessions" -type f -name '*.jsonl' -print0)
+          fi
+          total=$((input + output))
+          cost="$(awk -v input_tokens="$input" -v output_tokens="$output" -v input_rate="$INPUT_RATE" -v output_rate="$OUTPUT_RATE" 'BEGIN { printf "%.6f", (input_tokens * input_rate + output_tokens * output_rate) / 1000000 }')"
+          {
+            echo '### Token usage'
+            echo
+            echo "- Requests: ${requests}"
+            echo "- Input tokens: ${input}"
+            echo "- Output tokens: ${output}"
+            echo "- Total tokens: ${total}"
+            echo "- Cache read tokens: ${cache_read}"
+            echo "- Cache write tokens: ${cache_write}"
+            echo "- Estimated LLM cost: \$${cost} USD (input \$${INPUT_RATE}/1M, output \$${OUTPUT_RATE}/1M; cache pricing is not included)"
+          } > "$usage_file"
+          echo "usage-path=$usage_file" >> "$GITHUB_OUTPUT"
+
+      - name: Update Open Code Review comment
+        if: always() && steps.placeholder.outputs.comment-id != ''
+        uses: actions/github-script@v9
+        env:
+          REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
+          REVIEW_MODEL: ${{ steps.review.outputs.model }}
+          RESULT_PATH: ${{ steps.ocr.outputs.result-path }}
+          STDERR_PATH: ${{ steps.ocr.outputs.stderr-path }}
+          USAGE_PATH: ${{ steps.usage.outputs.usage-path }}
+          EXIT_CODE: ${{ steps.ocr.outputs.exit-code }}
+        with:
+          script: |
+            const fs = require('fs');
+            const read = (path) => {
+              try { return path ? fs.readFileSync(path, 'utf8').trim() : ''; }
+              catch (error) { core.warning(`Could not read ${path}: ${error.message}`); return ''; }
+            };
+            const escape = (value) => String(value ?? '').replace(/`/g, '\\`');
+            let review = '';
+            try {
+              const result = JSON.parse(read(process.env.RESULT_PATH));
+              const comments = Array.isArray(result.comments) ? result.comments : [];
+              const findings = comments.map((comment) => {
+                const location = comment.path ? `\`${escape(comment.path)}${comment.start_line ? `:${comment.start_line}` : ''}\`` : 'general';
+                const label = [comment.category, comment.severity].filter(Boolean).join(' · ');
+                return `- ${label ? `**${label}** — ` : ''}${location}: ${comment.content ?? ''}`;
+              });
+              review = findings.length
+                ? `### Findings (${findings.length})\n\n${findings.join('\n')}`
+                : `### Findings\n\n${result.message || 'No comments generated. Looks good to me.'}`;
+              if (Array.isArray(result.warnings) && result.warnings.length) {
+                review += `\n\n### Warnings\n\n${result.warnings.map((warning) => `- ${warning}`).join('\n')}`;
+              }
+            } catch (error) {
+              const stderr = read(process.env.STDERR_PATH);
+              review = `### Review output\n\n❌ Could not parse Open Code Review output.${stderr ? `\n\n\`\`\`text\n${stderr.slice(0, 6000)}\n\`\`\`` : ''}`;
+            }
+            const status = process.env.EXIT_CODE === '0'
+              ? '✅ Open Code Review completed.'
+              : `❌ Open Code Review failed (exit code: ${process.env.EXIT_CODE || 'unknown'}).`;
+            const metadata = [
+              '## Open Code Review',
+              `provider: ${process.env.REVIEW_PROVIDER}`,
+              `model: ${process.env.REVIEW_MODEL}`,
+              `Triggered by @${context.actor}`,
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join('\n');
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: Number('${{ steps.placeholder.outputs.comment-id }}'),
+              body: `${metadata}\n\n${status}\n\n${read(process.env.USAGE_PATH)}\n\n${review}`,
+            });
+
+      - name: Add Open Code Review to summary
+        if: always() && steps.placeholder.outputs.comment-url != ''
+        uses: actions/github-script@v9
+        env:
+          USAGE_PATH: ${{ steps.usage.outputs.usage-path }}
+        with:
+          script: |
+            const fs = require('fs');
+            let usage = '';
+            try { usage = fs.readFileSync(process.env.USAGE_PATH, 'utf8'); }
+            catch (error) { core.warning(`Could not read token usage: ${error.message}`); }
+            await core.summary
+              .addLink('Pull request #${{ steps.review.outputs.pr-number }}', '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}')
+              .addHeading('Open Code Review')
+              .addRaw(`provider: ${{ steps.review.outputs.provider }}\n\nmodel: ${{ steps.review.outputs.model }}\n\n${usage}\n\n`)
+              .addLink('View Open Code Review comment', '${{ steps.placeholder.outputs.comment-url }}')
+              .write();
