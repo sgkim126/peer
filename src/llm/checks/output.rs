@@ -93,6 +93,7 @@ fn extract_error_classification(error: &ExtractError) -> (ErrorCode, bool) {
         }
         ExtractError::InvalidGrepSearchArguments(_) => (ErrorCode::InvalidArgument, false),
         ExtractError::InvalidFileContentRange(_) => (ErrorCode::InvalidArgument, false),
+        ExtractError::InvalidRepositoryRelativePath(_) => (ErrorCode::InvalidArgument, false),
     }
 }
 

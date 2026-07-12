@@ -50,6 +50,18 @@ impl PeerToolExecutor {
                     .await?;
                 Ok(ExtractData::FileContent(result))
             }
+            "list_tree" => {
+                let arguments: ListTreeArguments = parse_arguments(&call)?;
+                let result = self
+                    .extractor
+                    .list_tree(
+                        &arguments.revision,
+                        arguments.path.as_deref().map(Path::new),
+                        arguments.recursive.unwrap_or(false),
+                    )
+                    .await?;
+                Ok(ExtractData::TreeListing(result))
+            }
             "grep_search" => {
                 let arguments: GrepSearchArguments = parse_arguments(&call)?;
                 let result = self
@@ -95,6 +107,13 @@ struct FileContentArguments {
     revision: String,
     #[serde(flatten)]
     line_range: OptionalFileContentRange,
+}
+
+#[derive(Deserialize)]
+struct ListTreeArguments {
+    revision: String,
+    path: Option<String>,
+    recursive: Option<bool>,
 }
 
 struct OptionalFileContentRange(Option<FileContentRange>);
@@ -165,6 +184,7 @@ fn tool_result_json(data: ExtractData) -> Result<serde_json::Value, ToolExecutio
             Ok(serde_json::json!({ "type": "binary", "size": size }))
         }
         ExtractData::GrepSearch(result) => Ok(serde_json::to_value(result)?),
+        ExtractData::TreeListing(result) => Ok(serde_json::to_value(result)?),
     }
 }
 
@@ -432,6 +452,55 @@ mod tests {
         assert_eq!(
             result,
             serde_json::json!({ "lines": [], "truncated": false })
+        );
+    }
+
+    #[tokio::test]
+    async fn list_tree_returns_entries_at_the_requested_revision() {
+        let repository = tempfile::tempdir().unwrap();
+        let console = Console::default();
+        run_git(&["init"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["config", "user.email", "test@example.com"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        run_git(&["config", "user.name", "Test"], repository.path(), console)
+            .await
+            .unwrap();
+        std::fs::create_dir_all(repository.path().join("src")).unwrap();
+        std::fs::write(repository.path().join("src/lib.rs"), "pub fn run() {}\n").unwrap();
+        run_git(&["add", "src/lib.rs"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "add source"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        let executor =
+            PeerToolExecutor::new(Extractor::new(repository.path().to_path_buf(), console));
+
+        let result = executor
+            .execute(call(
+                "list_tree",
+                serde_json::json!({ "revision": "HEAD", "path": "src" }),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result,
+            serde_json::json!({
+                "entries": [{ "path": "src/lib.rs", "kind": "file" }],
+                "truncated": false,
+            })
         );
     }
 

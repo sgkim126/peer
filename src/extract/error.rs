@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::git::GitError;
 
@@ -9,6 +10,7 @@ pub enum ExtractError {
     InvalidRevision(String),
     InvalidGrepSearchArguments(String),
     InvalidFileContentRange(String),
+    InvalidRepositoryRelativePath(PathBuf),
 }
 
 impl fmt::Display for ExtractError {
@@ -29,6 +31,9 @@ impl fmt::Display for ExtractError {
             Self::InvalidFileContentRange(message) => {
                 write!(f, "invalid file content range: {message}")
             }
+            Self::InvalidRepositoryRelativePath(path) => {
+                write!(f, "{} is not a repository-relative path", path.display())
+            }
         }
     }
 }
@@ -41,6 +46,7 @@ impl std::error::Error for ExtractError {
             Self::InvalidRevision(_) => None,
             Self::InvalidGrepSearchArguments(_) => None,
             Self::InvalidFileContentRange(_) => None,
+            Self::InvalidRepositoryRelativePath(_) => None,
         }
     }
 }

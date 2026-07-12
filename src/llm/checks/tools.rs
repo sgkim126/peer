@@ -110,6 +110,31 @@ pub fn grep_search() -> ToolSpec {
     }
 }
 
+pub fn list_tree() -> ToolSpec {
+    ToolSpec {
+        name: "list_tree".to_string(),
+        description: "Lists files and directories in a repository tree at a commit.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "revision": {
+                    "type": "string",
+                    "description": "Git revision whose tree to list."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional repository-root-relative directory to list."
+                },
+                "recursive": {
+                    "type": "boolean",
+                    "description": "Whether to include entries below the selected directory."
+                }
+            },
+            "required": ["revision"]
+        }),
+    }
+}
+
 pub fn request_user_info() -> ToolSpec {
     ToolSpec {
         name: "request_user_info".to_string(),
@@ -175,5 +200,13 @@ mod tests {
         );
         assert_eq!(tool.parameters["properties"]["start_line"]["minimum"], 1);
         assert_eq!(tool.parameters["properties"]["end_line"]["minimum"], 1);
+    }
+
+    #[test]
+    fn list_tree_requires_a_revision() {
+        let tool = list_tree();
+
+        assert_eq!(tool.name, "list_tree");
+        assert_eq!(tool.parameters["required"], serde_json::json!(["revision"]));
     }
 }

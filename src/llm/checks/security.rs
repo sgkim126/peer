@@ -101,6 +101,7 @@ fn build_prepared_check(
             tools::get_commit_diff(),
             tools::get_changed_files(),
             tools::get_file_content(),
+            tools::list_tree(),
             tools::grep_search(),
             tools::request_user_info(),
         ],
@@ -220,6 +221,7 @@ mod tests {
                 "get_commit_diff",
                 "get_changed_files",
                 "get_file_content",
+                "list_tree",
                 "grep_search",
                 "request_user_info",
             ]

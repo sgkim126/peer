@@ -5,6 +5,7 @@ mod commit_message;
 mod error;
 mod file_content;
 mod grep_search;
+mod list_tree;
 
 use std::path::PathBuf;
 
@@ -17,6 +18,7 @@ pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
 pub use self::file_content::{FileContent, FileContentRange};
 pub use self::grep_search::GrepSearchResult;
+pub use self::list_tree::TreeListing;
 use crate::cli::ExtractCommand;
 use crate::config::Config;
 use crate::console::Console;
@@ -50,6 +52,7 @@ pub enum ExtractData {
     CommitMessage(CommitMessage),
     FileContent(FileContent),
     GrepSearch(GrepSearchResult),
+    TreeListing(TreeListing),
 }
 
 pub async fn handler(
