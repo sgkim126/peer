@@ -12,6 +12,8 @@ pub enum FileContent {
         path: String,
         hash: CommitHash,
         content: String,
+        #[serde(flatten, skip_serializing_if = "Option::is_none")]
+        range: Option<FileContentRange>,
     },
     Binary {
         path: String,
@@ -20,11 +22,46 @@ pub enum FileContent {
     },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+pub struct FileContentRange {
+    start_line: u32,
+    end_line: u32,
+}
+
+impl FileContentRange {
+    pub fn new(start_line: u32, end_line: u32) -> Result<Self, ExtractError> {
+        if start_line == 0 {
+            return Err(ExtractError::InvalidFileContentRange(
+                "start_line must be at least 1".to_string(),
+            ));
+        }
+        if end_line < start_line {
+            return Err(ExtractError::InvalidFileContentRange(
+                "end_line must not be before start_line".to_string(),
+            ));
+        }
+
+        Ok(Self {
+            start_line,
+            end_line,
+        })
+    }
+
+    pub fn start_line(self) -> u32 {
+        self.start_line
+    }
+
+    pub fn end_line(self) -> u32 {
+        self.end_line
+    }
+}
+
 impl Extractor {
     pub async fn file_content(
         &self,
         path: &Path,
         revision: &str,
+        line_range: Option<FileContentRange>,
     ) -> Result<FileContent, ExtractError> {
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
 
@@ -34,6 +71,11 @@ impl Extractor {
         let bytes = run_git_bytes(&["show", &treeish], &self.project_root, self.console).await?;
 
         if bytes.contains(&0u8) {
+            if line_range.is_some() {
+                return Err(ExtractError::InvalidFileContentRange(
+                    "a binary file doesn't have lines".to_string(),
+                ));
+            }
             return Ok(FileContent::Binary {
                 path: path.clone(),
                 hash,
@@ -42,12 +84,43 @@ impl Extractor {
         }
 
         let content = String::from_utf8(bytes).map_err(GitError::FromUtf8)?;
+        let (content, range) = match line_range {
+            Some(line_range) => select_line_range(&content, line_range)?,
+            None => (content, None),
+        };
         Ok(FileContent::Text {
             path,
             hash,
             content,
+            range,
         })
     }
+}
+
+fn select_line_range(
+    content: &str,
+    line_range: FileContentRange,
+) -> Result<(String, Option<FileContentRange>), ExtractError> {
+    let lines = content.split_inclusive('\n').collect::<Vec<_>>();
+    let start_index = (line_range.start_line - 1) as usize;
+    if start_index >= lines.len() {
+        return Err(ExtractError::InvalidFileContentRange(format!(
+            "start_line {} is beyond the end of the file",
+            line_range.start_line
+        )));
+    }
+
+    let end_line = line_range.end_line.min(lines.len() as u32);
+    let end_index = (end_line - 1) as usize;
+    let content = lines[start_index..=end_index].concat();
+
+    Ok((
+        content,
+        Some(FileContentRange {
+            start_line: line_range.start_line,
+            end_line,
+        }),
+    ))
 }
 
 #[cfg(test)]
@@ -106,7 +179,7 @@ mod tests {
         let repo = Repo::new().await;
         let hash = repo.commit(&[("hello.txt", b"hello world")], "add").await;
         let result = Extractor::new(repo.path.clone(), Console::default())
-            .file_content(Path::new("hello.txt"), hash.as_ref())
+            .file_content(Path::new("hello.txt"), hash.as_ref(), None)
             .await
             .unwrap();
         let FileContent::Text { content, .. } = result else {
@@ -124,7 +197,7 @@ mod tests {
             .commit(&[("data.bin", &binary_data)], "add binary")
             .await;
         let result = Extractor::new(repo.path.clone(), Console::default())
-            .file_content(Path::new("data.bin"), hash.as_ref())
+            .file_content(Path::new("data.bin"), hash.as_ref(), None)
             .await
             .unwrap();
         let FileContent::Binary { size, .. } = result else {
@@ -143,7 +216,7 @@ mod tests {
         std::fs::remove_file(repo.path.join("f.txt")).unwrap();
 
         let result = Extractor::new(repo.path.clone(), Console::default())
-            .file_content(Path::new("f.txt"), hash.as_ref())
+            .file_content(Path::new("f.txt"), hash.as_ref(), None)
             .await
             .unwrap();
         let FileContent::Text { content, .. } = result else {
@@ -158,9 +231,44 @@ mod tests {
         let repo = Repo::new().await;
         let hash = repo.commit(&[("a.txt", b"a")], "add").await;
         let err = Extractor::new(repo.path.clone(), Console::default())
-            .file_content(Path::new("nonexistent.txt"), hash.as_ref())
+            .file_content(Path::new("nonexistent.txt"), hash.as_ref(), None)
             .await
             .unwrap_err();
         assert!(matches!(err, ExtractError::Git { .. }));
+    }
+
+    #[tokio::test]
+    async fn file_content_returns_requested_line_range() {
+        let repo = Repo::new().await;
+        let hash = repo
+            .commit(&[("lines.txt", b"one\ntwo\nthree\nfour\n")], "add lines")
+            .await;
+
+        let result = Extractor::new(repo.path.clone(), Console::default())
+            .file_content(
+                Path::new("lines.txt"),
+                hash.as_ref(),
+                Some(FileContentRange::new(2, 10).unwrap()),
+            )
+            .await
+            .unwrap();
+        let FileContent::Text { content, range, .. } = result else {
+            panic!("expected text");
+        };
+
+        assert_eq!(content, "two\nthree\nfour\n");
+        assert_eq!(range, Some(FileContentRange::new(2, 4).unwrap()));
+    }
+
+    #[test]
+    fn file_content_range_rejects_invalid_line_ranges() {
+        assert!(matches!(
+            FileContentRange::new(0, 1),
+            Err(ExtractError::InvalidFileContentRange(_))
+        ));
+        assert!(matches!(
+            FileContentRange::new(2, 1),
+            Err(ExtractError::InvalidFileContentRange(_))
+        ));
     }
 }

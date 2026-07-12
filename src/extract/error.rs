@@ -8,6 +8,7 @@ pub enum ExtractError {
     InvalidTwoDotRange(String),
     InvalidRevision(String),
     InvalidGrepSearchArguments(String),
+    InvalidFileContentRange(String),
 }
 
 impl fmt::Display for ExtractError {
@@ -25,6 +26,9 @@ impl fmt::Display for ExtractError {
             Self::InvalidGrepSearchArguments(message) => {
                 write!(f, "invalid arguments for grep_search: {message}")
             }
+            Self::InvalidFileContentRange(message) => {
+                write!(f, "invalid file content range: {message}")
+            }
         }
     }
 }
@@ -36,6 +40,7 @@ impl std::error::Error for ExtractError {
             Self::InvalidTwoDotRange(_) => None,
             Self::InvalidRevision(_) => None,
             Self::InvalidGrepSearchArguments(_) => None,
+            Self::InvalidFileContentRange(_) => None,
         }
     }
 }

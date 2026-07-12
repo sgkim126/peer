@@ -52,8 +52,28 @@ pub fn get_file_content() -> ToolSpec {
                 "path": {
                     "type": "string",
                     "description": "Repository-root-relative path."
+                },
+                "start_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional first line to return. Must be provided with end_line."
+                },
+                "end_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional last line to return. Must be provided with start_line."
                 }
             },
+            "allOf": [
+                {
+                    "if": { "required": ["start_line"] },
+                    "then": { "required": ["end_line"] }
+                },
+                {
+                    "if": { "required": ["end_line"] },
+                    "then": { "required": ["start_line"] }
+                }
+            ],
             "required": ["path", "revision"]
         }),
     }
@@ -143,5 +163,17 @@ mod tests {
             tool.parameters["properties"]["context_lines"]["maximum"],
             10
         );
+    }
+
+    #[test]
+    fn get_file_content_accepts_an_optional_line_range() {
+        let tool = get_file_content();
+
+        assert_eq!(
+            tool.parameters["required"],
+            serde_json::json!(["path", "revision"])
+        );
+        assert_eq!(tool.parameters["properties"]["start_line"]["minimum"], 1);
+        assert_eq!(tool.parameters["properties"]["end_line"]["minimum"], 1);
     }
 }

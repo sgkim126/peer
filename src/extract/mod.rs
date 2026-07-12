@@ -15,7 +15,7 @@ pub use self::commit_files::CommitFiles;
 pub use self::commit_list::CommitList;
 pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
-pub use self::file_content::FileContent;
+pub use self::file_content::{FileContent, FileContentRange};
 pub use self::grep_search::GrepSearchResult;
 use crate::cli::ExtractCommand;
 use crate::config::Config;
@@ -74,7 +74,7 @@ pub async fn handler(
             ExtractData::CommitMessage(extractor.commit_message(revision).await?)
         }
         ExtractCommand::FileContent { path, revision } => {
-            ExtractData::FileContent(extractor.file_content(path, revision).await?)
+            ExtractData::FileContent(extractor.file_content(path, revision, None).await?)
         }
     })
 }

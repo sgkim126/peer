@@ -1,9 +1,9 @@
 use std::fmt;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 
-use crate::extract::{ExtractData, ExtractError, Extractor, FileContent};
+use crate::extract::{ExtractData, ExtractError, Extractor, FileContent, FileContentRange};
 use crate::llm::agent::{ToolExecutionResult, ToolExecutor};
 use crate::llm::provider::ToolCall;
 
@@ -42,7 +42,11 @@ impl PeerToolExecutor {
                 let arguments: FileContentArguments = parse_arguments(&call)?;
                 let result = self
                     .extractor
-                    .file_content(Path::new(&arguments.path), &arguments.revision)
+                    .file_content(
+                        Path::new(&arguments.path),
+                        &arguments.revision,
+                        arguments.line_range.0,
+                    )
                     .await?;
                 Ok(ExtractData::FileContent(result))
             }
@@ -89,6 +93,38 @@ struct RangeArguments {
 struct FileContentArguments {
     path: String,
     revision: String,
+    #[serde(flatten)]
+    line_range: OptionalFileContentRange,
+}
+
+struct OptionalFileContentRange(Option<FileContentRange>);
+
+impl<'de> Deserialize<'de> for OptionalFileContentRange {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawOptionalFileContentRange {
+            start_line: Option<u32>,
+            end_line: Option<u32>,
+        }
+
+        let raw = RawOptionalFileContentRange::deserialize(deserializer)?;
+        let line_range = match (raw.start_line, raw.end_line) {
+            (None, None) => None,
+            (Some(start_line), Some(end_line)) => {
+                Some(FileContentRange::new(start_line, end_line).map_err(de::Error::custom)?)
+            }
+            _ => {
+                return Err(de::Error::custom(
+                    "start_line and end_line must be provided together",
+                ));
+            }
+        };
+
+        Ok(Self(line_range))
+    }
 }
 
 #[derive(Deserialize)]
@@ -117,8 +153,13 @@ fn tool_result_json(data: ExtractData) -> Result<serde_json::Value, ToolExecutio
         ExtractData::CommitDiff(result) => Ok(serde_json::Value::String(result.diff)),
         ExtractData::CommitFiles(result) => Ok(serde_json::to_value(result.files)?),
         ExtractData::CommitList(result) => Ok(serde_json::to_value(result.commits)?),
-        ExtractData::FileContent(FileContent::Text { content, .. }) => {
-            Ok(serde_json::json!({ "type": "text", "content": content }))
+        ExtractData::FileContent(FileContent::Text { content, range, .. }) => {
+            let mut result = serde_json::json!({ "type": "text", "content": content });
+            if let Some(range) = range {
+                result["start_line"] = serde_json::json!(range.start_line());
+                result["end_line"] = serde_json::json!(range.end_line());
+            }
+            Ok(result)
         }
         ExtractData::FileContent(FileContent::Binary { size, .. }) => {
             Ok(serde_json::json!({ "type": "binary", "size": size }))
@@ -221,6 +262,26 @@ mod tests {
                 .to_string()
                 .starts_with("invalid arguments for get_commit_diff: missing field `revision`")
         );
+    }
+
+    #[test]
+    fn file_content_arguments_require_a_complete_line_range() {
+        let incomplete: Result<FileContentArguments, _> =
+            serde_json::from_value(serde_json::json!({
+                "path": "src/main.rs",
+                "revision": "HEAD",
+                "start_line": 10,
+            }));
+        assert!(incomplete.is_err());
+
+        let complete: FileContentArguments = serde_json::from_value(serde_json::json!({
+            "path": "src/main.rs",
+            "revision": "HEAD",
+            "start_line": 10,
+            "end_line": 20,
+        }))
+        .unwrap();
+        assert!(complete.line_range.0.is_some());
     }
 
     #[tokio::test]
@@ -403,6 +464,7 @@ mod tests {
             path: "src/main.rs".to_string(),
             hash: crate::git::CommitHash::new("abc1234").unwrap(),
             content: "fn main() {}".to_string(),
+            range: None,
         };
 
         assert_eq!(
@@ -410,6 +472,26 @@ mod tests {
             serde_json::json!({
                 "type": "text",
                 "content": "fn main() {}"
+            })
+        );
+    }
+
+    #[test]
+    fn file_content_result_includes_selected_line_range() {
+        let content = FileContent::Text {
+            path: "src/main.rs".to_string(),
+            hash: crate::git::CommitHash::new("abc1234").unwrap(),
+            content: "fn main() {}\n".to_string(),
+            range: Some(FileContentRange::new(10, 10).unwrap()),
+        };
+
+        assert_eq!(
+            tool_result_json(ExtractData::FileContent(content)).unwrap(),
+            serde_json::json!({
+                "type": "text",
+                "content": "fn main() {}\n",
+                "start_line": 10,
+                "end_line": 10,
             })
         );
     }
