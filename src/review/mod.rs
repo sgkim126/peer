@@ -92,6 +92,18 @@ impl From<ReviewCheck> for CheckCommand {
 }
 
 impl ReviewCheck {
+    fn for_commit(kind: ReviewCheckKind, commit: &CommitHash) -> Self {
+        let revision = commit.to_string();
+
+        match kind {
+            ReviewCheckKind::Size => Self::Size { revision },
+            ReviewCheckKind::Intent => Self::Intent { revision },
+            ReviewCheckKind::Quality => Self::Quality { revision },
+            ReviewCheckKind::Security => Self::Security { revision },
+            ReviewCheckKind::Coherence => unreachable!("coherence is only run for a range"),
+        }
+    }
+
     fn kind(&self) -> ReviewCheckKind {
         match self {
             Self::Size { .. } => ReviewCheckKind::Size,
@@ -149,8 +161,15 @@ pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
             append_commit_checks(&mut checks, commit);
         }
         ReviewTarget::Range { revision, commits } => {
-            for commit in commits {
-                append_commit_checks(&mut checks, commit);
+            for kind in [
+                ReviewCheckKind::Size,
+                ReviewCheckKind::Intent,
+                ReviewCheckKind::Quality,
+                ReviewCheckKind::Security,
+            ] {
+                for commit in commits {
+                    checks.push(ReviewCheck::for_commit(kind, commit));
+                }
             }
             checks.push(ReviewCheck::Coherence {
                 range: revision.clone(),
@@ -695,23 +714,23 @@ mod tests {
                     ReviewCheck::Size {
                         revision: first_commit_hash.to_string()
                     },
-                    ReviewCheck::Intent {
-                        revision: first_commit_hash.to_string()
-                    },
-                    ReviewCheck::Quality {
-                        revision: first_commit_hash.to_string()
-                    },
-                    ReviewCheck::Security {
-                        revision: first_commit_hash.to_string()
-                    },
                     ReviewCheck::Size {
                         revision: second_commit_hash.to_string()
                     },
                     ReviewCheck::Intent {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Intent {
                         revision: second_commit_hash.to_string()
                     },
                     ReviewCheck::Quality {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Quality {
                         revision: second_commit_hash.to_string()
+                    },
+                    ReviewCheck::Security {
+                        revision: first_commit_hash.to_string()
                     },
                     ReviewCheck::Security {
                         revision: second_commit_hash.to_string()
@@ -789,17 +808,17 @@ mod tests {
                     ReviewCheck::Size {
                         revision: first_commit_hash.to_string()
                     },
-                    ReviewCheck::Quality {
-                        revision: first_commit_hash.to_string()
-                    },
-                    ReviewCheck::Security {
-                        revision: first_commit_hash.to_string()
-                    },
                     ReviewCheck::Size {
                         revision: second_commit_hash.to_string()
                     },
                     ReviewCheck::Quality {
+                        revision: first_commit_hash.to_string()
+                    },
+                    ReviewCheck::Quality {
                         revision: second_commit_hash.to_string()
+                    },
+                    ReviewCheck::Security {
+                        revision: first_commit_hash.to_string()
                     },
                     ReviewCheck::Security {
                         revision: second_commit_hash.to_string()
