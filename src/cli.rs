@@ -30,6 +30,10 @@ pub enum Command {
     Review {
         target: String,
 
+        /// Include token usage and estimated USD cost in the final output.
+        #[arg(long, global = true)]
+        include_usage: bool,
+
         #[arg(long)]
         provider: Option<String>,
 
@@ -79,6 +83,10 @@ pub enum Command {
 
         #[arg(long, global = true)]
         model: Option<String>,
+
+        /// Include token usage and estimated USD cost in the final output.
+        #[arg(long, global = true)]
+        include_usage: bool,
 
         #[command(subcommand)]
         command: CheckCommand,
@@ -174,6 +182,7 @@ mod tests {
                 target: "HEAD~3..HEAD".into(),
                 provider: None,
                 model: None,
+                include_usage: false,
                 skip_checks: vec![],
                 only_checks: vec![],
                 title: None,
@@ -195,6 +204,7 @@ mod tests {
                 target: "abc123".into(),
                 provider: None,
                 model: None,
+                include_usage: false,
                 skip_checks: vec![],
                 only_checks: vec![],
                 title: None,
@@ -207,6 +217,19 @@ mod tests {
     }
 
     #[test]
+    fn review_include_usage() {
+        let cli = parse(&["peer", "review", "HEAD", "--include-usage"]);
+
+        assert!(matches!(
+            cli.command,
+            Command::Review {
+                include_usage: true,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn review_with_markdown_format() {
         let cli = parse(&["peer", "review", "main", "--format", "markdown"]);
 
@@ -216,6 +239,7 @@ mod tests {
                 target: "main".into(),
                 provider: None,
                 model: None,
+                include_usage: false,
                 skip_checks: vec![],
                 only_checks: vec![],
                 title: None,
@@ -245,6 +269,7 @@ mod tests {
                 target: "main".into(),
                 provider: None,
                 model: None,
+                include_usage: false,
                 skip_checks: vec![],
                 only_checks: vec![],
                 title: None,
@@ -276,6 +301,7 @@ mod tests {
                 target: "HEAD".into(),
                 provider: None,
                 model: None,
+                include_usage: false,
                 skip_checks: vec![],
                 only_checks: vec![],
                 title: Some("Add review context".into()),
@@ -305,6 +331,7 @@ mod tests {
                 target: "HEAD~3..HEAD".into(),
                 provider: None,
                 model: None,
+                include_usage: false,
                 skip_checks: vec![
                     ReviewCheckKind::Size,
                     ReviewCheckKind::Security,
@@ -338,6 +365,7 @@ mod tests {
                 target: "HEAD~3..HEAD".into(),
                 provider: None,
                 model: None,
+                include_usage: false,
                 skip_checks: vec![],
                 only_checks: vec![
                     ReviewCheckKind::Size,
@@ -387,6 +415,7 @@ mod tests {
                 target: "HEAD".into(),
                 provider: Some("openai".into()),
                 model: Some("gpt-5.4-mini".into()),
+                include_usage: false,
                 skip_checks: vec![],
                 only_checks: vec![],
                 title: None,
@@ -485,11 +514,25 @@ mod tests {
             Command::Check {
                 provider: None,
                 model: None,
+                include_usage: false,
                 command: CheckCommand::Size {
                     revision: "abc123".into(),
                 },
             }
         );
+    }
+
+    #[test]
+    fn check_include_usage() {
+        let cli = parse(&["peer", "check", "size", "abc123", "--include-usage"]);
+
+        assert!(matches!(
+            cli.command,
+            Command::Check {
+                include_usage: true,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -501,6 +544,7 @@ mod tests {
             Command::Check {
                 provider: None,
                 model: None,
+                include_usage: false,
                 command: CheckCommand::Intent {
                     revision: "abc123".into(),
                 },
@@ -517,6 +561,7 @@ mod tests {
             Command::Check {
                 provider: None,
                 model: None,
+                include_usage: false,
                 command: CheckCommand::Quality {
                     revision: "abc123".into(),
                 },
@@ -533,6 +578,7 @@ mod tests {
             Command::Check {
                 provider: None,
                 model: None,
+                include_usage: false,
                 command: CheckCommand::Security {
                     revision: "abc123".into(),
                 },
@@ -549,6 +595,7 @@ mod tests {
             Command::Check {
                 provider: None,
                 model: None,
+                include_usage: false,
                 command: CheckCommand::Coherence {
                     range: "HEAD~3..HEAD".into(),
                 },
@@ -574,6 +621,7 @@ mod tests {
             Command::Check {
                 provider: Some("anthropic".into()),
                 model: Some("claude-sonnet-5".into()),
+                include_usage: false,
                 command: CheckCommand::Size {
                     revision: "abc123".into(),
                 },
@@ -599,6 +647,7 @@ mod tests {
             Command::Check {
                 provider: Some("anthropic".into()),
                 model: Some("claude-sonnet-5".into()),
+                include_usage: false,
                 command: CheckCommand::Size {
                     revision: "abc123".into(),
                 },

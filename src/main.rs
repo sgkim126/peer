@@ -87,10 +87,12 @@ async fn main() -> ExitCode {
             title,
             body_file,
             comments_file,
+            include_usage,
             format,
             repo,
         } => {
-            let render_options = match render::RenderOptions::from_cli(format, repo) {
+            let render_options = match render::RenderOptions::from_cli(format, repo, include_usage)
+            {
                 Ok(options) => options,
                 Err(error) => {
                     eprintln!("error: {error}");
@@ -269,6 +271,7 @@ async fn main() -> ExitCode {
         Command::Check {
             provider,
             model,
+            include_usage,
             command,
         } => {
             let cwd = match std::env::current_dir() {
@@ -297,10 +300,10 @@ async fn main() -> ExitCode {
             if let Err(error) = &result {
                 console.debug(format_args!("{error:?}"));
             }
-            print_check_result(result, console)
+            print_check_result(result, include_usage, console)
         }
         Command::Render { format, repo } => {
-            let render_options = match render::RenderOptions::from_cli(format, repo) {
+            let render_options = match render::RenderOptions::from_cli(format, repo, false) {
                 Ok(options) => options,
                 Err(error) => {
                     eprintln!("error: {error}");
@@ -344,12 +347,17 @@ fn apply_llm_defaults(config: &mut Config, provider: Option<String>, model: Opti
 
 fn print_check_result(
     result: Result<CheckOutcome, CheckCommandError>,
+    include_usage: bool,
     console: Console,
 ) -> ExitCode {
     let exit_code = check_exit_code(&result);
     let output = CheckCommandOutput::from(result);
 
-    match render::render_check_output(&output, render::RenderOptions::Json, console) {
+    match render::render_check_output(
+        &output,
+        render::RenderOptions::with_usage(render::RenderOptions::JSON, include_usage),
+        console,
+    ) {
         Ok(json) => {
             println!("{json}");
             exit_code

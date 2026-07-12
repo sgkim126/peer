@@ -12,8 +12,14 @@ use crate::llm::result::{
 use crate::review::{ReviewCheck, ReviewCheckError, ReviewResult};
 use owo_colors::Style;
 
-#[derive(Clone, Debug)]
-pub enum RenderOptions {
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderOptions {
+    format: RenderFormat,
+    include_usage: bool,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum RenderFormat {
     Json,
     Terminal,
     Markdown,
@@ -24,20 +30,47 @@ pub enum RenderOptions {
 }
 
 impl RenderOptions {
+    pub const JSON: Self = Self::new(RenderFormat::Json);
+    const TERMINAL: Self = Self::new(RenderFormat::Terminal);
+    const MARKDOWN: Self = Self::new(RenderFormat::Markdown);
+
+    const fn new(format: RenderFormat) -> Self {
+        Self {
+            format,
+            include_usage: false,
+        }
+    }
+
+    fn github(repo: String) -> Self {
+        Self::new(RenderFormat::Github { repo })
+    }
+
     pub fn from_cli(
         format: OutputFormat,
         github_repo: Option<String>,
+        include_usage: bool,
     ) -> Result<Self, RenderOptionsError> {
         match (format, github_repo) {
-            (OutputFormat::Json, None) => Ok(Self::Json),
-            (OutputFormat::Terminal, None) => Ok(Self::Terminal),
-            (OutputFormat::Markdown, None) => Ok(Self::Markdown),
+            (OutputFormat::Json, None) => Ok(Self::with_usage(Self::JSON, include_usage)),
+            (OutputFormat::Terminal, None) => Ok(Self::with_usage(Self::TERMINAL, include_usage)),
+            (OutputFormat::Markdown, None) => Ok(Self::with_usage(Self::MARKDOWN, include_usage)),
             (OutputFormat::Github, Some(repo)) => {
                 validate_github_repo(&repo)?;
-                Ok(Self::Github { repo })
+                Ok(Self::with_usage(Self::github(repo), include_usage))
             }
             (OutputFormat::Github, None) => Err(RenderOptionsError::MissingGithubRepo),
             (_, Some(_)) => Err(RenderOptionsError::UnexpectedGithubRepo),
+        }
+    }
+
+    fn include_usage(&self) -> bool {
+        self.include_usage
+    }
+
+    pub fn with_usage(options: Self, include_usage: bool) -> Self {
+        Self {
+            include_usage,
+            ..options
         }
     }
 }
@@ -121,12 +154,25 @@ fn render_check_output_impl(
     use_color: bool,
 ) -> Result<String, RenderError> {
     log_usage(output, console);
+    let include_usage = options.include_usage();
 
-    match options {
-        RenderOptions::Json => render_json(output),
-        RenderOptions::Terminal => Ok(render_terminal(output, use_color)),
-        RenderOptions::Markdown => Ok(render_markdown(output)),
-        RenderOptions::Github { repo } => Ok(render_github(output, repo)),
+    match &options.format {
+        RenderFormat::Json => render_json(output, include_usage),
+        RenderFormat::Terminal => Ok(append_check_usage(
+            render_terminal(output, use_color),
+            output,
+            include_usage,
+        )),
+        RenderFormat::Markdown => Ok(append_check_usage(
+            render_markdown(output),
+            output,
+            include_usage,
+        )),
+        RenderFormat::Github { repo } => Ok(append_check_usage(
+            render_github(output, repo),
+            output,
+            include_usage,
+        )),
     }
 }
 
@@ -151,11 +197,26 @@ fn render_check_result_impl(
     options: &RenderOptions,
     use_color: bool,
 ) -> Result<String, RenderError> {
-    match options {
-        RenderOptions::Json => render_json(&CheckCommandOutput::success(result.clone())),
-        RenderOptions::Terminal => Ok(render_terminal_result(result, use_color)),
-        RenderOptions::Markdown => Ok(render_markdown_result(result)),
-        RenderOptions::Github { repo } => Ok(render_github_result(result, repo)),
+    let include_usage = options.include_usage();
+    match &options.format {
+        RenderFormat::Json => {
+            render_json(&CheckCommandOutput::success(result.clone()), include_usage)
+        }
+        RenderFormat::Terminal => Ok(append_usage_text(
+            render_terminal_result(result, use_color),
+            &result.usage,
+            include_usage,
+        )),
+        RenderFormat::Markdown => Ok(append_usage_markdown(
+            render_markdown_result(result),
+            &result.usage,
+            include_usage,
+        )),
+        RenderFormat::Github { repo } => Ok(append_usage_github(
+            render_github_result(result, repo),
+            &result.usage,
+            include_usage,
+        )),
     }
 }
 
@@ -166,10 +227,11 @@ fn render_review_result_impl(
     use_color: bool,
 ) -> Result<String, RenderError> {
     log_review_usage(result, console);
+    let include_usage = options.include_usage();
 
-    match options {
-        RenderOptions::Json => render_review_json(result),
-        RenderOptions::Terminal | RenderOptions::Markdown | RenderOptions::Github { .. } => {
+    match &options.format {
+        RenderFormat::Json => render_review_json(result, include_usage),
+        RenderFormat::Terminal | RenderFormat::Markdown | RenderFormat::Github { .. } => {
             let outcomes = result
                 .outcomes
                 .iter()
@@ -182,7 +244,9 @@ fn render_review_result_impl(
             outcomes
                 .chain(errors)
                 .collect::<Result<Vec<_>, _>>()
-                .map(|rendered| rendered.join("\n\n"))
+                .map(|rendered| {
+                    append_review_usage(rendered.join("\n\n"), result, options, include_usage)
+                })
         }
     }
 }
@@ -194,11 +258,11 @@ fn render_check_outcome_impl(
 ) -> Result<String, RenderError> {
     match outcome {
         CheckOutcome::Success { check } => render_check_result_impl(check, options, use_color),
-        CheckOutcome::NeedsUserInfo { request } => Ok(match options {
-            RenderOptions::Json => unreachable!("review json renders the full review result"),
-            RenderOptions::Terminal => render_terminal_user_info_request(request, use_color),
-            RenderOptions::Markdown => render_markdown_user_info_request(request),
-            RenderOptions::Github { .. } => render_github_user_info_request(request),
+        CheckOutcome::NeedsUserInfo { request } => Ok(match &options.format {
+            RenderFormat::Json => unreachable!("review json renders the full review result"),
+            RenderFormat::Terminal => render_terminal_user_info_request(request, use_color),
+            RenderFormat::Markdown => render_markdown_user_info_request(request),
+            RenderFormat::Github { .. } => render_github_user_info_request(request),
         }),
     }
 }
@@ -241,15 +305,19 @@ fn render_github_user_info_request(request: &CheckUserInfoRequest) -> String {
     )
 }
 
-fn render_json(output: &CheckCommandOutput) -> Result<String, RenderError> {
+fn render_json(output: &CheckCommandOutput, include_usage: bool) -> Result<String, RenderError> {
     let mut value = serde_json::to_value(output).map_err(RenderError::Serialization)?;
-    remove_usage(&mut value);
+    if !include_usage {
+        remove_usage(&mut value);
+    }
     serde_json::to_string_pretty(&value).map_err(RenderError::Serialization)
 }
 
-fn render_review_json(result: &ReviewResult) -> Result<String, RenderError> {
+fn render_review_json(result: &ReviewResult, include_usage: bool) -> Result<String, RenderError> {
     let mut value = serde_json::to_value(result).map_err(RenderError::Serialization)?;
-    remove_review_usage(&mut value);
+    if !include_usage {
+        remove_review_usage(&mut value);
+    }
     serde_json::to_string_pretty(&value).map_err(RenderError::Serialization)
 }
 
@@ -299,6 +367,83 @@ fn remove_review_usage(value: &mut serde_json::Value) {
         {
             request.remove("usage");
         }
+    }
+}
+
+fn append_check_usage(
+    rendered: String,
+    output: &CheckCommandOutput,
+    include_usage: bool,
+) -> String {
+    let Ok(outcome) = output.as_outcome() else {
+        return rendered;
+    };
+    let usage = match outcome {
+        CheckOutcome::Success { check } => &check.usage,
+        CheckOutcome::NeedsUserInfo { request } => &request.usage,
+    };
+    append_usage_text(rendered, usage, include_usage)
+}
+
+fn append_usage_text(rendered: String, usage: &CheckUsage, include_usage: bool) -> String {
+    if include_usage {
+        format!(
+            "{rendered}\n\nUsage: {} input, {} output, ${:.6} ({})",
+            usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.model
+        )
+    } else {
+        rendered
+    }
+}
+
+fn append_usage_markdown(rendered: String, usage: &CheckUsage, include_usage: bool) -> String {
+    if include_usage {
+        format!(
+            "{rendered}\n\n### Usage\n\n- **Input tokens:** {}\n- **Output tokens:** {}\n- **Cost:** ${:.6}\n- **Model:** {}",
+            usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.model
+        )
+    } else {
+        rendered
+    }
+}
+
+fn append_usage_github(rendered: String, usage: &CheckUsage, include_usage: bool) -> String {
+    if include_usage {
+        append_usage_markdown(rendered, usage, true)
+    } else {
+        rendered
+    }
+}
+
+fn append_review_usage(
+    rendered: String,
+    result: &ReviewResult,
+    options: &RenderOptions,
+    include_usage: bool,
+) -> String {
+    if !include_usage {
+        return rendered;
+    }
+
+    let usages = result.outcomes.iter().map(|outcome| match outcome {
+        CheckOutcome::Success { check } => &check.usage,
+        CheckOutcome::NeedsUserInfo { request } => &request.usage,
+    });
+    let totals = aggregate_usage_by_model(usages);
+    if totals.is_empty() {
+        return rendered;
+    }
+
+    match &options.format {
+        RenderFormat::Terminal => totals.into_iter().fold(rendered, |output, usage| {
+            append_usage_text(output, &usage, true)
+        }),
+        RenderFormat::Markdown | RenderFormat::Github { .. } => {
+            totals.into_iter().fold(rendered, |output, usage| {
+                append_usage_markdown(output, &usage, true)
+            })
+        }
+        RenderFormat::Json => unreachable!("JSON usage is serialized with the result"),
     }
 }
 
@@ -582,8 +727,8 @@ fn render_review_check_error(
     let (check, target) = review_check_name_and_target(&review_error.check);
     let error = CheckCommandErrorOutput::from_ref(&review_error.error);
 
-    match options {
-        RenderOptions::Terminal => format!(
+    match &options.format {
+        RenderFormat::Terminal => format!(
             "{} {}\n{} {}\n{} {}\n\n{} {} — {}",
             terminal_label("Check:", use_color),
             styled(check, Style::new().bold(), use_color),
@@ -599,12 +744,12 @@ fn render_review_check_error(
             ),
             error.message
         ),
-        RenderOptions::Markdown => render_markdown_review_check_error(check, target, &error),
-        RenderOptions::Github { .. } => format!(
+        RenderFormat::Markdown => render_markdown_review_check_error(check, target, &error),
+        RenderFormat::Github { .. } => format!(
             "<details>\n<summary>Check: {check} - Status: failed - Target: {target}</summary>\n\n{}\n</details>",
             render_markdown_review_check_error(check, target, &error)
         ),
-        RenderOptions::Json => unreachable!("review json is rendered separately"),
+        RenderFormat::Json => unreachable!("review json is rendered separately"),
     }
 }
 
@@ -990,42 +1135,51 @@ mod tests {
 
     #[test]
     fn builds_render_options_from_cli_arguments() {
-        assert!(matches!(
-            RenderOptions::from_cli(OutputFormat::Json, None).unwrap(),
-            RenderOptions::Json
-        ));
-        assert!(matches!(
-            RenderOptions::from_cli(OutputFormat::Terminal, None).unwrap(),
-            RenderOptions::Terminal
-        ));
-        assert!(matches!(
-            RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
-            RenderOptions::Markdown
-        ));
-        assert!(matches!(
-            RenderOptions::from_cli(OutputFormat::Github, Some("sgkim126/peer".into())).unwrap(),
-            RenderOptions::Github { .. }
-        ));
+        assert_eq!(
+            RenderOptions::from_cli(OutputFormat::Json, None, false).unwrap(),
+            RenderOptions::JSON
+        );
+        assert_eq!(
+            RenderOptions::from_cli(OutputFormat::Terminal, None, false).unwrap(),
+            RenderOptions::TERMINAL
+        );
+        assert_eq!(
+            RenderOptions::from_cli(OutputFormat::Markdown, None, false).unwrap(),
+            RenderOptions::MARKDOWN
+        );
+        assert_eq!(
+            RenderOptions::from_cli(OutputFormat::Github, Some("sgkim126/peer".into()), false)
+                .unwrap()
+                .format,
+            RenderFormat::Github {
+                repo: "sgkim126/peer".into()
+            }
+        );
     }
 
     #[test]
     fn rejects_invalid_render_options_from_cli_arguments() {
         assert_eq!(
-            RenderOptions::from_cli(OutputFormat::Github, None).unwrap_err(),
+            RenderOptions::from_cli(OutputFormat::Github, None, false).unwrap_err(),
             RenderOptionsError::MissingGithubRepo
         );
         assert_eq!(
-            RenderOptions::from_cli(OutputFormat::Markdown, Some("sgkim126/peer".into()))
+            RenderOptions::from_cli(OutputFormat::Markdown, Some("sgkim126/peer".into()), false)
                 .unwrap_err(),
             RenderOptionsError::UnexpectedGithubRepo
         );
         assert_eq!(
-            RenderOptions::from_cli(OutputFormat::Github, Some("sgkim126".into())).unwrap_err(),
+            RenderOptions::from_cli(OutputFormat::Github, Some("sgkim126".into()), false)
+                .unwrap_err(),
             RenderOptionsError::InvalidGithubRepo
         );
         assert_eq!(
-            RenderOptions::from_cli(OutputFormat::Github, Some("sgkim126/peer/extra".into()))
-                .unwrap_err(),
+            RenderOptions::from_cli(
+                OutputFormat::Github,
+                Some("sgkim126/peer/extra".into()),
+                false
+            )
+            .unwrap_err(),
             RenderOptionsError::InvalidGithubRepo
         );
     }
@@ -1066,7 +1220,7 @@ mod tests {
     fn renders_check_envelope_as_pretty_json() {
         let input = serde_json::to_string(&success_envelope()).unwrap();
 
-        let rendered = render(&input, RenderOptions::Json, console()).unwrap();
+        let rendered = render(&input, RenderOptions::JSON, console()).unwrap();
 
         assert!(rendered.contains('\n'));
         assert_eq!(
@@ -1079,7 +1233,7 @@ mod tests {
     fn renders_successful_check_for_terminal() {
         let input = success_envelope_with_finding().to_string();
 
-        let rendered = render_impl(&input, &RenderOptions::Terminal, console(), false).unwrap();
+        let rendered = render_impl(&input, &RenderOptions::TERMINAL, console(), false).unwrap();
 
         assert_eq!(
             rendered,
@@ -1101,7 +1255,7 @@ Iterations: 2"
     fn renders_user_info_request_check_for_terminal() {
         let input = needs_user_info_envelope().to_string();
 
-        let rendered = render_impl(&input, &RenderOptions::Terminal, console(), false).unwrap();
+        let rendered = render_impl(&input, &RenderOptions::TERMINAL, console(), false).unwrap();
 
         assert_eq!(
             rendered,
@@ -1119,17 +1273,48 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn omits_usage_from_terminal_output() {
         let input = success_envelope_with_finding().to_string();
 
-        let rendered = render_impl(&input, &RenderOptions::Terminal, console(), false).unwrap();
+        let rendered = render_impl(&input, &RenderOptions::TERMINAL, console(), false).unwrap();
 
         assert!(!rendered.contains("Usage:"));
         assert!(!rendered.contains("test-model"));
     }
 
     #[test]
+    fn includes_usage_in_terminal_output_when_requested() {
+        let input = success_envelope_with_finding().to_string();
+
+        let rendered = render_impl(
+            &input,
+            &RenderOptions::with_usage(RenderOptions::TERMINAL, true),
+            console(),
+            false,
+        )
+        .unwrap();
+
+        assert!(rendered.contains("Usage: 100 input, 20 output, $0.001000 (test-model)"));
+    }
+
+    #[test]
+    fn includes_usage_in_json_output_when_requested() {
+        let input = success_envelope().to_string();
+
+        let rendered = render(
+            &input,
+            RenderOptions::with_usage(RenderOptions::JSON, true),
+            console(),
+        )
+        .unwrap();
+        let value: Value = serde_json::from_str(&rendered).unwrap();
+
+        assert_eq!(value["data"]["check"]["usage"]["input_tokens"], 100);
+        assert_eq!(value["data"]["check"]["usage"]["cost_usd"], 0.001);
+    }
+
+    #[test]
     fn renders_check_result_for_terminal() {
         let result = success_result_with_finding();
 
-        let rendered = render_check_result_impl(&result, &RenderOptions::Terminal, false).unwrap();
+        let rendered = render_check_result_impl(&result, &RenderOptions::TERMINAL, false).unwrap();
 
         assert!(rendered.contains("Check: size"));
         assert!(rendered.contains("Status: issue"));
@@ -1140,7 +1325,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_check_result_as_pretty_json_envelope() {
         let result = success_result();
 
-        let rendered = render_check_result_impl(&result, &RenderOptions::Json, false).unwrap();
+        let rendered = render_check_result_impl(&result, &RenderOptions::JSON, false).unwrap();
         let value: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(value, success_envelope_without_usage());
@@ -1150,7 +1335,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_user_info_request_check_for_markdown() {
         let input = needs_user_info_envelope().to_string();
 
-        let rendered = render_impl(&input, &RenderOptions::Markdown, console(), false).unwrap();
+        let rendered = render_impl(&input, &RenderOptions::MARKDOWN, console(), false).unwrap();
 
         assert!(rendered.contains("## Check: security"));
         assert!(rendered.contains("- **Target:** `abc1234`"));
@@ -1165,7 +1350,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_review_result_as_single_json_document() {
         let result = success_review_result();
 
-        let rendered = render_review_result(&result, RenderOptions::Json, console()).unwrap();
+        let rendered = render_review_result(&result, RenderOptions::JSON, console()).unwrap();
         let value: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(value["outcomes"].as_array().unwrap().len(), 2);
@@ -1180,7 +1365,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_mixed_review_result_as_single_json_document() {
         let result = mixed_review_result();
 
-        let rendered = render_review_result(&result, RenderOptions::Json, console()).unwrap();
+        let rendered = render_review_result(&result, RenderOptions::JSON, console()).unwrap();
         let value: Value = serde_json::from_str(&rendered).unwrap();
 
         assert_eq!(value["outcomes"].as_array().unwrap().len(), 3);
@@ -1194,18 +1379,18 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         let result = review_result_with_failed_check();
 
         let terminal =
-            render_review_result_impl(&result, &RenderOptions::Terminal, console(), false).unwrap();
+            render_review_result_impl(&result, &RenderOptions::TERMINAL, console(), false).unwrap();
         assert!(terminal.contains("Check: security"));
         assert!(terminal.contains("Target: abc1234"));
         assert!(terminal.contains("Status: failed"));
         assert!(terminal.contains("Error: config_invalid — missing API key"));
 
-        let markdown = render_review_result(&result, RenderOptions::Markdown, console()).unwrap();
+        let markdown = render_review_result(&result, RenderOptions::MARKDOWN, console()).unwrap();
         assert!(markdown.contains("## Check: security"));
         assert!(markdown.contains("- **Status:** failed"));
         assert!(markdown.contains("`config_invalid`: missing API key"));
 
-        let json = render_review_result(&result, RenderOptions::Json, console()).unwrap();
+        let json = render_review_result(&result, RenderOptions::JSON, console()).unwrap();
         let value: Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value["errors"][0]["check"], "security abc1234");
         assert_eq!(value["errors"][0]["error"]["code"], "config_invalid");
@@ -1217,7 +1402,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         let result = success_review_result();
 
         let rendered =
-            render_review_result_impl(&result, &RenderOptions::Terminal, console(), false).unwrap();
+            render_review_result_impl(&result, &RenderOptions::TERMINAL, console(), false).unwrap();
 
         assert!(rendered.contains("Check: size"));
         assert!(rendered.contains("Check: intent"));
@@ -1230,7 +1415,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
         let result = mixed_review_result();
 
         let rendered =
-            render_review_result_impl(&result, &RenderOptions::Terminal, console(), false).unwrap();
+            render_review_result_impl(&result, &RenderOptions::TERMINAL, console(), false).unwrap();
 
         assert!(rendered.contains("Check: size"));
         assert!(rendered.contains("\n\nCheck: security"));
@@ -1244,7 +1429,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_review_result_for_markdown() {
         let result = success_review_result();
 
-        let rendered = render_review_result(&result, RenderOptions::Markdown, console()).unwrap();
+        let rendered = render_review_result(&result, RenderOptions::MARKDOWN, console()).unwrap();
 
         assert!(rendered.contains("## Check: size"));
         assert!(rendered.contains("## Check: intent"));
@@ -1256,7 +1441,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_mixed_review_result_for_markdown() {
         let result = mixed_review_result();
 
-        let rendered = render_review_result(&result, RenderOptions::Markdown, console()).unwrap();
+        let rendered = render_review_result(&result, RenderOptions::MARKDOWN, console()).unwrap();
 
         assert!(rendered.contains("## Check: size"));
         assert!(rendered.contains("\n\n## Check: security"));
@@ -1270,9 +1455,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
 
         let rendered = render_review_result(
             &result,
-            RenderOptions::Github {
-                repo: "sgkim126/peer".to_string(),
-            },
+            RenderOptions::github("sgkim126/peer".to_string()),
             console(),
         )
         .unwrap();
@@ -1294,9 +1477,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
 
         let rendered = render_review_result(
             &result,
-            RenderOptions::Github {
-                repo: "sgkim126/peer".to_string(),
-            },
+            RenderOptions::github("sgkim126/peer".to_string()),
             console(),
         )
         .unwrap();
@@ -1337,7 +1518,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_check_without_findings_for_terminal() {
         let rendered = render_impl(
             &success_envelope().to_string(),
-            &RenderOptions::Terminal,
+            &RenderOptions::TERMINAL,
             console(),
             false,
         )
@@ -1355,7 +1536,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
 
         let rendered = render_impl(
             &envelope.to_string(),
-            &RenderOptions::Terminal,
+            &RenderOptions::TERMINAL,
             console(),
             false,
         )
@@ -1377,7 +1558,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
 
         let rendered = render_impl(
             &envelope.to_string(),
-            &RenderOptions::Terminal,
+            &RenderOptions::TERMINAL,
             console(),
             false,
         )
@@ -1390,7 +1571,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     fn renders_successful_check_for_markdown() {
         let rendered = render(
             &success_envelope_with_finding().to_string(),
-            RenderOptions::Markdown,
+            RenderOptions::MARKDOWN,
             console(),
         )
         .unwrap();
@@ -1419,9 +1600,7 @@ A critical issue was found.
     fn renders_successful_check_for_github_with_links() {
         let rendered = render(
             &success_envelope_with_finding().to_string(),
-            RenderOptions::Github {
-                repo: "sgkim126/peer".to_string(),
-            },
+            RenderOptions::github("sgkim126/peer".to_string()),
             console(),
         )
         .unwrap();
@@ -1460,9 +1639,7 @@ A critical issue was found.
 
         let rendered = render(
             &envelope.to_string(),
-            RenderOptions::Github {
-                repo: "sgkim126/peer".to_string(),
-            },
+            RenderOptions::github("sgkim126/peer".to_string()),
             console(),
         )
         .unwrap();
@@ -1479,9 +1656,7 @@ A critical issue was found.
 
         let rendered = render(
             &envelope.to_string(),
-            RenderOptions::Github {
-                repo: "sgkim126/peer".to_string(),
-            },
+            RenderOptions::github("sgkim126/peer".to_string()),
             console(),
         )
         .unwrap();
@@ -1493,9 +1668,7 @@ A critical issue was found.
     fn folds_ok_check_for_github() {
         let rendered = render(
             &success_envelope().to_string(),
-            RenderOptions::Github {
-                repo: "sgkim126/peer".to_string(),
-            },
+            RenderOptions::github("sgkim126/peer".to_string()),
             console(),
         )
         .unwrap();
@@ -1511,7 +1684,7 @@ A critical issue was found.
     fn renders_check_result_for_markdown() {
         let result = success_result_with_finding();
 
-        let rendered = render_check_result_impl(&result, &RenderOptions::Markdown, false).unwrap();
+        let rendered = render_check_result_impl(&result, &RenderOptions::MARKDOWN, false).unwrap();
 
         assert!(rendered.contains("## Check: size"));
         assert!(rendered.contains("- **Status:** issue"));
@@ -1524,7 +1697,7 @@ A critical issue was found.
         envelope["data"]["check"]["is_exhausted"] = json!(true);
         envelope["data"]["check"]["exhaustion_reason"] = json!("max_iterations");
 
-        let rendered = render(&envelope.to_string(), RenderOptions::Markdown, console()).unwrap();
+        let rendered = render(&envelope.to_string(), RenderOptions::MARKDOWN, console()).unwrap();
 
         assert!(rendered.contains("> [!WARNING]\n> Agent loop exhausted: `max_iterations`"));
     }
@@ -1540,14 +1713,14 @@ A critical issue was found.
             }
         });
 
-        let rendered = render(&envelope.to_string(), RenderOptions::Markdown, console()).unwrap();
+        let rendered = render(&envelope.to_string(), RenderOptions::MARKDOWN, console()).unwrap();
 
         assert_eq!(rendered, "> [!CAUTION]\n> `config_invalid`: invalid config");
     }
 
     #[test]
     fn rejects_malformed_json() {
-        let error = render("{", RenderOptions::Json, console()).unwrap_err();
+        let error = render("{", RenderOptions::JSON, console()).unwrap_err();
 
         assert!(matches!(error, RenderError::InvalidEnvelope(_)));
     }
@@ -1558,7 +1731,7 @@ A critical issue was found.
             "data": success_envelope()["data"]
         });
 
-        let error = render(&input.to_string(), RenderOptions::Json, console()).unwrap_err();
+        let error = render(&input.to_string(), RenderOptions::JSON, console()).unwrap_err();
 
         assert!(matches!(error, RenderError::InvalidEnvelope(_)));
     }
@@ -1570,7 +1743,7 @@ A critical issue was found.
             "data": {}
         });
 
-        let error = render(&input.to_string(), RenderOptions::Json, console()).unwrap_err();
+        let error = render(&input.to_string(), RenderOptions::JSON, console()).unwrap_err();
 
         assert!(matches!(error, RenderError::InvalidEnvelope(_)));
     }
