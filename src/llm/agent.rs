@@ -1,5 +1,7 @@
 use std::fmt;
 
+use futures_util::stream::{self, StreamExt};
+
 use crate::console::Console;
 use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmOutputMode, LlmProvider, LlmRequest, LlmResponse, RawUsage,
@@ -124,10 +126,20 @@ where
                 let assistant_tool_calls = tool_calls.clone();
                 conversation.push(ConversationTurn::AssistantToolCalls(assistant_tool_calls));
 
-                // TODO: Execute independent tool calls concurrently.
-                for tool_call in tool_calls {
-                    let call_id = tool_call.id.clone();
-                    let result = tool_executor.execute(tool_call).await;
+                let tool_call_concurrency = std::thread::available_parallelism()
+                    .map_or(2, |parallelism| parallelism.get().saturating_mul(2));
+                let tool_results = stream::iter(tool_calls)
+                    .map(|tool_call| async move {
+                        let call_id = tool_call.id.clone();
+                        let result = tool_executor.execute(tool_call).await;
+
+                        (call_id, result)
+                    })
+                    .buffered(tool_call_concurrency)
+                    .collect::<Vec<_>>()
+                    .await;
+
+                for (call_id, result) in tool_results {
                     conversation.push(ConversationTurn::ToolResult {
                         call_id,
                         result: tool_result_json(result),
@@ -220,6 +232,9 @@ impl fmt::Display for AgentExhaustionReason {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
+
     use serde_json::json;
 
     use super::*;
@@ -281,6 +296,34 @@ mod tests {
             panic!("expected user-info request");
         };
         (request, usage, iterations)
+    }
+
+    struct ConcurrentToolExecutor {
+        active_calls: AtomicUsize,
+        max_active_calls: AtomicUsize,
+    }
+
+    impl ConcurrentToolExecutor {
+        fn new() -> Self {
+            Self {
+                active_calls: AtomicUsize::new(0),
+                max_active_calls: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl ToolExecutor for ConcurrentToolExecutor {
+        async fn execute(&self, call: ToolCall) -> ToolExecutionResult {
+            let active_calls = self.active_calls.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active_calls
+                .fetch_max(active_calls, Ordering::SeqCst);
+
+            let delay = if call.id == "call-first" { 20 } else { 1 };
+            tokio::time::sleep(Duration::from_millis(delay)).await;
+            self.active_calls.fetch_sub(1, Ordering::SeqCst);
+
+            Ok(json!({ "call_id": call.id }))
+        }
     }
 
     #[tokio::test]
@@ -455,6 +498,65 @@ mod tests {
         };
         assert_eq!(call_id, "call-1");
         assert_eq!(result, &json!({ "diff": "+hello" }));
+    }
+
+    #[tokio::test]
+    async fn executes_independent_tool_calls_concurrently_in_request_order() {
+        let first_call = ToolCall {
+            id: "call-first".to_string(),
+            name: "get_commit_diff".to_string(),
+            arguments: json!({ "revision": "abc1234" }),
+            thought_signature: None,
+        };
+        let additional_calls = ["second", "third", "fourth", "fifth"].map(|suffix| ToolCall {
+            id: format!("call-{suffix}"),
+            name: "get_changed_files".to_string(),
+            arguments: json!({ "revision": "abc1234" }),
+            thought_signature: None,
+        });
+        let provider = MockProvider::new([
+            Ok(call_result(
+                LlmResponse::ToolCalls(
+                    std::iter::once(first_call)
+                        .chain(additional_calls)
+                        .collect(),
+                ),
+                10,
+                5,
+            )),
+            Ok(call_result(
+                LlmResponse::CheckOutput(check_output("done")),
+                20,
+                7,
+            )),
+        ]);
+        let executor = ConcurrentToolExecutor::new();
+        let schema = json!({ "type": "object" });
+
+        run_agent(&provider, &executor, agent_request(&[], &[], &schema, 3))
+            .await
+            .unwrap();
+
+        assert!(executor.max_active_calls.load(Ordering::SeqCst) >= 2);
+
+        let requests = provider.requests();
+        let tool_results = requests[1]
+            .conversation
+            .iter()
+            .filter_map(|turn| match turn {
+                ConversationTurn::ToolResult { call_id, result } => Some((call_id, result)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(tool_results.len(), 5);
+        for ((call_id, result), suffix) in tool_results
+            .into_iter()
+            .zip(["first", "second", "third", "fourth", "fifth"])
+        {
+            let expected_call_id = format!("call-{suffix}");
+            assert_eq!(call_id, &expected_call_id);
+            assert_eq!(result, &json!({ "call_id": expected_call_id }));
+        }
     }
 
     #[tokio::test]
