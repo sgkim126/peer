@@ -29,8 +29,8 @@ pass tests. Report such a concern only when the dependency or ordering between c
 coherence problem.
 
 The required commit list is ordered from oldest to newest. Findings must reference the
-specific commit responsible for the series-level issue. Use a diff or file context only when
-needed to establish a relationship between commits. Return no findings when the series is
+specific commit responsible for the series-level issue. Use a diff or changed-file list only
+when needed to establish a relationship between commits. Return no findings when the series is
 well structured and its commits form a clear, coherent progression."#;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,11 +117,8 @@ fn build_prepared_check(
             ConversationTurn::User(user_prompt),
         ],
         tools: vec![
-            tools::get_commit_message(),
             tools::get_commit_diff(),
             tools::get_changed_files(),
-            tools::get_commits_in_range(),
-            tools::get_file_content(),
             tools::request_user_info(),
         ],
         output_schema: output_schema(),
@@ -242,7 +239,10 @@ mod tests {
             prepared.result_target(),
             CheckTarget::Range("base123..tip4567".to_string())
         );
-        assert_eq!(prepared.tools.len(), 6);
+        assert_eq!(prepared.tools.len(), 3);
+        assert_eq!(prepared.tools[0].name, "get_commit_diff");
+        assert_eq!(prepared.tools[1].name, "get_changed_files");
+        assert_eq!(prepared.tools[2].name, "request_user_info");
         assert_eq!(
             prepared.output_schema["required"],
             serde_json::json!(["summary", "findings"])

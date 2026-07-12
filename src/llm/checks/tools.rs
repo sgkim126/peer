@@ -21,23 +21,6 @@ pub fn get_changed_files() -> ToolSpec {
     )
 }
 
-pub fn get_commits_in_range() -> ToolSpec {
-    ToolSpec {
-        name: "get_commits_in_range".to_string(),
-        description: "Returns commit hashes in a two-dot range, oldest to newest.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "range": {
-                    "type": "string",
-                    "description": "Git two-dot range."
-                }
-            },
-            "required": ["range"]
-        }),
-    }
-}
-
 pub fn get_file_content() -> ToolSpec {
     ToolSpec {
         name: "get_file_content".to_string(),
