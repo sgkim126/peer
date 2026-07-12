@@ -50,6 +50,18 @@ impl PeerToolExecutor {
                     .await?;
                 Ok(ExtractData::FileContent(result))
             }
+            "get_file_diff" => {
+                let arguments: FileDiffArguments = parse_arguments(&call)?;
+                let result = self
+                    .extractor
+                    .file_diff(
+                        &arguments.from_revision,
+                        &arguments.to_revision,
+                        Path::new(&arguments.path),
+                    )
+                    .await?;
+                Ok(ExtractData::FileDiff(result))
+            }
             "list_tree" => {
                 let arguments: ListTreeArguments = parse_arguments(&call)?;
                 let result = self
@@ -107,6 +119,13 @@ struct FileContentArguments {
     revision: String,
     #[serde(flatten)]
     line_range: OptionalFileContentRange,
+}
+
+#[derive(Deserialize)]
+struct FileDiffArguments {
+    from_revision: String,
+    to_revision: String,
+    path: String,
 }
 
 #[derive(Deserialize)]
@@ -183,6 +202,7 @@ fn tool_result_json(data: ExtractData) -> Result<serde_json::Value, ToolExecutio
         ExtractData::FileContent(FileContent::Binary { size, .. }) => {
             Ok(serde_json::json!({ "type": "binary", "size": size }))
         }
+        ExtractData::FileDiff(result) => Ok(serde_json::to_value(result)?),
         ExtractData::GrepSearch(result) => Ok(serde_json::to_value(result)?),
         ExtractData::TreeListing(result) => Ok(serde_json::to_value(result)?),
     }
@@ -502,6 +522,68 @@ mod tests {
                 "truncated": false,
             })
         );
+    }
+
+    #[tokio::test]
+    async fn file_diff_returns_the_requested_file_changes() {
+        let repository = tempfile::tempdir().unwrap();
+        let console = Console::default();
+        run_git(&["init"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["config", "user.email", "test@example.com"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        run_git(&["config", "user.name", "Test"], repository.path(), console)
+            .await
+            .unwrap();
+        std::fs::write(repository.path().join("file.txt"), "before\n").unwrap();
+        std::fs::write(repository.path().join("other.txt"), "unchanged\n").unwrap();
+        run_git(&["add", "."], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "initial content"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        std::fs::write(repository.path().join("file.txt"), "after\n").unwrap();
+        run_git(&["add", "file.txt"], repository.path(), console)
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "update file"],
+            repository.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        let executor =
+            PeerToolExecutor::new(Extractor::new(repository.path().to_path_buf(), console));
+
+        let result = executor
+            .execute(call(
+                "get_file_diff",
+                serde_json::json!({
+                    "from_revision": "HEAD~1",
+                    "to_revision": "HEAD",
+                    "path": "file.txt",
+                }),
+            ))
+            .await
+            .unwrap();
+
+        assert_eq!(result["truncated"], false);
+        let diff = result["diff"].as_str().unwrap();
+        assert!(diff.contains("-before"));
+        assert!(diff.contains("+after"));
+        assert!(!diff.contains("other.txt"));
     }
 
     #[tokio::test]

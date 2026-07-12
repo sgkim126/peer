@@ -4,6 +4,7 @@ mod commit_list;
 mod commit_message;
 mod error;
 mod file_content;
+mod file_diff;
 mod grep_search;
 mod list_tree;
 
@@ -17,6 +18,7 @@ pub use self::commit_list::CommitList;
 pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
 pub use self::file_content::{FileContent, FileContentRange};
+pub use self::file_diff::FileDiff;
 pub use self::grep_search::GrepSearchResult;
 pub use self::list_tree::TreeListing;
 use crate::cli::ExtractCommand;
@@ -51,6 +53,7 @@ pub enum ExtractData {
     CommitList(CommitList),
     CommitMessage(CommitMessage),
     FileContent(FileContent),
+    FileDiff(FileDiff),
     GrepSearch(GrepSearchResult),
     TreeListing(TreeListing),
 }

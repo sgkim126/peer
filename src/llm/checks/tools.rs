@@ -79,6 +79,31 @@ pub fn get_file_content() -> ToolSpec {
     }
 }
 
+pub fn get_file_diff() -> ToolSpec {
+    ToolSpec {
+        name: "get_file_diff".to_string(),
+        description: "Returns the diff for one file between two Git revisions.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "from_revision": {
+                    "type": "string",
+                    "description": "Earlier Git revision."
+                },
+                "to_revision": {
+                    "type": "string",
+                    "description": "Later Git revision."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Repository-root-relative file path to compare."
+                }
+            },
+            "required": ["from_revision", "to_revision", "path"]
+        }),
+    }
+}
+
 pub fn grep_search() -> ToolSpec {
     ToolSpec {
         name: "grep_search".to_string(),
@@ -200,6 +225,17 @@ mod tests {
         );
         assert_eq!(tool.parameters["properties"]["start_line"]["minimum"], 1);
         assert_eq!(tool.parameters["properties"]["end_line"]["minimum"], 1);
+    }
+
+    #[test]
+    fn get_file_diff_requires_two_revisions_and_a_path() {
+        let tool = get_file_diff();
+
+        assert_eq!(tool.name, "get_file_diff");
+        assert_eq!(
+            tool.parameters["required"],
+            serde_json::json!(["from_revision", "to_revision", "path"])
+        );
     }
 
     #[test]
