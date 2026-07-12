@@ -7,7 +7,7 @@ use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
 use super::tools;
-use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema};
+use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema, system_prompt};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for alignment between its stated intent and its actual changes.
 
@@ -90,7 +90,7 @@ fn build_prepared_check(
 
     PreparedCheck {
         conversation: vec![
-            ConversationTurn::System(SYSTEM_PROMPT.to_string()),
+            ConversationTurn::System(system_prompt(SYSTEM_PROMPT)),
             ConversationTurn::User(user_prompt),
         ],
         tools: vec![
@@ -149,6 +149,7 @@ mod tests {
         assert!(system.contains("stated intent"));
         assert!(system.contains("whether the commit message and its diff agree"));
         assert!(system.contains("Your scope is only whether the commit message"));
+        assert!(system.contains("Tool use is optional"));
 
         let ConversationTurn::User(user) = &prepared.conversation[1] else {
             panic!("expected required data");

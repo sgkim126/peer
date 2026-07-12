@@ -7,6 +7,17 @@ mod security;
 mod size;
 mod tools;
 
+const TOOL_USE_INSTRUCTIONS: &str = r#"Tool use is optional. Treat the required data supplied in the user message as authoritative:
+do not fetch a commit message, diff, or changed-file list that is already provided there. Use a
+repository tool only when genuinely necessary to obtain additional context. Call only a tool
+listed in the supplied tool definitions, and use its name and input schema exactly; never invent
+a tool name or arguments. Do not inspect files merely because they are mentioned in review
+context. Once you have enough context, return the required check result immediately."#;
+
+fn system_prompt(check_instructions: &str) -> String {
+    format!("{check_instructions}\n\n{TOOL_USE_INSTRUCTIONS}")
+}
+
 pub use output::{CheckCommandErrorOutput, CheckCommandOutput, ErrorCode};
 
 use std::fmt;

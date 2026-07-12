@@ -7,7 +7,7 @@ use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
 use super::tools;
-use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema};
+use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema, system_prompt};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for general code quality.
 
@@ -92,7 +92,7 @@ fn build_prepared_check(
 
     PreparedCheck {
         conversation: vec![
-            ConversationTurn::System(SYSTEM_PROMPT.to_string()),
+            ConversationTurn::System(system_prompt(SYSTEM_PROMPT)),
             ConversationTurn::User(user_prompt),
         ],
         tools: vec![
@@ -156,6 +156,8 @@ mod tests {
         };
         assert!(system.contains("general code quality"));
         assert!(system.contains("outside the scope of this check"));
+        assert!(system.contains("Tool use is optional"));
+        assert!(system.contains("never invent\na tool name or arguments"));
 
         let ConversationTurn::User(user) = &prepared.conversation[1] else {
             panic!("expected required data");

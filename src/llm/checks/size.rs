@@ -7,7 +7,7 @@ use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 
 use super::tools;
-use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema};
+use super::{CheckDefinition, PreparedCheck, PreparedCheckTarget, output_schema, system_prompt};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for scope and atomicity.
 
@@ -98,7 +98,7 @@ fn build_prepared_check(
 
     PreparedCheck {
         conversation: vec![
-            ConversationTurn::System(SYSTEM_PROMPT.to_string()),
+            ConversationTurn::System(system_prompt(SYSTEM_PROMPT)),
             ConversationTurn::User(user_prompt),
         ],
         tools: vec![
@@ -160,6 +160,7 @@ mod tests {
         assert!(system.contains("scope and atomicity"));
         assert!(system.contains("Do not request or use commit-message data"));
         assert!(system.contains("clearly required, directly related companion change"));
+        assert!(system.contains("Tool use is optional"));
 
         let ConversationTurn::User(user) = &prepared.conversation[1] else {
             panic!("expected required data");
