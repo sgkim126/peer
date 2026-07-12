@@ -49,6 +49,10 @@ inputs:
     description: Enable peer verbose logging.
     required: false
     default: "false"
+  include-usage:
+    description: Include LLM usage information in the peer review output.
+    required: false
+    default: "false"
 
 outputs:
   exit-code:
@@ -147,6 +151,7 @@ runs:
         PEER_REVIEW_COMMENTS_FILE: ${{ inputs.comments-file }}
         PEER_REVIEW_DEBUG: ${{ inputs.debug }}
         PEER_REVIEW_VERBOSE: ${{ inputs.verbose }}
+        PEER_REVIEW_INCLUDE_USAGE: ${{ inputs.include-usage }}
       run: |
         set -euo pipefail
 
@@ -197,6 +202,9 @@ runs:
         fi
         if [ "$PEER_REVIEW_VERBOSE" = "true" ]; then
           args=(--verbose "${args[@]}")
+        fi
+        if [ "$PEER_REVIEW_INCLUDE_USAGE" = "true" ]; then
+          args+=(--include-usage)
         fi
         if [ -n "$PEER_REVIEW_TITLE" ]; then
           args+=(--title "$PEER_REVIEW_TITLE")

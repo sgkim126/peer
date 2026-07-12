@@ -254,6 +254,7 @@ jobs:
           comments-file: ${{ steps.context.outputs.comments-file }}
           debug: "true"
           verbose: "true"
+          include-usage: "true"
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
