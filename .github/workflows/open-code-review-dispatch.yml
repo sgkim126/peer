@@ -61,6 +61,7 @@ jobs:
                 model: 'claude-sonnet-5',
                 url: 'https://api.anthropic.com/v1/messages',
                 useAnthropic: 'true',
+                authHeader: 'x-api-key',
                 secret: 'OCR_ANTHROPIC_API_KEY',
                 inputRate: 2,
                 outputRate: 10,
@@ -92,6 +93,7 @@ jobs:
             core.setOutput('model', config.model);
             core.setOutput('url', config.url);
             core.setOutput('use-anthropic', config.useAnthropic);
+            core.setOutput('auth-header', config.authHeader ?? '');
             core.setOutput('secret-name', config.secret);
             core.setOutput('input-rate', String(config.inputRate));
             core.setOutput('output-rate', String(config.outputRate));
@@ -137,6 +139,7 @@ jobs:
           OCR_LLM_URL: ${{ steps.review.outputs.url }}
           OCR_LLM_MODEL: ${{ steps.review.outputs.model }}
           OCR_USE_ANTHROPIC: ${{ steps.review.outputs.use-anthropic }}
+          OCR_LLM_AUTH_HEADER: ${{ steps.review.outputs.auth-header }}
           OCR_LLM_TOKEN: ${{ steps.review.outputs.provider == 'mistral' && secrets.OCR_MISTRAL_API_KEY || steps.review.outputs.provider == 'openai' && secrets.OCR_OPENAI_API_KEY || steps.review.outputs.provider == 'anthropic' && secrets.OCR_ANTHROPIC_API_KEY || secrets.OCR_GEMINI_API_KEY }}
         run: |
           set -u
