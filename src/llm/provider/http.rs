@@ -6,6 +6,8 @@ use serde_json::Value;
 
 use std::time::Duration;
 
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
 use super::LlmCallError;
 use crate::console::Console;
 
@@ -117,12 +119,13 @@ impl ProviderHttpClient {
                         return Ok(response);
                     };
                     self.console.debug(format_args!(
-                        "[{}] response status={} retrying in {:.1}s (attempt {}/{})",
+                        "[{}] {}: response status={} retrying in {:.1}s (attempt {}/{})",
                         self.provider_name,
+                        current_utc_time(),
                         status.as_u16(),
                         delay.as_secs_f64(),
                         attempt + 1,
-                        MAX_ATTEMPTS
+                        MAX_ATTEMPTS,
                     ));
                     tokio::time::sleep(delay).await;
                     continue;
@@ -147,8 +150,9 @@ impl ProviderHttpClient {
                         });
                     };
                     self.console.debug(format_args!(
-                        "[{}] transport error retrying in {:.1}s (attempt {}/{}): {}",
+                        "[{}] {} transport error retrying in {:.1}s (attempt {}/{}): {}",
                         self.provider_name,
+                        current_utc_time(),
                         delay.as_secs_f64(),
                         attempt + 1,
                         MAX_ATTEMPTS,
@@ -191,6 +195,12 @@ impl Display for RedactedHeaders<'_> {
         }
         Ok(())
     }
+}
+
+fn current_utc_time() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "unknown-time".to_string())
 }
 
 fn is_sensitive_header(name: &HeaderName) -> bool {
