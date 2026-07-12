@@ -56,24 +56,14 @@ pub fn get_file_content() -> ToolSpec {
                 "start_line": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Optional first line to return. Must be provided with end_line."
+                    "description": "Optional first line to return. Provide only together with end_line."
                 },
                 "end_line": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Optional last line to return. Must be provided with start_line."
+                    "description": "Optional last line to return. Provide only together with start_line."
                 }
             },
-            "allOf": [
-                {
-                    "if": { "required": ["start_line"] },
-                    "then": { "required": ["end_line"] }
-                },
-                {
-                    "if": { "required": ["end_line"] },
-                    "then": { "required": ["start_line"] }
-                }
-            ],
             "required": ["path", "revision"]
         }),
     }
@@ -225,6 +215,7 @@ mod tests {
         );
         assert_eq!(tool.parameters["properties"]["start_line"]["minimum"], 1);
         assert_eq!(tool.parameters["properties"]["end_line"]["minimum"], 1);
+        assert!(tool.parameters.get("allOf").is_none());
     }
 
     #[test]
