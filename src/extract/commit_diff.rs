@@ -1,9 +1,6 @@
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 
 use super::{ExtractError, Extractor};
-use crate::console::Console;
 use crate::git::{CommitHash, run_git};
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -14,32 +11,24 @@ pub struct CommitDiff {
 
 impl Extractor {
     pub async fn commit_diff(&self, revision: &str) -> Result<CommitDiff, ExtractError> {
-        commit_diff(revision, &self.project_root, self.console).await
+        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+
+        let diff = run_git(
+            &[
+                "diff-tree",
+                "--no-commit-id",
+                "--root",
+                "-r",
+                "-p",
+                hash.as_ref(),
+            ],
+            &self.project_root,
+            self.console,
+        )
+        .await?;
+
+        Ok(CommitDiff { hash, diff })
     }
-}
-
-async fn commit_diff(
-    revision: &str,
-    project_root: &Path,
-    console: Console,
-) -> Result<CommitDiff, ExtractError> {
-    let hash = CommitHash::resolve(revision, project_root, console).await?;
-
-    let diff = run_git(
-        &[
-            "diff-tree",
-            "--no-commit-id",
-            "--root",
-            "-r",
-            "-p",
-            hash.as_ref(),
-        ],
-        project_root,
-        console,
-    )
-    .await?;
-
-    Ok(CommitDiff { hash, diff })
 }
 
 #[cfg(test)]
@@ -47,6 +36,8 @@ mod tests {
     use super::*;
 
     use tempfile::TempDir;
+
+    use crate::console::Console;
 
     struct Repo {
         _tmp: TempDir,
@@ -98,7 +89,8 @@ mod tests {
         let hash = repo
             .commit(&[("hello.txt", b"hello world\n")], "add hello")
             .await;
-        let result = commit_diff(hash.as_ref(), &repo.path, Console::default())
+        let result = Extractor::new(repo.path.clone(), Console::default())
+            .commit_diff(hash.as_ref())
             .await
             .unwrap();
         assert!(result.diff.contains("+hello world"));
@@ -125,7 +117,8 @@ mod tests {
             .unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = commit_diff(hash.as_ref(), &repo.path, Console::default())
+        let result = Extractor::new(repo.path.clone(), Console::default())
+            .commit_diff(hash.as_ref())
             .await
             .unwrap();
 
@@ -140,7 +133,8 @@ mod tests {
             .await
             .unwrap();
         let hash = "deadbeef";
-        let err = commit_diff(hash, tmp.path(), Console::default())
+        let err = Extractor::new(tmp.path().to_path_buf(), Console::default())
+            .commit_diff(hash)
             .await
             .unwrap_err();
 

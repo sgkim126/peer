@@ -1,8 +1,5 @@
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 
-use crate::console::Console;
 use crate::git::{CommitHash, run_git};
 
 use super::{ExtractError, Extractor};
@@ -15,49 +12,45 @@ pub struct CommitList {
 
 impl Extractor {
     pub async fn commit_list(&self, range: &str) -> Result<CommitList, ExtractError> {
-        commit_list(range, &self.project_root, self.console).await
+        let project_root = &self.project_root;
+        let console = self.console;
+        if range.contains("...") || !range.contains("..") {
+            return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
+        }
+
+        let (from, to) = range.split_once("..").unwrap();
+        if from.is_empty() || to.is_empty() {
+            return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
+        }
+
+        CommitHash::resolve(from, project_root, console)
+            .await
+            .map_err(|_| ExtractError::InvalidRevision(from.to_string()))?;
+        CommitHash::resolve(to, project_root, console)
+            .await
+            .map_err(|_| ExtractError::InvalidRevision(to.to_string()))?;
+
+        let output = run_git(&["rev-list", "--reverse", range], project_root, console).await?;
+
+        let commits = output
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(CommitHash::new)
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(CommitList {
+            range: range.to_string(),
+            commits,
+        })
     }
-}
-
-async fn commit_list(
-    range: &str,
-    project_root: &Path,
-    console: Console,
-) -> Result<CommitList, ExtractError> {
-    if range.contains("...") || !range.contains("..") {
-        return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
-    }
-
-    let (from, to) = range.split_once("..").unwrap();
-    if from.is_empty() || to.is_empty() {
-        return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
-    }
-
-    CommitHash::resolve(from, project_root, console)
-        .await
-        .map_err(|_| ExtractError::InvalidRevision(from.to_string()))?;
-    CommitHash::resolve(to, project_root, console)
-        .await
-        .map_err(|_| ExtractError::InvalidRevision(to.to_string()))?;
-
-    let output = run_git(&["rev-list", "--reverse", range], project_root, console).await?;
-
-    let commits = output
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(CommitHash::new)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    Ok(CommitList {
-        range: range.to_string(),
-        commits,
-    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use tempfile::TempDir;
+
+    use crate::console::Console;
 
     struct Repo {
         _tmp: TempDir,
@@ -109,7 +102,8 @@ mod tests {
         let hash3 = repo.commit("c.txt", "third").await;
 
         let range = format!("{hash1}..HEAD");
-        let result = commit_list(&range, &repo.path, Console::default())
+        let result = Extractor::new(repo.path.clone(), Console::default())
+            .commit_list(&range)
             .await
             .unwrap();
 
@@ -123,7 +117,8 @@ mod tests {
         repo.commit("b.txt", "second").await;
 
         let range = format!("{hash1}..HEAD");
-        let result = commit_list(&range, &repo.path, Console::default())
+        let result = Extractor::new(repo.path.clone(), Console::default())
+            .commit_list(&range)
             .await
             .unwrap();
 
@@ -135,7 +130,8 @@ mod tests {
         let repo = Repo::new().await;
         let hash1 = repo.commit("a.txt", "first").await;
         let range = format!("{hash1}...HEAD");
-        let err = commit_list(&range, &repo.path, Console::default())
+        let err = Extractor::new(repo.path.clone(), Console::default())
+            .commit_list(&range)
             .await
             .unwrap_err();
         assert!(matches!(err, ExtractError::InvalidTwoDotRange(value) if value == range));
@@ -145,7 +141,8 @@ mod tests {
     async fn commit_list_fails_for_non_range() {
         let repo = Repo::new().await;
         let hash1 = repo.commit("a.txt", "first").await;
-        let err = commit_list(hash1.as_ref(), &repo.path, Console::default())
+        let err = Extractor::new(repo.path.clone(), Console::default())
+            .commit_list(hash1.as_ref())
             .await
             .unwrap_err();
         assert!(matches!(err, ExtractError::InvalidTwoDotRange(value) if value == hash1.as_ref()));
@@ -157,7 +154,8 @@ mod tests {
         repo.commit("a.txt", "first").await;
         let from = "deadbeef1234567";
         let range = format!("{from}..HEAD");
-        let err = commit_list(&range, &repo.path, Console::default())
+        let err = Extractor::new(repo.path.clone(), Console::default())
+            .commit_list(&range)
             .await
             .unwrap_err();
         assert!(matches!(err, ExtractError::InvalidRevision(value) if value == from));
@@ -169,7 +167,8 @@ mod tests {
         let hash1 = repo.commit("a.txt", "first").await;
         let to = "deadbeef1234567";
         let range = format!("{hash1}..{to}");
-        let err = commit_list(&range, &repo.path, Console::default())
+        let err = Extractor::new(repo.path.clone(), Console::default())
+            .commit_list(&range)
             .await
             .unwrap_err();
         assert!(matches!(err, ExtractError::InvalidRevision(value) if value == to));

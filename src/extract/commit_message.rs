@@ -1,9 +1,6 @@
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
 
 use super::{ExtractError, Extractor};
-use crate::console::Console;
 use crate::git::{CommitHash, run_git};
 
 #[derive(Debug, PartialEq, Deserialize, Serialize)]
@@ -14,28 +11,20 @@ pub struct CommitMessage {
 
 impl Extractor {
     pub async fn commit_message(&self, revision: &str) -> Result<CommitMessage, ExtractError> {
-        commit_message(revision, &self.project_root, self.console).await
+        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+
+        let output = run_git(
+            &["log", "-1", "--format=%B", hash.as_ref()],
+            &self.project_root,
+            self.console,
+        )
+        .await?;
+
+        Ok(CommitMessage {
+            hash,
+            message: output.trim_end().to_string(),
+        })
     }
-}
-
-async fn commit_message(
-    revision: &str,
-    project_root: &Path,
-    console: Console,
-) -> Result<CommitMessage, ExtractError> {
-    let hash = CommitHash::resolve(revision, project_root, console).await?;
-
-    let output = run_git(
-        &["log", "-1", "--format=%B", hash.as_ref()],
-        project_root,
-        console,
-    )
-    .await?;
-
-    Ok(CommitMessage {
-        hash,
-        message: output.trim_end().to_string(),
-    })
 }
 
 #[cfg(test)]
@@ -43,6 +32,8 @@ mod tests {
     use super::*;
     use std::path::Path;
     use tempfile::TempDir;
+
+    use crate::console::Console;
 
     async fn init_repo_with_commit(dir: &Path, message: &str) -> CommitHash {
         let console = Console::default();
@@ -80,7 +71,8 @@ mod tests {
     async fn commit_message_returns_correct_message() {
         let console = Console::default();
         let (repo, hash) = Repo::new("initial commit").await;
-        let result = commit_message(hash.as_ref(), &repo.path, console)
+        let result = Extractor::new(repo.path.clone(), console)
+            .commit_message(hash.as_ref())
             .await
             .unwrap();
         assert_eq!(result.hash, hash);
@@ -92,7 +84,8 @@ mod tests {
         let console = Console::default();
         let msg = "subject line\n\nbody paragraph";
         let (repo, hash) = Repo::new(msg).await;
-        let result = commit_message(hash.as_ref(), &repo.path, console)
+        let result = Extractor::new(repo.path.clone(), console)
+            .commit_message(hash.as_ref())
             .await
             .unwrap();
         assert_eq!(result.message, msg);
@@ -104,7 +97,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         run_git(&["init"], tmp.path(), console).await.unwrap();
         let hash = "deadbeef";
-        let err = commit_message(hash, tmp.path(), console).await.unwrap_err();
+        let err = Extractor::new(tmp.path().to_path_buf(), console)
+            .commit_message(hash)
+            .await
+            .unwrap_err();
         assert!(matches!(err, ExtractError::Git { .. }));
     }
 }

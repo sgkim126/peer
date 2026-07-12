@@ -1,7 +1,5 @@
-use std::collections::HashSet;
-use std::path::Path;
-
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 use super::{ExtractError, Extractor};
 use crate::console::Console;
@@ -108,68 +106,60 @@ fn parse_binary_paths(numstat: &str) -> HashSet<&str> {
 
 impl Extractor {
     pub async fn commit_files(&self, revision: &str) -> Result<CommitFiles, ExtractError> {
-        commit_files(revision, &self.project_root, self.console).await
+        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+
+        let name_status_out = run_git(
+            &[
+                "diff-tree",
+                "--no-commit-id",
+                "--root",
+                "-r",
+                "--name-status",
+                "-M",
+                "-C",
+                hash.as_ref(),
+            ],
+            &self.project_root,
+            self.console,
+        )
+        .await?;
+
+        let numstat_out = run_git(
+            &[
+                "diff-tree",
+                "--no-commit-id",
+                "--root",
+                "-r",
+                "--numstat",
+                hash.as_ref(),
+            ],
+            &self.project_root,
+            self.console,
+        )
+        .await?;
+
+        let binary_paths = parse_binary_paths(&numstat_out);
+        let raw_entries = parse_name_status(&name_status_out, self.console);
+
+        let files = raw_entries
+            .into_iter()
+            .map(|entry| {
+                let is_binary = binary_paths.contains(entry.path.as_str())
+                    || entry
+                        .source_path
+                        .as_deref()
+                        .is_some_and(|p| binary_paths.contains(p));
+                FileEntry {
+                    path: entry.path,
+                    status: entry.status,
+                    source_path: entry.source_path,
+                    is_binary,
+                }
+            })
+            .collect();
+
+        Ok(CommitFiles { hash, files })
     }
-}
-
-async fn commit_files(
-    revision: &str,
-    project_root: &Path,
-    console: Console,
-) -> Result<CommitFiles, ExtractError> {
-    let hash = CommitHash::resolve(revision, project_root, console).await?;
-
-    let name_status_out = run_git(
-        &[
-            "diff-tree",
-            "--no-commit-id",
-            "--root",
-            "-r",
-            "--name-status",
-            "-M",
-            "-C",
-            hash.as_ref(),
-        ],
-        project_root,
-        console,
-    )
-    .await?;
-
-    let numstat_out = run_git(
-        &[
-            "diff-tree",
-            "--no-commit-id",
-            "--root",
-            "-r",
-            "--numstat",
-            hash.as_ref(),
-        ],
-        project_root,
-        console,
-    )
-    .await?;
-
-    let binary_paths = parse_binary_paths(&numstat_out);
-    let raw_entries = parse_name_status(&name_status_out, console);
-
-    let files = raw_entries
-        .into_iter()
-        .map(|entry| {
-            let is_binary = binary_paths.contains(entry.path.as_str())
-                || entry
-                    .source_path
-                    .as_deref()
-                    .is_some_and(|p| binary_paths.contains(p));
-            FileEntry {
-                path: entry.path,
-                status: entry.status,
-                source_path: entry.source_path,
-                is_binary,
-            }
-        })
-        .collect();
-
-    Ok(CommitFiles { hash, files })
 }
 
 #[cfg(test)]
@@ -396,7 +386,8 @@ mod tests {
         let hash = repo
             .commit_files_raw(&[("hello.txt", b"hello")], "add hello")
             .await;
-        let result = commit_files(hash.as_ref(), &repo.path, console)
+        let result = Extractor::new(repo.path.clone(), console)
+            .commit_files(hash.as_ref())
             .await
             .unwrap();
 
@@ -420,7 +411,8 @@ mod tests {
         let hash = repo
             .commit_files_raw(&[("data.bin", &binary_data)], "add binary")
             .await;
-        let result = commit_files(hash.as_ref(), &repo.path, console)
+        let result = Extractor::new(repo.path.clone(), console)
+            .commit_files(hash.as_ref())
             .await
             .unwrap();
 
@@ -457,7 +449,8 @@ mod tests {
             .unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = commit_files(hash.as_ref(), &repo.path, console)
+        let result = Extractor::new(repo.path.clone(), console)
+            .commit_files(hash.as_ref())
             .await
             .unwrap();
 
@@ -506,7 +499,8 @@ mod tests {
             .unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = commit_files(hash.as_ref(), &repo.path, console)
+        let result = Extractor::new(repo.path.clone(), console)
+            .commit_files(hash.as_ref())
             .await
             .unwrap();
 
@@ -528,7 +522,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         run_git(&["init"], tmp.path(), console).await.unwrap();
         let hash = "deadbeef";
-        let err = commit_files(hash, tmp.path(), console).await.unwrap_err();
+        let err = Extractor::new(tmp.path().to_path_buf(), console)
+            .commit_files(hash)
+            .await
+            .unwrap_err();
 
         assert!(matches!(err, ExtractError::Git { .. }));
     }
