@@ -3,6 +3,8 @@ use serde_json::Value;
 
 use std::time::Duration;
 
+use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+
 use super::LlmCallError;
 use crate::console::Console;
 use crate::llm::provider::debug::{format_headers_debug, format_json_debug};
@@ -131,7 +133,8 @@ impl ProviderHttpClient {
                         return Ok(response);
                     };
                     self.console.debug(format_args!(
-                        "{} response status={} retrying in {:.1}s (attempt {}/{})",
+                        "{} {} response status={} retrying in {:.1}s (attempt {}/{})",
+                        current_utc_time(),
                         self.provider_label,
                         status.as_u16(),
                         delay.as_secs_f64(),
@@ -157,7 +160,8 @@ impl ProviderHttpClient {
                         ));
                     };
                     self.console.debug(format_args!(
-                        "{} transport error retrying in {:.1}s (attempt {}/{}): {}",
+                        "{} {} transport error retrying in {:.1}s (attempt {}/{}): {}",
+                        current_utc_time(),
                         self.provider_label,
                         delay.as_secs_f64(),
                         attempt + 1,
@@ -179,6 +183,12 @@ impl ProviderHttpClient {
             source: Box::new(error),
         }
     }
+}
+
+fn current_utc_time() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "unknown-time".to_string())
 }
 
 fn map_transport_error(error: reqwest::Error) -> LlmCallError {
