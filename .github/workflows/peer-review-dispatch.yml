@@ -61,6 +61,9 @@ permissions:
   issues: write
   pull-requests: write
 
+env:
+  PEER_VERSION: "0.4.0"
+
 jobs:
   review:
     name: Peer review
@@ -121,18 +124,21 @@ jobs:
         id: placeholder
         uses: actions/github-script@v9
         env:
+          PEER_VERSION: ${{ env.PEER_VERSION }}
           REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
           REVIEW_MODEL: ${{ steps.review.outputs.model }}
           REVIEW_SKIP_CHECKS: ${{ steps.review.outputs.skip-checks }}
           REVIEW_ONLY_CHECKS: ${{ steps.review.outputs.only-checks }}
         with:
           script: |
+            const peerVersion = process.env.PEER_VERSION;
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
             const skipChecks = process.env.REVIEW_SKIP_CHECKS;
             const onlyChecks = process.env.REVIEW_ONLY_CHECKS;
             const triggeredBy = context.actor;
             const metadata = [
+              `peer version: ${peerVersion}`,
               `provider: ${provider}`,
               model
                 ? `model: ${model}`
@@ -235,7 +241,7 @@ jobs:
         id: peer
         uses: ./.peer-action/.github/actions/peer-review
         with:
-          version: "0.4.0"
+          version: ${{ env.PEER_VERSION }}
           provider: ${{ steps.review.outputs.provider }}
           model: ${{ steps.review.outputs.model }}
           skip-checks: ${{ steps.review.outputs.skip-checks }}
@@ -258,6 +264,7 @@ jobs:
         if: always() && steps.placeholder.outputs.comment-id != ''
         uses: actions/github-script@v9
         env:
+          PEER_VERSION: ${{ env.PEER_VERSION }}
           REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
           REVIEW_MODEL: ${{ steps.review.outputs.model }}
           REVIEW_SKIP_CHECKS: ${{ steps.review.outputs.skip-checks }}
@@ -265,6 +272,7 @@ jobs:
         with:
           script: |
             const fs = require('fs');
+            const peerVersion = process.env.PEER_VERSION;
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
             const skipChecks = process.env.REVIEW_SKIP_CHECKS;
@@ -282,6 +290,7 @@ jobs:
             }
 
             const metadata = [
+              `peer version: ${peerVersion}`,
               `provider: ${provider}`,
               model
                 ? `model: ${model}`
@@ -306,13 +315,17 @@ jobs:
       - name: Add peer review comment to summary
         if: always() && steps.placeholder.outputs.comment-url != ''
         uses: actions/github-script@v9
+        env:
+          PEER_VERSION: ${{ env.PEER_VERSION }}
         with:
           script: |
+            const peerVersion = process.env.PEER_VERSION;
             await core.summary
               .addLink(
                 'Pull request #${{ steps.review.outputs.pr-number }}',
                 '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}',
               )
               .addHeading('Peer Review')
+              .addRaw(`peer version: ${peerVersion}\n\n`)
               .addLink('View peer review comment', '${{ steps.placeholder.outputs.comment-url }}')
               .write();
