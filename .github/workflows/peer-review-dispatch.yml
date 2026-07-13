@@ -188,6 +188,7 @@ jobs:
               pull_number: prNumber,
             });
 
+            const isBotComment = (comment) => comment.user?.type === 'Bot';
             const issueComments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -203,7 +204,7 @@ jobs:
 
             const threads = [];
             for (const comment of issueComments) {
-              if (comment.user?.login === 'github-actions[bot]') continue;
+              if (isBotComment(comment)) continue;
               threads.push({ comments: [{
                 author: comment.user?.login ?? 'unknown',
                 body: comment.body ?? '',
@@ -212,7 +213,7 @@ jobs:
 
             const reviewThreads = new Map();
             for (const comment of reviewComments) {
-              if (comment.user?.login === 'github-actions[bot]') continue;
+              if (isBotComment(comment)) continue;
               const root = String(comment.in_reply_to_id ?? comment.id);
               const thread = reviewThreads.get(root) ?? {
                 commit: comment.commit_id,
