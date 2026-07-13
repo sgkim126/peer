@@ -296,7 +296,11 @@ fn render_terminal_user_info_request(request: &CheckUserInfoRequest, use_color: 
         terminal_label("Target:", use_color),
         display_target(&request.target),
         terminal_label("Status:", use_color),
-        styled("needs_user_info", Style::new().yellow().bold(), use_color),
+        styled(
+            "needs_user_info",
+            Style::new().yellow().bold().underline(),
+            use_color
+        ),
         request.questions.join("\n")
     )
 }
@@ -309,7 +313,7 @@ fn render_markdown_user_info_request(request: &CheckUserInfoRequest) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "## Check: {}\n\n- **Target:** `{}`\n- **Status:** needs_user_info\n\n### Questions\n\n{}",
+        "## Check: {}\n\n- **Target:** `{}`\n- **Status:** **needs_user_info**\n\n### Questions\n\n{}",
         request.check,
         display_target(&request.target),
         questions
@@ -319,7 +323,7 @@ fn render_markdown_user_info_request(request: &CheckUserInfoRequest) -> String {
 fn render_github_user_info_request(request: &CheckUserInfoRequest) -> String {
     let rendered = render_markdown_user_info_request(request);
     format!(
-        "<details>\n<summary>Check: {} - Status: needs_user_info - Target: {}</summary>\n\n{}\n</details>",
+        "<details>\n<summary>Check: {} - Status: <strong>needs_user_info</strong> - Target: {}</summary>\n\n{}\n</details>",
         request.check,
         display_target(&request.target),
         rendered
@@ -1417,7 +1421,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
 
         assert!(rendered.contains("## Check: security"));
         assert!(rendered.contains("- **Target:** `abc1234`"));
-        assert!(rendered.contains("- **Status:** needs_user_info"));
+        assert!(rendered.contains("- **Status:** **needs_user_info**"));
         assert!(rendered.contains("### Questions"));
         assert!(rendered.contains(
             "- Which production auth policy applies here, and why does it affect this security check?"
@@ -1576,7 +1580,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
 
         assert!(rendered.contains("## Check: size"));
         assert!(rendered.contains("\n\n## Check: security"));
-        assert!(rendered.contains("- **Status:** needs_user_info"));
+        assert!(rendered.contains("- **Status:** **needs_user_info**"));
         assert!(rendered.contains("### Questions"));
     }
 
@@ -1635,7 +1639,7 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
     }
 
     #[test]
-    fn folds_non_ok_github_review_outcomes() {
+    fn highlights_user_info_github_review_outcomes_in_details() {
         let result = mixed_review_result();
 
         let rendered = render_review_result(
@@ -1649,9 +1653,10 @@ Is this endpoint exposed publicly, and why is that needed to assess exploitabili
             rendered.contains("<summary>Check: intent - Status: issue - Target: abc1234</summary>")
         );
         assert!(rendered.contains(
-            "<summary>Check: security - Status: needs_user_info - Target: abc1234</summary>"
+            "<summary>Check: security - Status: <strong>needs_user_info</strong> - Target: abc1234</summary>"
         ));
-        assert!(rendered.contains("- **Status:** needs_user_info"));
+        assert!(rendered.contains("## Check: security"));
+        assert!(rendered.contains("- **Status:** **needs_user_info**"));
     }
 
     #[test]
