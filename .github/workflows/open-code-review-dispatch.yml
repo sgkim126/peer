@@ -160,7 +160,7 @@ jobs:
             exit 1
           fi
           set +e
-          ocr review --repo "$GITHUB_WORKSPACE" --from '${{ steps.review.outputs.base-sha }}' --to '${{ steps.review.outputs.head-sha }}' --format json >"$result" 2>"$stderr"
+          ocr review --repo "$GITHUB_WORKSPACE" --from '${{ steps.review.outputs.base-sha }}' --to '${{ steps.review.outputs.head-sha }}' --concurrency 1 --format json >"$result" 2>"$stderr"
           code=$?
           set -e
           echo "exit-code=$code" >> "$GITHUB_OUTPUT"
