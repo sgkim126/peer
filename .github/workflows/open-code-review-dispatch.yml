@@ -150,6 +150,15 @@ jobs:
 
           result="$RUNNER_TEMP/open-code-review-result.json"
           stderr="$RUNNER_TEMP/open-code-review-stderr.log"
+          connectivity="$RUNNER_TEMP/open-code-review-connectivity.log"
+          if ! ocr llm test >"$connectivity" 2>&1; then
+            echo "LLM connectivity test failed before starting the review:" >"$stderr"
+            cat "$connectivity" >>"$stderr"
+            echo "exit-code=1" >> "$GITHUB_OUTPUT"
+            echo "result-path=$result" >> "$GITHUB_OUTPUT"
+            echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
           set +e
           ocr review --repo "$GITHUB_WORKSPACE" --from '${{ steps.review.outputs.base-sha }}' --to '${{ steps.review.outputs.head-sha }}' --format json >"$result" 2>"$stderr"
           code=$?
@@ -258,15 +267,23 @@ jobs:
         uses: actions/github-script@v9
         env:
           USAGE_PATH: ${{ steps.usage.outputs.usage-path }}
+          STDERR_PATH: ${{ steps.ocr.outputs.stderr-path }}
         with:
           script: |
             const fs = require('fs');
             let usage = '';
+            let stderr = '';
             try { usage = fs.readFileSync(process.env.USAGE_PATH, 'utf8'); }
             catch (error) { core.warning(`Could not read token usage: ${error.message}`); }
-            await core.summary
+            try { stderr = fs.readFileSync(process.env.STDERR_PATH, 'utf8').trim(); }
+            catch (error) { core.warning(`Could not read OCR stderr: ${error.message}`); }
+            const summary = core.summary
               .addLink('Pull request #${{ steps.review.outputs.pr-number }}', '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}')
               .addHeading('Open Code Review')
-              .addRaw(`provider: ${{ steps.review.outputs.provider }}\n\nmodel: ${{ steps.review.outputs.model }}\n\n${usage}\n\n`)
+              .addRaw(`provider: ${{ steps.review.outputs.provider }}, model: ${{ steps.review.outputs.model }}\n\n${usage}\n\n`);
+            if (stderr) {
+              summary.addHeading('OCR stderr', 3).addCodeBlock(stderr.slice(0, 6000), 'text');
+            }
+            await summary
               .addLink('View Open Code Review comment', '${{ steps.placeholder.outputs.comment-url }}')
               .write();
