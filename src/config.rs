@@ -136,6 +136,13 @@ fn parse_and_validate(
     Ok((config, project_root))
 }
 
+/// the default `.peer/config.toml` content written by `peer init`.
+#[allow(dead_code)]
+pub const DEFAULT_CONFIG_TOML: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/resources/default_config.toml"
+));
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,8 +160,36 @@ mod tests {
     }
 
     #[test]
+    fn discovers_config_in_same_dir() {
+        let tmp = init_dir(DEFAULT_CONFIG_TOML);
+        let (config, root) = discover(tmp.path()).unwrap();
+
+        assert_eq!(config.version, 1);
+        assert_eq!(root, tmp.path());
+    }
+
+    #[test]
+    fn discovers_config_in_parent_dir() {
+        let tmp = init_dir(DEFAULT_CONFIG_TOML);
+        let subdir = tmp.path().join("sub").join("dir");
+        fs::create_dir_all(&subdir).unwrap();
+        let (_, root) = discover(&subdir).unwrap();
+
+        assert_eq!(root, tmp.path());
+    }
+
+    #[test]
     fn fails_when_config_not_found() {
         let tmp = tempfile::tempdir().unwrap();
+        assert!(matches!(
+            discover(tmp.path()),
+            Err(PeerError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn fails_on_version_mismatch() {
+        let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace("version = 1", "version = 99"));
         assert!(matches!(
             discover(tmp.path()),
             Err(PeerError::InvalidConfig { .. })
@@ -243,6 +278,61 @@ models = []
         assert_eq!(
             error.to_string(),
             "provider 'mistral' must configure at least one model"
+        );
+    }
+
+    #[test]
+    fn fails_when_default_provider_is_not_configured() {
+        let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace(
+            "default_provider = \"mistral\"",
+            "default_provider = \"missing\"",
+        ));
+
+        assert!(matches!(
+            discover(tmp.path()),
+            Err(PeerError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn fails_when_default_model_is_not_configured_for_default_provider() {
+        let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace(
+            "default_model = \"mistral-large-latest\"",
+            "default_model = \"missing\"",
+        ));
+
+        assert!(matches!(
+            discover(tmp.path()),
+            Err(PeerError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn default_config_parses_correctly() {
+        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+
+        assert_eq!(
+            config,
+            Config {
+                version: 1,
+                review: ReviewConfig { max_commits: 10 },
+                llm: LlmConfig {
+                    default_provider: "mistral".into(),
+                    default_model: "mistral-large-latest".into(),
+                    confidence_threshold: 0.8,
+                    max_iterations: 5,
+                },
+                providers: vec![ProviderConfig {
+                    name: "mistral".into(),
+                    api_key_env: "MISTRAL_API_KEY".into(),
+                    base_url: None,
+                    models: vec![ModelConfig {
+                        name: "mistral-large-latest".into(),
+                        input_per_1m_usd: 2.0,
+                        output_per_1m_usd: 6.0,
+                    }]
+                }],
+            }
         );
     }
 }
