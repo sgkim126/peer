@@ -17,7 +17,8 @@ deciding an otherwise concrete potential finding is unavailable from both the su
 repository tools. Each question must identify the missing fact, affected code or behavior, and why
 it changes the assessment. Never use it to ask whether an issue exists, seek general confirmation,
 or delegate review judgment to the user. If no issue can be established, return the required check
-result with no findings. Once you have enough context, return the required check result immediately."#;
+result with no findings. Once you have enough context, return the required check result immediately
+as a valid JSON object by calling `submit_check_result`."#;
 
 fn system_prompt(check_instructions: &str) -> String {
     format!("{check_instructions}\n\n{TOOL_USE_INSTRUCTIONS}")
