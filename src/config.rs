@@ -1,5 +1,6 @@
 use std::{
     collections::HashSet,
+    num::NonZeroU32,
     path::{Path, PathBuf},
 };
 
@@ -22,7 +23,7 @@ pub struct Config {
 #[derive(Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReviewConfig {
-    pub max_commits: u32,
+    pub max_commits: NonZeroU32,
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -31,7 +32,7 @@ pub struct LlmConfig {
     pub default_provider: String,
     pub default_model: String,
     pub confidence_threshold: f64,
-    pub max_iterations: u32,
+    pub max_iterations: NonZeroU32,
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -243,6 +244,27 @@ mod tests {
     }
 
     #[test]
+    fn fails_when_max_commits_is_zero() {
+        let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace("max_commits = 10", "max_commits = 0"));
+
+        assert!(matches!(
+            discover(tmp.path()),
+            Err(PeerError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn fails_when_max_iterations_is_zero() {
+        let tmp =
+            init_dir(&DEFAULT_CONFIG_TOML.replace("max_iterations = 5", "max_iterations = 0"));
+
+        assert!(matches!(
+            discover(tmp.path()),
+            Err(PeerError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
     fn fails_when_config_path_is_a_directory() {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join(".peer/config.toml")).unwrap();
@@ -378,12 +400,14 @@ output_per_1m_usd = 7.0
             config,
             Config {
                 version: 1,
-                review: ReviewConfig { max_commits: 10 },
+                review: ReviewConfig {
+                    max_commits: NonZeroU32::new(10).unwrap(),
+                },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
                     default_model: "mistral-large-latest".into(),
                     confidence_threshold: 0.8,
-                    max_iterations: 5,
+                    max_iterations: NonZeroU32::new(5).unwrap(),
                 },
                 providers: vec![ProviderConfig {
                     name: "mistral".into(),
