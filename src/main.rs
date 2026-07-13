@@ -150,7 +150,7 @@ async fn main() -> ExitCode {
             };
             if let Err(err) = review::validate_target(
                 &review_target,
-                config.review.max_commits,
+                config.review.max_commits.get(),
                 &project_root,
                 console,
             )

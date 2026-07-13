@@ -341,7 +341,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use std::path::PathBuf;
+    use std::{num::NonZeroU32, path::PathBuf};
 
     use crate::config::{ChecksConfig, LlmConfig, ModelConfig, ProviderConfig, ReviewConfig};
     use crate::console::Console;
@@ -426,10 +426,12 @@ mod tests {
     fn test_config() -> Config {
         Config {
             version: 1,
-            review: ReviewConfig { max_commits: 10 },
+            review: ReviewConfig {
+                max_commits: NonZeroU32::new(10).unwrap(),
+            },
             llm: LlmConfig {
                 default_provider: "test".to_string(),
-                max_iterations: 3,
+                max_iterations: NonZeroU32::new(3).unwrap(),
             },
             checks: ChecksConfig::default(),
             providers: vec![ProviderConfig {
@@ -850,7 +852,7 @@ mod tests {
         let tool_executor = FakeToolExecutor::default();
         let extractor = Extractor::new(repository.path().to_path_buf(), console);
         let mut config = test_config();
-        config.llm.max_iterations = 1;
+        config.llm.max_iterations = NonZeroU32::new(1).unwrap();
         let check = SecurityCheck::try_new("HEAD", &extractor).await.unwrap();
 
         let outcome = run_definition_with(

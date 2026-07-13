@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    num::NonZeroU32,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 
@@ -18,13 +21,13 @@ pub struct Config {
 
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct ReviewConfig {
-    pub max_commits: u32,
+    pub max_commits: NonZeroU32,
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
 pub struct LlmConfig {
     pub default_provider: String,
-    pub max_iterations: u32,
+    pub max_iterations: NonZeroU32,
 }
 
 /// Per-check settings. Values omitted here fall back to `[llm]` settings.
@@ -75,7 +78,7 @@ impl Config {
             _ => None,
         };
 
-        override_value.unwrap_or(self.llm.max_iterations)
+        override_value.unwrap_or(self.llm.max_iterations.get())
     }
 
     /// Finds the named provider and selected model, returning references to both.
@@ -216,6 +219,27 @@ mod tests {
     }
 
     #[test]
+    fn fails_when_max_commits_is_zero() {
+        let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace("max_commits = 10", "max_commits = 0"));
+
+        assert!(matches!(
+            discover(tmp.path()),
+            Err(PeerError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
+    fn fails_when_max_iterations_is_zero() {
+        let tmp =
+            init_dir(&DEFAULT_CONFIG_TOML.replace("max_iterations = 3", "max_iterations = 0"));
+
+        assert!(matches!(
+            discover(tmp.path()),
+            Err(PeerError::InvalidConfig { .. })
+        ));
+    }
+
+    #[test]
     fn resolve_provider_returns_provider_and_model() {
         let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         let (provider, model) = config.resolve_provider("mistral", None).unwrap();
@@ -224,6 +248,12 @@ mod tests {
         assert_eq!(model.name, "mistral-medium-3-5");
         assert_eq!(model.input_per_1m_usd, 1.5);
         assert_eq!(model.output_per_1m_usd, 7.5);
+    }
+
+    #[test]
+    fn fails_when_config_path_is_a_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::create_dir_all(tmp.path().join(".peer/config.toml")).unwrap();
     }
 
     #[test]
@@ -252,10 +282,12 @@ mod tests {
             config,
             Config {
                 version: 1,
-                review: ReviewConfig { max_commits: 10 },
+                review: ReviewConfig {
+                    max_commits: NonZeroU32::new(10).unwrap(),
+                },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
-                    max_iterations: 3,
+                    max_iterations: NonZeroU32::new(3).unwrap(),
                 },
                 checks: ChecksConfig {
                     size: CheckConfig::default(),
