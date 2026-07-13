@@ -158,6 +158,7 @@ mod tests {
         assert!(system.contains("outside the scope of this check"));
         assert!(system.contains("Tool use is optional"));
         assert!(system.contains("never invent\na tool name or arguments"));
+        assert!(system.contains("Never use it to ask whether an issue exists"));
 
         let ConversationTurn::User(user) = &prepared.conversation[1] else {
             panic!("expected required data");

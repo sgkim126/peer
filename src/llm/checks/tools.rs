@@ -136,7 +136,7 @@ pub fn list_tree() -> ToolSpec {
 pub fn request_user_info() -> ToolSpec {
     ToolSpec {
         name: "request_user_info".to_string(),
-        description: "Stop the check and ask the user for information that is necessary to complete the check but is not available from the provided context or repository tools. Do not ask for information that can be obtained with the other available tools. Each question must include enough context to explain why the information is needed.".to_string(),
+        description: "Stop the check only to ask for a specific fact that is necessary to decide a concrete potential finding and unavailable from the provided context or repository tools. Do not ask for information that can be obtained with the other available tools. Each question must identify the missing fact, affected code or behavior, and why it changes the assessment. Never ask whether an issue exists, seek general confirmation, or delegate review judgment to the user.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -218,5 +218,19 @@ mod tests {
 
         assert_eq!(tool.name, "list_tree");
         assert_eq!(tool.parameters["required"], serde_json::json!(["revision"]));
+    }
+
+    #[test]
+    fn request_user_info_rejects_general_review_questions() {
+        let tool = request_user_info();
+
+        assert!(
+            tool.description
+                .contains("Never ask whether an issue exists")
+        );
+        assert!(
+            tool.description
+                .contains("specific fact that is necessary to decide a concrete potential finding")
+        );
     }
 }

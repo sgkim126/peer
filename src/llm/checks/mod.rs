@@ -12,7 +12,12 @@ do not fetch a commit message, diff, or changed-file list that is already provid
 repository tool only when genuinely necessary to obtain additional context. Call only a tool
 listed in the supplied tool definitions, and use its name and input schema exactly; never invent
 a tool name or arguments. Do not inspect files merely because they are mentioned in review
-context. Once you have enough context, return the required check result immediately."#;
+context. `request_user_info` is an exception: call it only when a specific fact indispensable to
+deciding an otherwise concrete potential finding is unavailable from both the supplied context and
+repository tools. Each question must identify the missing fact, affected code or behavior, and why
+it changes the assessment. Never use it to ask whether an issue exists, seek general confirmation,
+or delegate review judgment to the user. If no issue can be established, return the required check
+result with no findings. Once you have enough context, return the required check result immediately."#;
 
 fn system_prompt(check_instructions: &str) -> String {
     format!("{check_instructions}\n\n{TOOL_USE_INSTRUCTIONS}")
