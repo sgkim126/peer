@@ -8,6 +8,15 @@ pub enum PeerError {
     },
 }
 
+impl PeerError {
+    pub fn invalid_config(message: impl Into<String>) -> Self {
+        Self::InvalidConfig {
+            message: message.into(),
+            source: None,
+        }
+    }
+}
+
 impl fmt::Display for PeerError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -47,10 +56,7 @@ mod tests {
 
     #[test]
     fn config_error_without_source_has_no_chain() {
-        let e = PeerError::InvalidConfig {
-            message: "not found".into(),
-            source: None,
-        };
+        let e = PeerError::invalid_config("not found");
 
         assert!(e.source().is_none());
     }

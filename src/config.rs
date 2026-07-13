@@ -53,10 +53,10 @@ pub struct ModelConfig {
 #[allow(dead_code)]
 pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
     if !from.is_absolute() {
-        return Err(PeerError::InvalidConfig {
-            message: format!("config discovery path must be absolute: {}", from.display()),
-            source: None,
-        });
+        return Err(PeerError::invalid_config(format!(
+            "config discovery path must be absolute: {}",
+            from.display()
+        )));
     }
 
     for dir in from.ancestors() {
@@ -72,10 +72,10 @@ pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
             }
         }
     }
-    Err(PeerError::InvalidConfig {
-        message: format!("no .peer/config.toml found from {}", from.display()),
-        source: None,
-    })
+    Err(PeerError::invalid_config(format!(
+        "no .peer/config.toml found from {}",
+        from.display()
+    )))
 }
 
 fn parse_and_validate(
@@ -88,20 +88,16 @@ fn parse_and_validate(
         source: Some(Box::new(e)),
     })?;
     if !SUPPORTED_VERSIONS.contains(&config.version) {
-        return Err(PeerError::InvalidConfig {
-            message: format!(
-                "unsupported config version {} (expected {SUPPORTED_VERSIONS:?})",
-                config.version
-            ),
-            source: None,
-        });
+        return Err(PeerError::invalid_config(format!(
+            "unsupported config version {} (expected {SUPPORTED_VERSIONS:?})",
+            config.version
+        )));
     }
 
     if config.providers.is_empty() {
-        return Err(PeerError::InvalidConfig {
-            message: "at least one provider must be configured".into(),
-            source: None,
-        });
+        return Err(PeerError::invalid_config(
+            "at least one provider must be configured",
+        ));
     }
 
     if let Some(provider) = config
@@ -109,25 +105,21 @@ fn parse_and_validate(
         .iter()
         .find(|provider| provider.models.is_empty())
     {
-        return Err(PeerError::InvalidConfig {
-            message: format!(
-                "provider '{}' must configure at least one model",
-                provider.name
-            ),
-            source: None,
-        });
+        return Err(PeerError::invalid_config(format!(
+            "provider '{}' must configure at least one model",
+            provider.name
+        )));
     }
 
     let default_provider = config
         .providers
         .iter()
         .find(|provider| provider.name == config.llm.default_provider)
-        .ok_or_else(|| PeerError::InvalidConfig {
-            message: format!(
+        .ok_or_else(|| {
+            PeerError::invalid_config(format!(
                 "default provider '{}' is not configured",
                 config.llm.default_provider
-            ),
-            source: None,
+            ))
         })?;
 
     if !default_provider
@@ -135,13 +127,10 @@ fn parse_and_validate(
         .iter()
         .any(|model| model.name == config.llm.default_model)
     {
-        return Err(PeerError::InvalidConfig {
-            message: format!(
-                "default model '{}' is not configured for provider '{}'",
-                config.llm.default_model, config.llm.default_provider
-            ),
-            source: None,
-        });
+        return Err(PeerError::invalid_config(format!(
+            "default model '{}' is not configured for provider '{}'",
+            config.llm.default_model, config.llm.default_provider
+        )));
     }
 
     Ok((config, project_root))
