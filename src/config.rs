@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::HashSet,
+    path::{Path, PathBuf},
+};
 
 use serde::Deserialize;
 
@@ -100,6 +103,16 @@ fn parse_and_validate(
         ));
     }
 
+    let mut provider_names = HashSet::new();
+    for provider in &config.providers {
+        if !provider_names.insert(&provider.name) {
+            return Err(PeerError::invalid_config(format!(
+                "provider name '{}' is configured more than once",
+                provider.name
+            )));
+        }
+    }
+
     if let Some(provider) = config
         .providers
         .iter()
@@ -109,6 +122,18 @@ fn parse_and_validate(
             "provider '{}' must configure at least one model",
             provider.name
         )));
+    }
+
+    for provider in &config.providers {
+        let mut model_names = HashSet::new();
+        for model in &provider.models {
+            if !model_names.insert(&model.name) {
+                return Err(PeerError::invalid_config(format!(
+                    "provider '{}' configures model '{}' more than once",
+                    provider.name, model.name
+                )));
+            }
+        }
     }
 
     let default_provider = config
@@ -278,6 +303,44 @@ models = []
         assert_eq!(
             error.to_string(),
             "provider 'mistral' must configure at least one model"
+        );
+    }
+
+    #[test]
+    fn fails_when_provider_names_are_duplicated() {
+        let tmp = init_dir(&format!(
+            r#"{DEFAULT_CONFIG_TOML}
+
+[[providers]]
+name = "mistral"
+api_key_env = "SECOND_MISTRAL_API_KEY"
+models = [{{ name = "another-model", input_per_1m_usd = 1.0, output_per_1m_usd = 1.0 }}]
+"#
+        ));
+
+        let error = discover(tmp.path()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "provider name 'mistral' is configured more than once"
+        );
+    }
+
+    #[test]
+    fn fails_when_model_names_are_duplicated_within_a_provider() {
+        let tmp = init_dir(&format!(
+            r#"{DEFAULT_CONFIG_TOML}
+
+[[providers.models]]
+name = "mistral-large-latest"
+input_per_1m_usd = 3.0
+output_per_1m_usd = 7.0
+"#
+        ));
+
+        let error = discover(tmp.path()).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "provider 'mistral' configures model 'mistral-large-latest' more than once"
         );
     }
 
