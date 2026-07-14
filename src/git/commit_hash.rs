@@ -92,9 +92,9 @@ mod tests {
         assert!(matches!(
             CommitHash::new(&hash),
             Err(GitError::InvalidCommitHash {
+                value,
                 reason: InvalidCommitHashReason::TooShort,
-                ..
-            }),
+            }) if value == hash,
         ));
     }
 
@@ -104,38 +104,45 @@ mod tests {
         assert!(matches!(
             CommitHash::new(&hash),
             Err(GitError::InvalidCommitHash {
+                value,
                 reason: InvalidCommitHashReason::TooLong,
-                ..
-            }),
+            }) if value == hash,
         ));
     }
 
     #[test]
     fn commit_hash_uppercase_is_rejected() {
+        let hash = "DEADBEEF";
         assert!(matches!(
-            CommitHash::new("DEADBEEF"),
+            CommitHash::new(hash),
             Err(GitError::InvalidCommitHash {
+                value,
                 reason: InvalidCommitHashReason::InvalidCharacter,
-                ..
-            }),
+            }) if value == hash,
         ));
     }
 
     #[test]
     fn commit_hash_non_hex_chars_are_rejected() {
+        let hash = "xyzxyzx";
         assert!(matches!(
-            CommitHash::new("xyzxyzx"),
+            CommitHash::new(hash),
             Err(GitError::InvalidCommitHash {
+                value,
                 reason: InvalidCommitHashReason::InvalidCharacter,
-                ..
-            }),
+            }) if value == hash,
         ));
+    }
+
+    #[test]
+    fn commit_hash_space_is_rejected() {
+        let hash = "dead be";
         assert!(matches!(
-            CommitHash::new("dead be"),
+            CommitHash::new(hash),
             Err(GitError::InvalidCommitHash {
+                value,
                 reason: InvalidCommitHashReason::InvalidCharacter,
-                ..
-            }),
+            }) if value == hash,
         ));
     }
 
