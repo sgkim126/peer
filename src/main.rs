@@ -12,12 +12,13 @@ use crate::console::Console;
 
 use std::process::ExitCode;
 
-fn main() -> ExitCode {
+#[tokio::main]
+async fn main() -> ExitCode {
     let cli = Cli::parse();
     let console = Console::from_cli(&cli);
 
     match cli.command {
-        Command::Init => match init::handler(console) {
+        Command::Init => match init::handler(console).await {
             Ok(path) => {
                 println!("initialized peer in {}", path.display());
                 ExitCode::SUCCESS
