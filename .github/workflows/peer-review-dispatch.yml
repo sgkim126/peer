@@ -322,12 +322,15 @@ jobs:
         with:
           script: |
             const metadata = process.env.REVIEW_METADATA;
+            const metadataItems = metadata
+              .split('\n')
+              .filter(Boolean);
             await core.summary
               .addLink(
                 'Pull request #${{ steps.review.outputs.pr-number }}',
                 '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}',
               )
               .addHeading('Peer Review')
-              .addRaw(`${metadata}\n\n`)
+              .addList(metadataItems)
               .addLink('View peer review comment', '${{ steps.placeholder.outputs.comment-url }}')
               .write();

@@ -285,10 +285,14 @@ jobs:
             let usage = '';
             try { usage = fs.readFileSync(process.env.USAGE_PATH, 'utf8'); }
             catch (error) { core.warning(`Could not read token usage: ${error.message}`); }
+            const metadataItems = process.env.REVIEW_METADATA
+              .split('\n')
+              .filter(Boolean);
+            metadataItems.push(usage);
             const summary = core.summary
               .addLink('Pull request #${{ steps.review.outputs.pr-number }}', '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}')
               .addHeading('Open Code Review')
-              .addRaw(`${process.env.REVIEW_METADATA}\n\n${usage}\n\n`);
+              .addList(metadataItems);
             await summary
               .addLink('View Open Code Review comment', '${{ steps.placeholder.outputs.comment-url }}')
               .write();
