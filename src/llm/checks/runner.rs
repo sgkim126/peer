@@ -82,7 +82,8 @@ where
         return Ok(CheckOutcome::success(result));
     }
 
-    let prepared = check.prepare(extractor, review_context).await?;
+    let mut prepared = check.prepare(extractor, review_context).await?;
+    add_tool_use_budget_instruction(&mut prepared.conversation, config.max_iterations);
     let validate_output = |output: &CheckOutput| prepared.validate_output(output);
     let outcome = run_agent(
         provider,
@@ -133,6 +134,34 @@ where
 
             Ok(CheckOutcome::success(result))
         }
+    }
+}
+
+fn add_tool_use_budget_instruction(
+    conversation: &mut Vec<crate::llm::provider::ConversationTurn>,
+    max_iterations: u32,
+) {
+    // The agent reserves its final iteration for submitting the result (or requesting user
+    // information), so only earlier iterations can be used for repository lookups.
+    let tool_rounds = max_iterations.saturating_sub(1);
+    let instruction = format!(
+        "You have a budget of {tool_rounds} repository-tool round(s). Before calling tools, plan \
+         the context you need. Request all independent repository lookups together in the same \
+         response, rather than making one lookup per turn. Do not use a tool when the supplied \
+         commit data already answers the question."
+    );
+
+    if let Some(crate::llm::provider::ConversationTurn::System(content)) = conversation
+        .iter_mut()
+        .find(|turn| matches!(turn, crate::llm::provider::ConversationTurn::System(_)))
+    {
+        content.push_str("\n\n");
+        content.push_str(&instruction);
+    } else {
+        conversation.insert(
+            0,
+            crate::llm::provider::ConversationTurn::System(instruction),
+        );
     }
 }
 
@@ -292,8 +321,22 @@ mod tests {
         assert_eq!(result.usage.cost_usd, 0.005);
         assert_eq!(
             provider.requests()[0].conversation,
-            [ConversationTurn::System("review the commit".to_string())]
+            [ConversationTurn::System(
+                "review the commit\n\nYou have a budget of 1 repository-tool round(s). Before calling tools, plan the context you need. Request all independent repository lookups together in the same response, rather than making one lookup per turn. Do not use a tool when the supplied commit data already answers the question.".to_string()
+            )]
         );
+    }
+
+    #[test]
+    fn tool_use_budget_reserves_the_final_iteration() {
+        let mut conversation = vec![ConversationTurn::System("review the commit".to_string())];
+
+        add_tool_use_budget_instruction(&mut conversation, 1);
+
+        let ConversationTurn::System(system) = &conversation[0] else {
+            panic!("expected system instruction");
+        };
+        assert!(system.contains("budget of 0 repository-tool round(s)"));
     }
 
     #[tokio::test]
