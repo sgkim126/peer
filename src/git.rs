@@ -8,7 +8,7 @@ pub enum GitError {
 impl fmt::Display for GitError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            GitError::Spawn(e) => write!(f, "failed to spawn git: {e}"),
+            Self::Spawn(e) => write!(f, "failed to spawn git: {e}"),
         }
     }
 }
@@ -16,7 +16,7 @@ impl fmt::Display for GitError {
 impl std::error::Error for GitError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            GitError::Spawn(e) => Some(e),
+            Self::Spawn(e) => Some(e),
         }
     }
 }
