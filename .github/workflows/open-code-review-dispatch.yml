@@ -262,28 +262,30 @@ jobs:
               body: `${metadata}\n\n${status}\n\n${read(process.env.USAGE_PATH)}\n\n${review}`,
             });
 
+      - name: Upload Open Code Review stderr
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: open-code-review-stderr
+          path: ${{ steps.ocr.outputs.stderr-path }}
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Add Open Code Review to summary
         if: always() && steps.placeholder.outputs.comment-url != ''
         uses: actions/github-script@v9
         env:
           USAGE_PATH: ${{ steps.usage.outputs.usage-path }}
-          STDERR_PATH: ${{ steps.ocr.outputs.stderr-path }}
         with:
           script: |
             const fs = require('fs');
             let usage = '';
-            let stderr = '';
             try { usage = fs.readFileSync(process.env.USAGE_PATH, 'utf8'); }
             catch (error) { core.warning(`Could not read token usage: ${error.message}`); }
-            try { stderr = fs.readFileSync(process.env.STDERR_PATH, 'utf8').trim(); }
-            catch (error) { core.warning(`Could not read OCR stderr: ${error.message}`); }
             const summary = core.summary
               .addLink('Pull request #${{ steps.review.outputs.pr-number }}', '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}')
               .addHeading('Open Code Review')
               .addRaw(`provider: ${{ steps.review.outputs.provider }}, model: ${{ steps.review.outputs.model }}\n\n${usage}\n\n`);
-            if (stderr) {
-              summary.addHeading('OCR stderr', 3).addCodeBlock(stderr.slice(0, 6000), 'text');
-            }
             await summary
               .addLink('View Open Code Review comment', '${{ steps.placeholder.outputs.comment-url }}')
               .write();

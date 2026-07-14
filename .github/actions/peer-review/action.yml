@@ -232,14 +232,6 @@ runs:
         code=$?
         set -e
 
-        {
-          echo "### peer review stderr"
-          echo
-          echo '```text'
-          cat "$stderr"
-          echo '```'
-        } >> "$GITHUB_STEP_SUMMARY"
-
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         echo "stdout-path=$stdout" >> "$GITHUB_OUTPUT"
         echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"

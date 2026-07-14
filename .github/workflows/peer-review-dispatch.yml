@@ -314,6 +314,15 @@ jobs:
               body,
             });
 
+      - name: Upload peer review stderr
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: peer-review-stderr
+          path: ${{ steps.peer.outputs.stderr-path }}
+          retention-days: 7
+          if-no-files-found: warn
+
       - name: Add peer review comment to summary
         if: always() && steps.placeholder.outputs.comment-url != ''
         uses: actions/github-script@v9
