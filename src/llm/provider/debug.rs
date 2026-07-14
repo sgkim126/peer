@@ -1,8 +1,8 @@
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
 pub fn format_json_debug(label: &str, value: &serde_json::Value) -> String {
-    match serde_json::to_string_pretty(value) {
-        Ok(json) => format!("{label}\n{json}"),
+    match serde_json::to_string(value) {
+        Ok(json) => format!("{label} {json}"),
         Err(error) => format!("{label} <failed to serialize JSON: {error}>"),
     }
 }
@@ -46,8 +46,17 @@ fn is_sensitive_header(name: &HeaderName) -> bool {
 #[cfg(test)]
 mod tests {
     use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
+    use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn formats_json_on_one_line() {
+        let formatted = format_json_debug("provider request", &json!({"items": [1, 2]}));
+
+        assert_eq!(formatted, "provider request {\"items\":[1,2]}");
+        assert!(!formatted.contains('\n'));
+    }
 
     #[test]
     fn formats_headers() {
