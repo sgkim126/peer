@@ -98,8 +98,6 @@ fn build_prepared_check(
             ConversationTurn::User(user_prompt),
         ],
         tools: vec![
-            tools::get_commit_diff(),
-            tools::get_changed_files(),
             tools::get_file_content(),
             tools::get_file_diff(),
             tools::list_tree(),
@@ -220,8 +218,6 @@ mod tests {
         assert_eq!(
             tool_names,
             [
-                "get_commit_diff",
-                "get_changed_files",
                 "get_file_content",
                 "get_file_diff",
                 "list_tree",

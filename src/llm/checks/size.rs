@@ -101,12 +101,7 @@ fn build_prepared_check(
             ConversationTurn::System(system_prompt(SYSTEM_PROMPT)),
             ConversationTurn::User(user_prompt),
         ],
-        tools: vec![
-            tools::get_commit_diff(),
-            tools::get_changed_files(),
-            tools::get_file_content(),
-            tools::request_user_info(),
-        ],
+        tools: vec![tools::get_file_content(), tools::request_user_info()],
         output_schema: output_schema(),
         target: PreparedCheckTarget::Commit(diff.hash),
     }
@@ -208,30 +203,25 @@ mod tests {
             .map(|tool| tool.name.as_str())
             .collect::<Vec<_>>();
 
-        assert_eq!(
-            names,
-            [
-                "get_commit_diff",
-                "get_changed_files",
-                "get_file_content",
-                "request_user_info",
-            ]
-        );
+        assert_eq!(names, ["get_file_content", "request_user_info",]);
     }
 
     #[test]
-    fn follow_up_tools_accept_revisions() {
+    fn follow_up_tools_do_not_repeat_prepared_commit_data() {
         let prepared = prepared_check();
 
-        for tool_name in ["get_commit_diff", "get_changed_files"] {
-            let tool = prepared
+        assert!(
+            !prepared
                 .tools
                 .iter()
-                .find(|tool| tool.name == tool_name)
-                .unwrap();
-            assert!(tool.parameters["properties"].get("revision").is_some());
-            assert_eq!(tool.parameters["required"], serde_json::json!(["revision"]));
-        }
+                .any(|tool| tool.name == "get_commit_diff")
+        );
+        assert!(
+            !prepared
+                .tools
+                .iter()
+                .any(|tool| tool.name == "get_changed_files")
+        );
 
         let file_content = prepared
             .tools
