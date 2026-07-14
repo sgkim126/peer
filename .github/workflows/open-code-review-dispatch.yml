@@ -107,9 +107,12 @@ jobs:
         with:
           script: |
             const metadata = [
-              '## Open Code Review',
               `provider: ${process.env.REVIEW_PROVIDER}`,
               `model: ${process.env.REVIEW_MODEL}`,
+            ].join('\n');
+            const commentMetadata = [
+              '## Open Code Review',
+              metadata,
               `Triggered by @${context.actor}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
@@ -117,10 +120,11 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: Number('${{ steps.review.outputs.pr-number }}'),
-              body: `${metadata}\n\n⏳ Open Code Review in progress.`,
+              body: `${commentMetadata}\n\n⏳ Open Code Review in progress.`,
             });
             core.setOutput('comment-id', String(comment.id));
             core.setOutput('comment-url', comment.html_url);
+            core.setOutput('metadata', metadata);
 
       - name: Checkout pull request
         uses: actions/checkout@v7
@@ -212,8 +216,7 @@ jobs:
         if: always() && steps.placeholder.outputs.comment-id != ''
         uses: actions/github-script@v9
         env:
-          REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
-          REVIEW_MODEL: ${{ steps.review.outputs.model }}
+          REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
           RESULT_PATH: ${{ steps.ocr.outputs.result-path }}
           STDERR_PATH: ${{ steps.ocr.outputs.stderr-path }}
           USAGE_PATH: ${{ steps.usage.outputs.usage-path }}
@@ -248,10 +251,9 @@ jobs:
             const status = process.env.EXIT_CODE === '0'
               ? '✅ Open Code Review completed.'
               : `❌ Open Code Review failed (exit code: ${process.env.EXIT_CODE || 'unknown'}).`;
-            const metadata = [
+            const commentMetadata = [
               '## Open Code Review',
-              `provider: ${process.env.REVIEW_PROVIDER}`,
-              `model: ${process.env.REVIEW_MODEL}`,
+              process.env.REVIEW_METADATA,
               `Triggered by @${context.actor}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
@@ -259,7 +261,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               comment_id: Number('${{ steps.placeholder.outputs.comment-id }}'),
-              body: `${metadata}\n\n${status}\n\n${read(process.env.USAGE_PATH)}\n\n${review}`,
+              body: `${commentMetadata}\n\n${status}\n\n${read(process.env.USAGE_PATH)}\n\n${review}`,
             });
 
       - name: Upload Open Code Review stderr
@@ -275,6 +277,7 @@ jobs:
         if: always() && steps.placeholder.outputs.comment-url != ''
         uses: actions/github-script@v9
         env:
+          REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
           USAGE_PATH: ${{ steps.usage.outputs.usage-path }}
         with:
           script: |
@@ -285,7 +288,7 @@ jobs:
             const summary = core.summary
               .addLink('Pull request #${{ steps.review.outputs.pr-number }}', '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}')
               .addHeading('Open Code Review')
-              .addRaw(`provider: ${{ steps.review.outputs.provider }}, model: ${{ steps.review.outputs.model }}\n\n${usage}\n\n`);
+              .addRaw(`${process.env.REVIEW_METADATA}\n\n${usage}\n\n`);
             await summary
               .addLink('View Open Code Review comment', '${{ steps.placeholder.outputs.comment-url }}')
               .write();

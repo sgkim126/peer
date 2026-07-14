@@ -145,6 +145,9 @@ jobs:
                 : 'model: provider default',
               ...(onlyChecks ? [`checks run (--only-check): ${onlyChecks}`] : []),
               ...(skipChecks ? [`checks skipped (--skip-check): ${skipChecks}`] : []),
+            ].join('\n');
+            const commentMetadata = [
+              metadata,
               `Triggered by @${triggeredBy}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].join('\n');
@@ -153,11 +156,12 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: Number('${{ steps.review.outputs.pr-number }}'),
-              body: `${metadata}\n\n⏳ peer review in progress.`,
+              body: `${commentMetadata}\n\n⏳ peer review in progress.`,
             });
 
             core.setOutput('comment-id', String(comment.id));
             core.setOutput('comment-url', comment.html_url);
+            core.setOutput('metadata', metadata);
 
       - name: Checkout pull request
         uses: actions/checkout@v7
@@ -266,20 +270,16 @@ jobs:
         if: always() && steps.placeholder.outputs.comment-id != ''
         uses: actions/github-script@v9
         env:
-          PEER_VERSION: ${{ env.PEER_VERSION }}
-          REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
-          REVIEW_MODEL: ${{ steps.review.outputs.model }}
-          REVIEW_SKIP_CHECKS: ${{ steps.review.outputs.skip-checks }}
-          REVIEW_ONLY_CHECKS: ${{ steps.review.outputs.only-checks }}
+          REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
         with:
           script: |
             const fs = require('fs');
-            const peerVersion = process.env.PEER_VERSION;
-            const provider = process.env.REVIEW_PROVIDER;
-            const model = process.env.REVIEW_MODEL;
-            const skipChecks = process.env.REVIEW_SKIP_CHECKS;
-            const onlyChecks = process.env.REVIEW_ONLY_CHECKS;
-            const triggeredBy = context.actor;
+            const metadata = process.env.REVIEW_METADATA;
+            const commentMetadata = [
+              metadata,
+              `Triggered by @${context.actor}`,
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].join('\n');
             const stdoutPath = '${{ steps.peer.outputs.stdout-path }}';
             const exitCode = '${{ steps.peer.outputs.exit-code }}';
             let output = '';
@@ -291,21 +291,12 @@ jobs:
               }
             }
 
-            const metadata = [
-              `peer version: ${peerVersion}`,
-              `provider: ${provider}`,
-              model
-                ? `model: ${model}`
-                : 'model: provider default',
-              ...(onlyChecks ? [`checks run (--only-check): ${onlyChecks}`] : []),
-              ...(skipChecks ? [`checks skipped (--skip-check): ${skipChecks}`] : []),
-              `Triggered by @${triggeredBy}`,
-              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
-            ].join('\n');
             const status = exitCode === '0'
               ? '✅ peer review completed.'
               : `❌ peer review failed (exit code: ${exitCode || 'unknown'}).`;
-            const body = output ? `${metadata}\n\n${status}\n\n${output}` : `${metadata}\n\n${status}`;
+            const body = output
+              ? `${commentMetadata}\n\n${status}\n\n${output}`
+              : `${commentMetadata}\n\n${status}`;
 
             await github.rest.issues.updateComment({
               owner: context.repo.owner,
@@ -327,16 +318,16 @@ jobs:
         if: always() && steps.placeholder.outputs.comment-url != ''
         uses: actions/github-script@v9
         env:
-          PEER_VERSION: ${{ env.PEER_VERSION }}
+          REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
         with:
           script: |
-            const peerVersion = process.env.PEER_VERSION;
+            const metadata = process.env.REVIEW_METADATA;
             await core.summary
               .addLink(
                 'Pull request #${{ steps.review.outputs.pr-number }}',
                 '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}',
               )
               .addHeading('Peer Review')
-              .addRaw(`peer version: ${peerVersion}\n\n`)
+              .addRaw(`${metadata}\n\n`)
               .addLink('View peer review comment', '${{ steps.placeholder.outputs.comment-url }}')
               .write();
