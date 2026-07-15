@@ -273,6 +273,17 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
+      - name: Upload Open Code Review session logs
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          # Includes per-file LLM requests and responses for troubleshooting.
+          # Treat this artifact as sensitive because it can contain source code.
+          name: open-code-review-sessions
+          path: ~/.opencodereview/sessions
+          retention-days: 1
+          if-no-files-found: warn
+
       - name: Add Open Code Review to summary
         if: always() && steps.placeholder.outputs.comment-url != ''
         uses: actions/github-script@v9
