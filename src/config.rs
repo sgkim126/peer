@@ -96,7 +96,11 @@ pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
     for dir in from.ancestors() {
         let config_path = dir.join(".peer").join("config.toml");
         match std::fs::read_to_string(&config_path) {
-            Ok(content) => return parse_and_validate(&content, dir.to_path_buf(), &config_path),
+            Ok(content) => {
+                let config = parse_and_validate(&content, &config_path)?;
+                let project_root = dir.to_path_buf();
+                return Ok((config, project_root));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
                 return Err(PeerError::InvalidConfig {
@@ -112,11 +116,7 @@ pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
     )))
 }
 
-fn parse_and_validate(
-    content: &str,
-    project_root: PathBuf,
-    config_path: &Path,
-) -> Result<(Config, PathBuf), PeerError> {
+fn parse_and_validate(content: &str, config_path: &Path) -> Result<Config, PeerError> {
     let config: Config = toml::from_str(content).map_err(|e| PeerError::InvalidConfig {
         message: format!("invalid config in {}", config_path.display()),
         source: Some(Box::new(e)),
@@ -189,7 +189,7 @@ fn parse_and_validate(
         }
     }
 
-    Ok((config, project_root))
+    Ok(config)
 }
 
 /// the default `.peer/config.toml` content written by `peer init`.
