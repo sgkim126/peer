@@ -41,7 +41,7 @@ struct RawFileEntry {
 }
 
 /// Parses `git diff-tree --name-status -z` output.
-fn parse_name_status(output: &str, console: Console) -> Vec<RawFileEntry> {
+fn parse_name_status(output: &str, console: Console) -> Result<Vec<RawFileEntry>, ExtractError> {
     let mut entries = Vec::new();
     let mut fields = output.split('\0').filter(|field| !field.is_empty());
     while let Some(code) = fields.next() {
@@ -54,21 +54,27 @@ fn parse_name_status(output: &str, console: Console) -> Vec<RawFileEntry> {
             Some('D') => FileStatus::Deleted,
             Some('T') => FileStatus::TypeChanged,
             _ => {
-                console.debug(format_args!(
-                    "skipping unknown git name-status code: {code}"
-                ));
-                continue;
+                let message = format!("unknown git name-status code: {code}");
+                console.debug(format_args!("{message}; output: {output:?}"));
+                return Err(ExtractError::MalformedGitOutput(message));
             }
         };
         let entry = match status {
             FileStatus::Renamed | FileStatus::Copied => {
+                let operation = if status == FileStatus::Renamed {
+                    "rename"
+                } else {
+                    "copy"
+                };
                 let Some(source_path) = fields.next() else {
-                    console.debug(format_args!("skipping incomplete git rename/copy entry"));
-                    break;
+                    let message = format!("incomplete git {operation} entry for status: {code}");
+                    console.debug(format_args!("{message}; output: {output:?}"));
+                    return Err(ExtractError::MalformedGitOutput(message));
                 };
                 let Some(path) = fields.next() else {
-                    console.debug(format_args!("skipping incomplete git rename/copy entry"));
-                    break;
+                    let message = format!("incomplete git {operation} entry for status: {code}");
+                    console.debug(format_args!("{message}; output: {output:?}"));
+                    return Err(ExtractError::MalformedGitOutput(message));
                 };
                 RawFileEntry {
                     status,
@@ -78,8 +84,9 @@ fn parse_name_status(output: &str, console: Console) -> Vec<RawFileEntry> {
             }
             _ => {
                 let Some(path) = fields.next() else {
-                    console.debug(format_args!("skipping incomplete git name-status entry"));
-                    break;
+                    let message = format!("incomplete git name-status entry for status: {code}");
+                    console.debug(format_args!("{message}; output: {output:?}"));
+                    return Err(ExtractError::MalformedGitOutput(message));
                 };
                 RawFileEntry {
                     status,
@@ -90,25 +97,37 @@ fn parse_name_status(output: &str, console: Console) -> Vec<RawFileEntry> {
         };
         entries.push(entry);
     }
-    entries
+    Ok(entries)
 }
 
-/// Parses `git diff-tree --name-status -z` output.
-fn parse_binary_paths(numstat: &str) -> HashSet<&str> {
+/// Parses `git diff-tree --numstat -z` output.
+fn parse_binary_paths(numstat: &str, console: Console) -> Result<HashSet<&str>, ExtractError> {
     let mut binary = HashSet::new();
     for record in numstat.split('\0') {
         if record.is_empty() {
             continue;
         }
         let mut parts = record.splitn(3, '\t');
-        let added = parts.next().unwrap_or("");
-        let deleted = parts.next().unwrap_or("");
-        let path = parts.next().unwrap_or("");
+        let Some(added) = parts.next() else {
+            let message = "missing added count in git numstat".to_string();
+            console.debug(format_args!("{message}; output: {numstat:?}"));
+            return Err(ExtractError::MalformedGitOutput(message));
+        };
+        let Some(deleted) = parts.next() else {
+            let message = "missing deleted count in git numstat".to_string();
+            console.debug(format_args!("{message}; output: {numstat:?}"));
+            return Err(ExtractError::MalformedGitOutput(message));
+        };
+        let Some(path) = parts.next() else {
+            let message = "missing path in git numstat".to_string();
+            console.debug(format_args!("{message}; output: {numstat:?}"));
+            return Err(ExtractError::MalformedGitOutput(message));
+        };
         if added == "-" && deleted == "-" {
             binary.insert(path);
         }
     }
-    binary
+    Ok(binary)
 }
 
 impl Extractor {
@@ -152,8 +171,8 @@ impl Extractor {
         )
         .await?;
 
-        let binary_paths = parse_binary_paths(&numstat_out);
-        let raw_entries = parse_name_status(&name_status_out, self.console);
+        let binary_paths = parse_binary_paths(&numstat_out, self.console)?;
+        let raw_entries = parse_name_status(&name_status_out, self.console)?;
 
         let files = raw_entries
             .into_iter()
@@ -189,7 +208,7 @@ mod tests {
     fn parse_name_status_added() {
         let console = Console::default();
 
-        let entries = parse_name_status("A\0src/new_file.rs\0", console);
+        let entries = parse_name_status("A\0src/new_file.rs\0", console).unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -204,7 +223,7 @@ mod tests {
     fn parse_name_status_modified() {
         let console = Console::default();
 
-        let entries = parse_name_status("M\0src/lib.rs\0", console);
+        let entries = parse_name_status("M\0src/lib.rs\0", console).unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -219,7 +238,7 @@ mod tests {
     fn parse_name_status_deleted() {
         let console = Console::default();
 
-        let entries = parse_name_status("D\0src/old_file.rs\0", console);
+        let entries = parse_name_status("D\0src/old_file.rs\0", console).unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -234,7 +253,8 @@ mod tests {
     fn parse_name_status_renamed_includes_source_path() {
         let console = Console::default();
 
-        let entries = parse_name_status("R90\0src/old_name.rs\0src/new_name.rs\0", console);
+        let entries =
+            parse_name_status("R90\0src/old_name.rs\0src/new_name.rs\0", console).unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -249,7 +269,7 @@ mod tests {
     fn parse_name_status_copied_includes_source_path() {
         let console = Console::default();
 
-        let entries = parse_name_status("C80\0src/original.rs\0src/copy.rs\0", console);
+        let entries = parse_name_status("C80\0src/original.rs\0src/copy.rs\0", console).unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -264,7 +284,7 @@ mod tests {
     fn parse_name_status_type_changed() {
         let console = Console::default();
 
-        let entries = parse_name_status("T\0src/some_file.rs\0", console);
+        let entries = parse_name_status("T\0src/some_file.rs\0", console).unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -280,7 +300,7 @@ mod tests {
         let console = Console::default();
 
         let output = "A\0file1.txt\0M\0file2.rs\0D\0file3.old\0";
-        let entries = parse_name_status(output, console);
+        let entries = parse_name_status(output, console).unwrap();
         assert_eq!(
             entries,
             vec![
@@ -304,18 +324,13 @@ mod tests {
     }
 
     #[test]
-    fn parse_name_status_skips_unknown_codes() {
+    fn parse_name_status_rejects_unknown_codes() {
         let console = Console::default();
 
         let output = "X\0unknown.txt\0A\0known.txt\0";
-        let entries = parse_name_status(output, console);
-        assert_eq!(
-            entries,
-            vec![RawFileEntry {
-                status: FileStatus::Added,
-                path: "known.txt".into(),
-                source_path: None,
-            }]
+        assert_matches!(
+            parse_name_status(output, console),
+            Err(ExtractError::MalformedGitOutput(message)) if message.contains("unknown git name-status code")
         );
     }
 
@@ -323,14 +338,17 @@ mod tests {
     fn parse_name_status_empty_input() {
         let console = Console::default();
 
-        assert_eq!(parse_name_status("", console), Vec::<RawFileEntry>::new());
+        assert_eq!(
+            parse_name_status("", console).unwrap(),
+            Vec::<RawFileEntry>::new()
+        );
     }
 
     #[test]
     fn parse_name_status_preserves_special_paths() {
         let console = Console::default();
 
-        let entries = parse_name_status("A\0café\tfile.txt\0", console);
+        let entries = parse_name_status("A\0café\tfile.txt\0", console).unwrap();
 
         assert_eq!(
             entries,
@@ -347,8 +365,8 @@ mod tests {
         let binary1 = "image.png";
         let non_binary1 = "file.txt";
         let binary2 = "archive.zip";
-        let numstat = format!("-\t-\t{binary1}\05\t3\t{non_binary1}\0-\t-\t{binary2}\0");
-        let binary = parse_binary_paths(&numstat);
+        let numstat = format!("-\t-\t{binary1}\x005\t3\t{non_binary1}\x00-\t-\t{binary2}\0");
+        let binary = parse_binary_paths(&numstat, Console::default()).unwrap();
         assert!(binary.contains(binary1));
         assert!(binary.contains(binary2));
         assert!(!binary.contains(non_binary1));
@@ -356,13 +374,21 @@ mod tests {
 
     #[test]
     fn parse_binary_paths_empty_input() {
-        assert!(parse_binary_paths("").is_empty());
+        assert!(
+            parse_binary_paths("", Console::default())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[test]
     fn parse_binary_paths_no_binary_files() {
-        let numstat = "5\t3\tfile1.txt\010\t2\tfile2.rs\0";
-        assert!(parse_binary_paths(numstat).is_empty());
+        let numstat = "5\t3\tfile1.txt\x0010\t2\tfile2.rs\0";
+        assert!(
+            parse_binary_paths(numstat, Console::default())
+                .unwrap()
+                .is_empty()
+        );
     }
 
     struct Repo {

@@ -6,6 +6,7 @@ use crate::git::GitError;
 pub enum ExtractError {
     Git(GitError),
     InvalidTwoDotRange(String),
+    MalformedGitOutput(String),
 }
 
 impl fmt::Display for ExtractError {
@@ -17,6 +18,9 @@ impl fmt::Display for ExtractError {
             Self::InvalidTwoDotRange(range) => {
                 write!(f, "{range} is not a two-dot range")
             }
+            Self::MalformedGitOutput(message) => {
+                write!(f, "git produced malformed output: {message}")
+            }
         }
     }
 }
@@ -26,6 +30,7 @@ impl std::error::Error for ExtractError {
         match self {
             Self::Git(source) => Some(source),
             Self::InvalidTwoDotRange(_) => None,
+            Self::MalformedGitOutput(_) => None,
         }
     }
 }
