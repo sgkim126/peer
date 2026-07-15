@@ -102,7 +102,12 @@ impl GeminiRequestBuilder {
 
     pub fn build(&self, request: LlmRequest<'_>) -> Result<GeminiHttpRequest, LlmCallError> {
         let (system_instruction, contents) = contents(request.conversation)?;
-        let mut body = request_body(request.output_mode, contents);
+        let is_last_request = matches!(
+            request.output_mode,
+            LlmOutputMode::Check { tools, .. }
+                if tools.len() == 1 && tools[0].name == "request_user_info"
+        );
+        let mut body = request_body(request.output_mode, contents, is_last_request);
         if let Some(system_instruction) = system_instruction {
             body["systemInstruction"] = system_instruction;
         }
@@ -327,6 +332,7 @@ impl std::error::Error for GeminiStatusError {}
 fn request_body(
     output_mode: LlmOutputMode<'_>,
     contents: Vec<serde_json::Value>,
+    is_last_request: bool,
 ) -> serde_json::Value {
     match output_mode {
         LlmOutputMode::Check {
@@ -337,7 +343,7 @@ fn request_body(
             "tools": tools(tool_specs, output_schema),
             "toolConfig": {
                 "functionCallingConfig": {
-                    "mode": "AUTO"
+                    "mode": if is_last_request { "ANY" } else { "AUTO" }
                 }
             },
             "generationConfig": {

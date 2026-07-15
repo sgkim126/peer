@@ -334,8 +334,13 @@ fn request_body(
             "system": system,
             "messages": messages,
             "tools": tools(tool_specs, output_schema),
-            "tool_choice": {
-                "type": "auto"
+            "tool_choice": if is_last_request(tool_specs) {
+                json!({
+                    "type": "any",
+                    "disable_parallel_tool_use": true,
+                })
+            } else {
+                json!({ "type": "auto" })
             },
         }),
         LlmOutputMode::Text => json!({
@@ -345,6 +350,10 @@ fn request_body(
             "messages": messages,
         }),
     }
+}
+
+fn is_last_request(tool_specs: &[ToolSpec]) -> bool {
+    tool_specs.len() == 1 && tool_specs[0].name == "request_user_info"
 }
 
 fn messages(
@@ -501,6 +510,35 @@ mod tests {
         assert_eq!(http.body["tools"][1]["name"], STRUCTURED_OUTPUT_TOOL_NAME);
         assert_eq!(http.body["tools"][1]["input_schema"], schema);
         assert_eq!(http.body["tool_choice"], json!({ "type": "auto" }));
+    }
+
+    #[test]
+    fn requires_one_non_parallel_terminal_tool_call() {
+        let builder = AnthropicRequestBuilder::new(Secret::new("test-api-key"), None);
+        let schema = output_schema();
+        let user_info_tool = ToolSpec {
+            name: "request_user_info".to_string(),
+            description: "Ask for indispensable information".to_string(),
+            parameters: json!({ "type": "object" }),
+        };
+        let request = LlmRequest {
+            model: "claude-sonnet-4-5",
+            conversation: &[],
+            output_mode: LlmOutputMode::Check {
+                tools: &[user_info_tool],
+                output_schema: &schema,
+            },
+        };
+
+        let http = builder.build(request).unwrap();
+
+        assert_eq!(
+            http.body["tool_choice"],
+            json!({
+                "type": "any",
+                "disable_parallel_tool_use": true,
+            })
+        );
     }
 
     #[test]

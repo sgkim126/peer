@@ -312,24 +312,36 @@ impl fmt::Display for MistralStatusError {
 impl std::error::Error for MistralStatusError {}
 
 fn request_body(request: LlmRequest<'_>) -> Result<serde_json::Value, LlmCallError> {
-    Ok(match request.output_mode {
+    let body = match request.output_mode {
         LlmOutputMode::Check {
             tools: tool_specs,
             output_schema,
-        } => json!({
+        } => {
+            let is_last_request = is_last_request(tool_specs);
+            let mut body = json!({
             "model": request.model,
             "messages": messages(request.conversation)?,
             "tools": tools(tool_specs, output_schema),
-            "tool_choice": "auto",
+            "tool_choice": if is_last_request { "any" } else { "auto" },
             "response_format": {
                 "type": "json_object"
             },
-        }),
+            });
+            if is_last_request {
+                body["parallel_tool_calls"] = json!(false);
+            }
+            body
+        }
         LlmOutputMode::Text => json!({
             "model": request.model,
             "messages": messages(request.conversation)?,
         }),
-    })
+    };
+    Ok(body)
+}
+
+fn is_last_request(tool_specs: &[ToolSpec]) -> bool {
+    tool_specs.len() == 1 && tool_specs[0].name == "request_user_info"
 }
 
 fn messages(conversation: &[ConversationTurn]) -> Result<Vec<serde_json::Value>, LlmCallError> {
