@@ -171,6 +171,7 @@ pub const DEFAULT_CONFIG_TOML: &str = include_str!(concat!(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
     use std::fs;
     use tempfile::TempDir;
 
@@ -206,19 +207,13 @@ mod tests {
     #[test]
     fn fails_when_config_not_found() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(matches!(
-            discover(tmp.path()),
-            Err(PeerError::InvalidConfig { .. })
-        ));
+        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
 
     #[test]
     fn fails_on_version_mismatch() {
         let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace("version = 1", "version = 99"));
-        assert!(matches!(
-            discover(tmp.path()),
-            Err(PeerError::InvalidConfig { .. })
-        ));
+        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
 
     #[test]
@@ -236,20 +231,14 @@ mod tests {
     fn fails_on_unknown_config_field() {
         let tmp = init_dir("unexpected = true");
 
-        assert!(matches!(
-            discover(tmp.path()),
-            Err(PeerError::InvalidConfig { .. })
-        ));
+        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
 
     #[test]
     fn fails_when_max_commits_is_zero() {
         let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace("max_commits = 10", "max_commits = 0"));
 
-        assert!(matches!(
-            discover(tmp.path()),
-            Err(PeerError::InvalidConfig { .. })
-        ));
+        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
 
     #[test]
@@ -257,10 +246,7 @@ mod tests {
         let tmp =
             init_dir(&DEFAULT_CONFIG_TOML.replace("max_iterations = 5", "max_iterations = 0"));
 
-        assert!(matches!(
-            discover(tmp.path()),
-            Err(PeerError::InvalidConfig { .. })
-        ));
+        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
 
     #[test]
@@ -268,10 +254,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join(".peer/config.toml")).unwrap();
 
-        assert!(matches!(
-            discover(tmp.path()),
-            Err(PeerError::InvalidConfig { .. })
-        ));
+        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
 
     #[test]
@@ -375,10 +358,7 @@ models = [
             "default_provider = \"missing\"",
         ));
 
-        assert!(matches!(
-            discover(tmp.path()),
-            Err(PeerError::InvalidConfig { .. })
-        ));
+        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
 
     #[test]
@@ -388,10 +368,7 @@ models = [
             "default_model = \"missing\"",
         ));
 
-        assert!(matches!(
-            discover(tmp.path()),
-            Err(PeerError::InvalidConfig { .. })
-        ));
+        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
 
     #[test]

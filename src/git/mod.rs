@@ -53,6 +53,7 @@ fn format_argv(args: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::assert_matches;
 
     #[test]
     fn format_argv_joins_with_spaces() {
@@ -81,7 +82,7 @@ mod tests {
         let err = run_git(&["log"], tmp.path(), Console::default())
             .await
             .unwrap_err();
-        assert!(matches!(err, GitError::NonZeroExit { .. }));
+        assert_matches!(err, GitError::NonZeroExit { .. });
     }
 
     #[tokio::test]
@@ -90,6 +91,6 @@ mod tests {
         let err = run_git(&["log"], tmp.path(), Console::default())
             .await
             .unwrap_err();
-        assert!(matches!(err, GitError::NonZeroExit { status, .. } if status != 0));
+        assert_matches!(err, GitError::NonZeroExit { status, .. } if status != 0);
     }
 }
