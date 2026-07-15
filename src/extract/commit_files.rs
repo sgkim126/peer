@@ -40,18 +40,13 @@ struct RawFileEntry {
     source_path: Option<String>,
 }
 
+/// Parses `git diff-tree --name-status -z` output.
 fn parse_name_status(output: &str, console: Console) -> Vec<RawFileEntry> {
     let mut entries = Vec::new();
-    for line in output.lines() {
-        if line.is_empty() {
-            continue;
-        }
-        let parts: Vec<&str> = line.splitn(3, '\t').collect();
-        if parts.is_empty() {
-            continue;
-        }
+    let mut fields = output.split('\0').filter(|field| !field.is_empty());
+    while let Some(code) = fields.next() {
         // git appends a similarity score to R and C codes (e.g. R90, C80)
-        let status = match parts[0].chars().next() {
+        let status = match code.chars().next() {
             Some('R') => FileStatus::Renamed,
             Some('C') => FileStatus::Copied,
             Some('A') => FileStatus::Added,
@@ -60,26 +55,35 @@ fn parse_name_status(output: &str, console: Console) -> Vec<RawFileEntry> {
             Some('T') => FileStatus::TypeChanged,
             _ => {
                 console.debug(format_args!(
-                    "skipping unknown git name-status line: {line}"
+                    "skipping unknown git name-status code: {code}"
                 ));
                 continue;
             }
         };
         let entry = match status {
             FileStatus::Renamed | FileStatus::Copied => {
-                let path = parts.get(2).copied().unwrap_or("").to_string();
-                let source_path = parts.get(1).map(|s| s.to_string());
+                let Some(source_path) = fields.next() else {
+                    console.debug(format_args!("skipping incomplete git rename/copy entry"));
+                    break;
+                };
+                let Some(path) = fields.next() else {
+                    console.debug(format_args!("skipping incomplete git rename/copy entry"));
+                    break;
+                };
                 RawFileEntry {
                     status,
-                    path,
-                    source_path,
+                    path: path.to_string(),
+                    source_path: Some(source_path.to_string()),
                 }
             }
             _ => {
-                let path = parts.get(1).copied().unwrap_or("").to_string();
+                let Some(path) = fields.next() else {
+                    console.debug(format_args!("skipping incomplete git name-status entry"));
+                    break;
+                };
                 RawFileEntry {
                     status,
-                    path,
+                    path: path.to_string(),
                     source_path: None,
                 }
             }
@@ -89,13 +93,14 @@ fn parse_name_status(output: &str, console: Console) -> Vec<RawFileEntry> {
     entries
 }
 
+/// Parses `git diff-tree --name-status -z` output.
 fn parse_binary_paths(numstat: &str) -> HashSet<&str> {
     let mut binary = HashSet::new();
-    for line in numstat.lines() {
-        if line.is_empty() {
+    for record in numstat.split('\0') {
+        if record.is_empty() {
             continue;
         }
-        let mut parts = line.splitn(3, '\t');
+        let mut parts = record.splitn(3, '\t');
         let added = parts.next().unwrap_or("");
         let deleted = parts.next().unwrap_or("");
         let path = parts.next().unwrap_or("");
@@ -117,6 +122,7 @@ impl Extractor {
                 "--root",
                 "-r",
                 "--name-status",
+                "-z",
                 "-M",
                 "-C",
                 hash.as_ref(),
@@ -129,6 +135,8 @@ impl Extractor {
         // Intentionally omit -M/-C: binary renames must be reported as
         // separate old-path deletions and new-path additions so both paths
         // are detected.
+        // Use -z to use NUL as delimiters so paths with tabs, quotes, or
+        // non-ASCII characters are not C-quoted by Git.
         let numstat_out = run_git(
             &[
                 "diff-tree",
@@ -136,6 +144,7 @@ impl Extractor {
                 "--root",
                 "-r",
                 "--numstat",
+                "-z",
                 hash.as_ref(),
             ],
             &self.project_root,
@@ -180,7 +189,7 @@ mod tests {
     fn parse_name_status_added() {
         let console = Console::default();
 
-        let entries = parse_name_status("A\tsrc/new_file.rs\n", console);
+        let entries = parse_name_status("A\0src/new_file.rs\0", console);
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -195,7 +204,7 @@ mod tests {
     fn parse_name_status_modified() {
         let console = Console::default();
 
-        let entries = parse_name_status("M\tsrc/lib.rs\n", console);
+        let entries = parse_name_status("M\0src/lib.rs\0", console);
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -210,7 +219,7 @@ mod tests {
     fn parse_name_status_deleted() {
         let console = Console::default();
 
-        let entries = parse_name_status("D\tsrc/old_file.rs\n", console);
+        let entries = parse_name_status("D\0src/old_file.rs\0", console);
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -225,7 +234,7 @@ mod tests {
     fn parse_name_status_renamed_includes_source_path() {
         let console = Console::default();
 
-        let entries = parse_name_status("R90\tsrc/old_name.rs\tsrc/new_name.rs\n", console);
+        let entries = parse_name_status("R90\0src/old_name.rs\0src/new_name.rs\0", console);
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -240,7 +249,7 @@ mod tests {
     fn parse_name_status_copied_includes_source_path() {
         let console = Console::default();
 
-        let entries = parse_name_status("C80\tsrc/original.rs\tsrc/copy.rs\n", console);
+        let entries = parse_name_status("C80\0src/original.rs\0src/copy.rs\0", console);
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -255,7 +264,7 @@ mod tests {
     fn parse_name_status_type_changed() {
         let console = Console::default();
 
-        let entries = parse_name_status("T\tsrc/some_file.rs\n", console);
+        let entries = parse_name_status("T\0src/some_file.rs\0", console);
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -270,7 +279,7 @@ mod tests {
     fn parse_name_status_multiple_entries() {
         let console = Console::default();
 
-        let output = "A\tfile1.txt\nM\tfile2.rs\nD\tfile3.old\n";
+        let output = "A\0file1.txt\0M\0file2.rs\0D\0file3.old\0";
         let entries = parse_name_status(output, console);
         assert_eq!(
             entries,
@@ -298,7 +307,7 @@ mod tests {
     fn parse_name_status_skips_unknown_codes() {
         let console = Console::default();
 
-        let output = "X\tunknown.txt\nA\tknown.txt\n";
+        let output = "X\0unknown.txt\0A\0known.txt\0";
         let entries = parse_name_status(output, console);
         assert_eq!(
             entries,
@@ -318,11 +327,27 @@ mod tests {
     }
 
     #[test]
+    fn parse_name_status_preserves_special_paths() {
+        let console = Console::default();
+
+        let entries = parse_name_status("A\0café\tfile.txt\0", console);
+
+        assert_eq!(
+            entries,
+            vec![RawFileEntry {
+                status: FileStatus::Added,
+                path: "café\tfile.txt".into(),
+                source_path: None,
+            }]
+        );
+    }
+
+    #[test]
     fn parse_binary_paths_detects_binary() {
         let binary1 = "image.png";
         let non_binary1 = "file.txt";
         let binary2 = "archive.zip";
-        let numstat = format!("-\t-\t{binary1}\n5\t3\t{non_binary1}\n-\t-\t{binary2}\n");
+        let numstat = format!("-\t-\t{binary1}\05\t3\t{non_binary1}\0-\t-\t{binary2}\0");
         let binary = parse_binary_paths(&numstat);
         assert!(binary.contains(binary1));
         assert!(binary.contains(binary2));
@@ -336,7 +361,7 @@ mod tests {
 
     #[test]
     fn parse_binary_paths_no_binary_files() {
-        let numstat = "5\t3\tfile1.txt\n10\t2\tfile2.rs\n";
+        let numstat = "5\t3\tfile1.txt\010\t2\tfile2.rs\0";
         assert!(parse_binary_paths(numstat).is_empty());
     }
 
@@ -402,6 +427,31 @@ mod tests {
             vec![FileEntry {
                 status: FileStatus::Added,
                 path: "hello.txt".into(),
+                source_path: None,
+                is_binary: false,
+            }]
+        );
+    }
+
+    #[tokio::test]
+    async fn commit_files_preserves_non_ascii_and_tab_paths() {
+        let console = Console::default();
+        let repo = Repo::new().await;
+        let path = "café\tfile.txt";
+        let hash = repo
+            .commit_files_raw(&[(path, b"hello")], "add special path")
+            .await;
+
+        let result = Extractor::new(repo.path.clone(), console)
+            .commit_files(hash.as_ref())
+            .await
+            .unwrap();
+
+        assert_eq!(
+            result.files,
+            vec![FileEntry {
+                status: FileStatus::Added,
+                path: path.into(),
                 source_path: None,
                 is_binary: false,
             }]
