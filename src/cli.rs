@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
@@ -44,31 +46,31 @@ pub enum Command {
 #[command(rename_all = "kebab-case")]
 pub enum ExtractCommand {
     CommitMessage {
-        hash: String,
+        revision: String,
     },
     CommitDiff {
-        hash: String,
+        revision: String,
     },
     CommitFiles {
-        hash: String,
+        revision: String,
     },
     CommitList {
         range: String,
     },
     FileContent {
-        path: String,
+        revision: String,
         #[arg(long)]
-        at: String,
+        path: PathBuf,
     },
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
 #[command(rename_all = "kebab-case")]
 pub enum CheckCommand {
-    Size { hash: String },
-    Intent { hash: String },
-    Quality { hash: String },
-    Security { hash: String },
+    Size { revision: String },
+    Intent { revision: String },
+    Quality { revision: String },
+    Security { revision: String },
     Coherence { range: String },
 }
 
@@ -143,7 +145,7 @@ mod tests {
             cli.command,
             Command::Extract {
                 command: ExtractCommand::CommitMessage {
-                    hash: "abc123".into()
+                    revision: "abc123".into()
                 },
             }
         );
@@ -157,7 +159,7 @@ mod tests {
             cli.command,
             Command::Extract {
                 command: ExtractCommand::CommitDiff {
-                    hash: "abc123".into()
+                    revision: "abc123".into()
                 },
             }
         );
@@ -171,7 +173,7 @@ mod tests {
             cli.command,
             Command::Extract {
                 command: ExtractCommand::CommitFiles {
-                    hash: "abc123".into()
+                    revision: "abc123".into()
                 },
             }
         );
@@ -197,17 +199,17 @@ mod tests {
             "peer",
             "extract",
             "file-content",
-            "src/foo.rs",
-            "--at",
             "abc123",
+            "--path",
+            "src/foo.rs",
         ]);
 
         assert_eq!(
             cli.command,
             Command::Extract {
                 command: ExtractCommand::FileContent {
-                    path: "src/foo.rs".into(),
-                    at: "abc123".into(),
+                    revision: "abc123".into(),
+                    path: PathBuf::from("src/foo.rs"),
                 },
             }
         );
@@ -221,7 +223,7 @@ mod tests {
             cli.command,
             Command::Check {
                 command: CheckCommand::Size {
-                    hash: "abc123".into(),
+                    revision: "abc123".into(),
                 },
             }
         );
@@ -235,7 +237,7 @@ mod tests {
             cli.command,
             Command::Check {
                 command: CheckCommand::Intent {
-                    hash: "abc123".into(),
+                    revision: "abc123".into(),
                 },
             }
         );
@@ -249,7 +251,7 @@ mod tests {
             cli.command,
             Command::Check {
                 command: CheckCommand::Quality {
-                    hash: "abc123".into(),
+                    revision: "abc123".into(),
                 },
             }
         );
@@ -263,7 +265,7 @@ mod tests {
             cli.command,
             Command::Check {
                 command: CheckCommand::Security {
-                    hash: "abc123".into(),
+                    revision: "abc123".into(),
                 },
             }
         );

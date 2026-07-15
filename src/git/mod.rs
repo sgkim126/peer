@@ -5,6 +5,7 @@ use std::path::Path;
 
 use tokio::process::Command;
 
+pub use self::commit_hash::CommitHash;
 pub use self::error::GitError;
 use crate::console::Console;
 
