@@ -17,11 +17,13 @@ impl CommitHash {
     #[allow(dead_code)]
     pub async fn resolve(rev: &str, dir: &Path, console: Console) -> Result<Self, GitError> {
         let rev_commit = format!("{rev}^{{commit}}");
-        let output = super::run_git(&["rev-parse", "--verify", &rev_commit], dir, console).await?;
+        let output = super::run_git(&["rev-parse", "--verify", &rev_commit], dir, console)
+            .await
+            .map_err(|err| match err {
+                GitError::NonZeroExit { .. } => GitError::InvalidRevision(rev.to_string()),
+                err => err,
+            })?;
         let commit_hash = output.trim();
-        if commit_hash.is_empty() {
-            return Err(GitError::InvalidRevision(rev.to_string()));
-        }
         Self::new(commit_hash)
     }
 
@@ -144,6 +146,25 @@ mod tests {
             .unwrap();
 
         assert_eq!(tag, head);
+    }
+
+    #[tokio::test]
+    async fn resolve_makes_error_with_unknown_name() {
+        let tmp = create_repo_with_commit().await;
+        let console = Console::default();
+        super::super::run_git(
+            &["tag", "-a", "v1.0.0", "-m", "release"],
+            tmp.path(),
+            console,
+        )
+        .await
+        .unwrap();
+
+        let err = CommitHash::resolve("1.0.0", tmp.path(), console)
+            .await
+            .unwrap_err();
+
+        assert!(matches!(err, GitError::InvalidRevision(rev) if rev == "1.0.0"));
     }
 
     #[test]
