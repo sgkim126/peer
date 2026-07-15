@@ -16,6 +16,8 @@ pub struct Config {
     pub version: u32,
     pub review: ReviewConfig,
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub checks: ChecksConfig,
     pub providers: Vec<ProviderConfig>,
 }
 
@@ -29,9 +31,29 @@ pub struct ReviewConfig {
 #[serde(deny_unknown_fields)]
 pub struct LlmConfig {
     pub default_provider: String,
-    pub default_model: String,
-    pub confidence_threshold: f64,
     pub max_iterations: NonZeroU32,
+}
+
+/// Per-check settings. Values omitted here fall back to `[llm]` settings.
+#[derive(Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChecksConfig {
+    #[serde(default)]
+    pub size: CheckConfig,
+    #[serde(default)]
+    pub intent: CheckConfig,
+    #[serde(default)]
+    pub quality: CheckConfig,
+    #[serde(default)]
+    pub security: CheckConfig,
+    #[serde(default)]
+    pub coherence: CheckConfig,
+}
+
+#[derive(Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CheckConfig {
+    pub max_iterations: Option<NonZeroU32>,
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -39,6 +61,7 @@ pub struct LlmConfig {
 pub struct ProviderConfig {
     pub name: String,
     pub api_key_env: String,
+    pub default_model: String,
     pub base_url: Option<String>,
     pub models: Vec<ModelConfig>,
 }
@@ -49,6 +72,54 @@ pub struct ModelConfig {
     pub name: String,
     pub input_per_1m_usd: f64,
     pub output_per_1m_usd: f64,
+}
+
+impl Config {
+    /// Returns the configured iteration limit for a check, falling back to `[llm]`.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn max_iterations_for(&self, check: &str) -> NonZeroU32 {
+        let override_value = match check {
+            "size" => self.checks.size.max_iterations,
+            "intent" => self.checks.intent.max_iterations,
+            "quality" => self.checks.quality.max_iterations,
+            "security" => self.checks.security.max_iterations,
+            "coherence" => self.checks.coherence.max_iterations,
+            _ => None,
+        };
+
+        override_value.unwrap_or(self.llm.max_iterations)
+    }
+
+    /// Finds the named provider and selected model, returning references to both.
+    /// Uses the provider's default model when `model_name` is absent.
+    /// Returns `InvalidConfig` if either is absent.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn resolve_provider(
+        &self,
+        provider_name: &str,
+        model_name: Option<&str>,
+    ) -> Result<(&ProviderConfig, &ModelConfig), PeerError> {
+        let provider = self
+            .providers
+            .iter()
+            .find(|p| p.name == provider_name)
+            .ok_or_else(|| PeerError::InvalidConfig {
+                message: format!("provider '{provider_name}' not found in config"),
+                source: None,
+            })?;
+        let model_name = model_name.unwrap_or(&provider.default_model);
+
+        let model = provider
+            .models
+            .iter()
+            .find(|m| m.name == model_name)
+            .ok_or_else(|| PeerError::InvalidConfig {
+                message: format!("model '{model_name}' not found in provider '{provider_name}'"),
+                source: None,
+            })?;
+
+        Ok((provider, model))
+    }
 }
 
 /// Walks parent directories from `from` looking for `.peer/config.toml`.
@@ -64,7 +135,11 @@ pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
     for dir in from.ancestors() {
         let config_path = dir.join(".peer").join("config.toml");
         match std::fs::read_to_string(&config_path) {
-            Ok(content) => return parse_and_validate(&content, dir.to_path_buf(), &config_path),
+            Ok(content) => {
+                let config = parse_and_validate(&content, &config_path)?;
+                let project_root = dir.to_path_buf();
+                return Ok((config, project_root));
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
             Err(error) => {
                 return Err(PeerError::InvalidConfig {
@@ -80,11 +155,7 @@ pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
     )))
 }
 
-fn parse_and_validate(
-    content: &str,
-    project_root: PathBuf,
-    config_path: &Path,
-) -> Result<(Config, PathBuf), PeerError> {
+fn parse_and_validate(content: &str, config_path: &Path) -> Result<Config, PeerError> {
     let config: Config = toml::from_str(content).map_err(|e| PeerError::InvalidConfig {
         message: format!("invalid config in {}", config_path.display()),
         source: Some(Box::new(e)),
@@ -123,6 +194,17 @@ fn parse_and_validate(
         )));
     }
 
+    if !config
+        .providers
+        .iter()
+        .any(|provider| provider.name == config.llm.default_provider)
+    {
+        return Err(PeerError::invalid_config(format!(
+            "default provider '{}' is not configured",
+            config.llm.default_provider
+        )));
+    }
+
     for provider in &config.providers {
         let mut model_names = HashSet::new();
         for model in &provider.models {
@@ -133,31 +215,20 @@ fn parse_and_validate(
                 )));
             }
         }
+
+        if !provider
+            .models
+            .iter()
+            .any(|model| model.name == provider.default_model)
+        {
+            return Err(PeerError::invalid_config(format!(
+                "default model '{}' is not configured for provider '{}'",
+                provider.default_model, provider.name
+            )));
+        }
     }
 
-    let default_provider = config
-        .providers
-        .iter()
-        .find(|provider| provider.name == config.llm.default_provider)
-        .ok_or_else(|| {
-            PeerError::invalid_config(format!(
-                "default provider '{}' is not configured",
-                config.llm.default_provider
-            ))
-        })?;
-
-    if !default_provider
-        .models
-        .iter()
-        .any(|model| model.name == config.llm.default_model)
-    {
-        return Err(PeerError::invalid_config(format!(
-            "default model '{}' is not configured for provider '{}'",
-            config.llm.default_model, config.llm.default_provider
-        )));
-    }
-
-    Ok((config, project_root))
+    Ok(config)
 }
 
 /// the default `.peer/config.toml` content written by `peer init`.
@@ -242,7 +313,7 @@ mod tests {
     #[test]
     fn fails_when_max_iterations_is_zero() {
         let tmp =
-            init_dir(&DEFAULT_CONFIG_TOML.replace("max_iterations = 5", "max_iterations = 0"));
+            init_dir(&DEFAULT_CONFIG_TOML.replacen("max_iterations = 3", "max_iterations = 0", 1));
 
         assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
     }
@@ -267,8 +338,6 @@ max_commits = 10
 
 [llm]
 default_provider = "mistral"
-default_model = "mistral-large-latest"
-confidence_threshold = 0.8
 max_iterations = 5
 "#,
         );
@@ -290,13 +359,12 @@ max_commits = 10
 
 [llm]
 default_provider = "mistral"
-default_model = "mistral-large-latest"
-confidence_threshold = 0.8
 max_iterations = 5
 
 [[providers]]
 name = "mistral"
 api_key_env = "MISTRAL_API_KEY"
+default_model = "mistral-large-latest"
 models = []
 "#,
         );
@@ -316,6 +384,7 @@ models = []
 [[providers]]
 name = "mistral"
 api_key_env = "SECOND_MISTRAL_API_KEY"
+default_model = "another-model"
 models = [{{ name = "another-model", input_per_1m_usd = 1.0, output_per_1m_usd = 1.0 }}]
 "#
         ));
@@ -335,6 +404,7 @@ models = [{{ name = "another-model", input_per_1m_usd = 1.0, output_per_1m_usd =
 [[providers]]
 name = "duplicate-model-test"
 api_key_env = "DUPLICATE_MODEL_TEST_API_KEY"
+default_model = "same-model"
 models = [
     {{ name = "same-model", input_per_1m_usd = 1.0, output_per_1m_usd = 2.0 }},
     {{ name = "same-model", input_per_1m_usd = 3.0, output_per_1m_usd = 4.0 }},
@@ -360,13 +430,43 @@ models = [
     }
 
     #[test]
-    fn fails_when_default_model_is_not_configured_for_default_provider() {
+    fn fails_when_a_provider_default_model_is_not_configured() {
         let tmp = init_dir(&DEFAULT_CONFIG_TOML.replace(
-            "default_model = \"mistral-large-2512\"",
+            "default_model = \"mistral-medium-3-5\"",
             "default_model = \"missing\"",
         ));
 
         assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
+    }
+
+    #[test]
+    fn resolve_provider_returns_provider_and_model() {
+        let provider_name = "mistral";
+        let model_name = "mistral-large-2512";
+        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        let (provider, model) = config
+            .resolve_provider(provider_name, Some(model_name))
+            .unwrap();
+        assert_eq!(provider.name, provider_name);
+        assert_eq!(model.name, model_name);
+    }
+
+    #[test]
+    fn resolve_provider_fails_when_provider_missing() {
+        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert_matches!(
+            config.resolve_provider("nonexistent", None),
+            Err(PeerError::InvalidConfig { source: None, .. })
+        );
+    }
+
+    #[test]
+    fn resolve_provider_fails_when_model_missing() {
+        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert_matches!(
+            config.resolve_provider("mistral", Some("no-such-model")),
+            Err(PeerError::InvalidConfig { source: None, .. })
+        );
     }
 
     #[test]
@@ -382,14 +482,26 @@ models = [
                 },
                 llm: LlmConfig {
                     default_provider: "mistral".into(),
-                    default_model: "mistral-large-2512".into(),
-                    confidence_threshold: 0.8,
-                    max_iterations: NonZeroU32::new(5).unwrap(),
+                    max_iterations: NonZeroU32::new(3).unwrap(),
+                },
+                checks: ChecksConfig {
+                    size: CheckConfig::default(),
+                    intent: CheckConfig::default(),
+                    quality: CheckConfig {
+                        max_iterations: NonZeroU32::new(5),
+                    },
+                    security: CheckConfig {
+                        max_iterations: NonZeroU32::new(5),
+                    },
+                    coherence: CheckConfig {
+                        max_iterations: NonZeroU32::new(10),
+                    },
                 },
                 providers: vec![
                     ProviderConfig {
                         name: "mistral".into(),
                         api_key_env: "MISTRAL_API_KEY".into(),
+                        default_model: "mistral-medium-3-5".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {
@@ -412,6 +524,7 @@ models = [
                     ProviderConfig {
                         name: "openai".into(),
                         api_key_env: "OPENAI_API_KEY".into(),
+                        default_model: "gpt-5.4-mini".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {
@@ -434,6 +547,7 @@ models = [
                     ProviderConfig {
                         name: "anthropic".into(),
                         api_key_env: "ANTHROPIC_API_KEY".into(),
+                        default_model: "claude-sonnet-5".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {
@@ -451,6 +565,7 @@ models = [
                     ProviderConfig {
                         name: "gemini".into(),
                         api_key_env: "GEMINI_API_KEY".into(),
+                        default_model: "gemini-3.5-flash".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {
@@ -467,6 +582,26 @@ models = [
                     }
                 ],
             }
+        );
+    }
+
+    #[test]
+    fn check_max_iterations_overrides_llm_default() {
+        let mut config: Config = toml::from_str(&DEFAULT_CONFIG_TOML.replacen(
+            "[checks.security]\nmax_iterations = 5",
+            "[checks.security]\nmax_iterations = 2",
+            1,
+        ))
+        .unwrap();
+
+        assert_eq!(
+            config.max_iterations_for("security"),
+            NonZeroU32::new(2).unwrap()
+        );
+        config.checks.quality = CheckConfig::default();
+        assert_eq!(
+            config.max_iterations_for("quality"),
+            NonZeroU32::new(3).unwrap()
         );
     }
 }

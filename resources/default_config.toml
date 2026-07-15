@@ -5,13 +5,22 @@ max_commits = 10
 
 [llm]
 default_provider = "mistral"
-default_model = "mistral-large-2512"
-confidence_threshold = 0.8
+max_iterations = 3
+
+# Per-check overrides. Any omitted check uses `[llm].max_iterations`.
+[checks.quality]
 max_iterations = 5
+
+[checks.security]
+max_iterations = 5
+
+[checks.coherence]
+max_iterations = 10
 
 [[providers]]
 name = "mistral"
 api_key_env = "MISTRAL_API_KEY"
+default_model = "mistral-medium-3-5"
 
   # Mistral Large 3 (2025-12 release): general-purpose flagship
   [[providers.models]]
@@ -34,6 +43,7 @@ api_key_env = "MISTRAL_API_KEY"
 [[providers]]
 name = "openai"
 api_key_env = "OPENAI_API_KEY"
+default_model = "gpt-5.4-mini"
 
   # GPT-5.5: flagship model for complex code review
   [[providers.models]]
@@ -56,6 +66,7 @@ api_key_env = "OPENAI_API_KEY"
 [[providers]]
 name = "anthropic"
 api_key_env = "ANTHROPIC_API_KEY"
+default_model = "claude-sonnet-5"
 
   # Claude Sonnet 5: balanced default for coding and agentic reviews
   [[providers.models]]
@@ -72,6 +83,7 @@ api_key_env = "ANTHROPIC_API_KEY"
 [[providers]]
 name = "gemini"
 api_key_env = "GEMINI_API_KEY"
+default_model = "gemini-3.5-flash"
 
   # Gemini 3.5 Flash: fast frontier model for code review
   [[providers.models]]
