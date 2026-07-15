@@ -228,7 +228,9 @@ runs:
         } >> "$GITHUB_STEP_SUMMARY"
 
         set +e
-        peer "${args[@]}" >"$stdout" 2>"$stderr"
+        peer "${args[@]}" \
+          > >(tee "$stdout") \
+          2> >(tee "$stderr" >&2)
         code=$?
         set -e
 
