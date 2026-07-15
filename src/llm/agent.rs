@@ -138,6 +138,13 @@ where
                     });
                 }
 
+                // The last turn may only end the check or request indispensable user input.
+                // Do not execute a stale repository-tool call that the model emits despite the
+                // final request's restricted tool list.
+                if iteration == request.max_iterations {
+                    return Err(loop_exhausted_error(request.max_iterations));
+                }
+
                 let assistant_tool_calls = tool_calls.clone();
                 conversation.push(ConversationTurn::AssistantToolCalls(assistant_tool_calls));
 
@@ -171,13 +178,17 @@ where
         }
     }
 
-    Err(LlmCallError::Permanent {
+    Err(loop_exhausted_error(request.max_iterations))
+}
+
+fn loop_exhausted_error(max_iterations: u32) -> LlmCallError {
+    LlmCallError::Permanent {
         message: format!(
             "LLM agent did not produce check output within {} iterations",
-            request.max_iterations
+            max_iterations
         ),
         source: Box::new(AgentError::LoopExhausted),
-    })
+    }
 }
 
 fn tool_result_json(result: ToolExecutionResult) -> serde_json::Value {
@@ -561,6 +572,39 @@ mod tests {
                 .collect::<Vec<_>>(),
             [REQUEST_USER_INFO_TOOL_NAME]
         );
+    }
+
+    #[tokio::test]
+    async fn final_iteration_does_not_execute_a_repository_tool_call() {
+        let tool_call = ToolCall {
+            id: "call-1".to_string(),
+            name: "commit_diff".to_string(),
+            arguments: json!({ "hash": "abc1234" }),
+            thought_signature: None,
+        };
+        let provider = MockProvider::new([Ok(call_result(
+            LlmResponse::ToolCalls(vec![tool_call]),
+            10,
+            5,
+        ))]);
+        let executor = FakeToolExecutor::default();
+        let tools = [ToolSpec {
+            name: "commit_diff".to_string(),
+            description: "Read a commit diff".to_string(),
+            parameters: json!({ "type": "object" }),
+        }];
+        let schema = json!({ "type": "object" });
+
+        let error = run_agent(&provider, &executor, agent_request(&[], &tools, &schema, 1))
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, LlmCallError::Permanent { .. }));
+        assert_eq!(
+            error.to_string(),
+            "permanent LLM call failure: LLM agent did not produce check output within 1 iterations"
+        );
+        assert!(executor.calls().is_empty());
     }
 
     #[tokio::test]
