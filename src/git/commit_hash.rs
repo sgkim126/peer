@@ -77,6 +77,75 @@ impl<'de> Deserialize<'de> for CommitHash {
 mod tests {
     use super::*;
 
+    async fn create_repo_with_commit() -> tempfile::TempDir {
+        let tmp = tempfile::tempdir().unwrap();
+        let console = Console::default();
+
+        super::super::run_git(&["init"], tmp.path(), console)
+            .await
+            .unwrap();
+        super::super::run_git(
+            &["config", "user.email", "test@example.com"],
+            tmp.path(),
+            console,
+        )
+        .await
+        .unwrap();
+        super::super::run_git(&["config", "user.name", "Test User"], tmp.path(), console)
+            .await
+            .unwrap();
+        super::super::run_git(
+            &["commit", "--allow-empty", "-m", "initial commit"],
+            tmp.path(),
+            console,
+        )
+        .await
+        .unwrap();
+
+        tmp
+    }
+
+    #[tokio::test]
+    async fn resolve_resolves_head_to_its_full_commit_hash() {
+        let tmp = create_repo_with_commit().await;
+        let console = Console::default();
+        let expected = super::super::run_git(
+            &["rev-parse", "--verify", "HEAD^{commit}"],
+            tmp.path(),
+            console,
+        )
+        .await
+        .unwrap();
+
+        let hash = CommitHash::resolve("HEAD", tmp.path(), console)
+            .await
+            .unwrap();
+
+        assert_eq!(hash.as_ref(), expected.trim());
+    }
+
+    #[tokio::test]
+    async fn resolve_peels_an_annotated_tag_to_its_commit_hash() {
+        let tmp = create_repo_with_commit().await;
+        let console = Console::default();
+        super::super::run_git(
+            &["tag", "-a", "v1.0.0", "-m", "release"],
+            tmp.path(),
+            console,
+        )
+        .await
+        .unwrap();
+
+        let head = CommitHash::resolve("HEAD", tmp.path(), console)
+            .await
+            .unwrap();
+        let tag = CommitHash::resolve("v1.0.0", tmp.path(), console)
+            .await
+            .unwrap();
+
+        assert_eq!(tag, head);
+    }
+
     #[test]
     fn commit_hash_valid_is_accepted() {
         let hash1 = "a".repeat(7);
