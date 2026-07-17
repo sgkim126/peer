@@ -42,6 +42,24 @@ impl std::error::Error for LlmCallError {
     }
 }
 
+impl From<reqwest::Error> for LlmCallError {
+    fn from(error: reqwest::Error) -> Self {
+        let message = error.to_string();
+
+        if error.is_timeout() || error.is_connect() {
+            Self::Transient {
+                message,
+                source: Box::new(error),
+            }
+        } else {
+            Self::Permanent {
+                message,
+                source: Box::new(error),
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
