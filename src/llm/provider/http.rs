@@ -4,9 +4,12 @@ use reqwest::StatusCode;
 use reqwest::header::{HeaderMap, HeaderName};
 use serde_json::Value;
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use time::{OffsetDateTime, format_description::well_known::Rfc3339};
+use time::{
+    OffsetDateTime,
+    format_description::well_known::{Rfc2822, Rfc3339},
+};
 
 use super::LlmCallError;
 use crate::console::Console;
@@ -107,7 +110,7 @@ impl ProviderHttpClient {
             })?;
 
             match self.client.execute(attempt_request).await {
-                Ok(response) => {
+                Ok(mut response) => {
                     let status = response.status();
                     if !should_retry_status(status) {
                         return Ok(response);
@@ -115,7 +118,7 @@ impl ProviderHttpClient {
                     if attempt == MAX_ATTEMPTS {
                         return Ok(response);
                     }
-                    let RetryDelay::Retry(delay) = retry_delay(response.headers(), attempt) else {
+                    let RetryAt::At(retry_at) = retry_at(response.headers(), attempt) else {
                         return Ok(response);
                     };
                     self.console.debug(format_args!(
@@ -123,11 +126,13 @@ impl ProviderHttpClient {
                         self.provider_name,
                         current_utc_time(),
                         status.as_u16(),
-                        delay.as_secs_f64(),
+                        retry_at
+                            .saturating_duration_since(Instant::now())
+                            .as_secs_f64(),
                         attempt + 1,
                         MAX_ATTEMPTS,
                     ));
-                    tokio::time::sleep(delay).await;
+                    tokio::time::sleep_until(retry_at.into()).await;
                     continue;
                 }
                 Err(error) => {
@@ -138,8 +143,8 @@ impl ProviderHttpClient {
                         return Err(error.into());
                     }
 
-                    let RetryDelay::Retry(delay) =
-                        retry_delay(&reqwest::header::HeaderMap::new(), attempt)
+                    let RetryAt::At(retry_at) =
+                        retry_at(&reqwest::header::HeaderMap::new(), attempt)
                     else {
                         return Err(LlmCallError::Permanent {
                             message: format!(
@@ -153,12 +158,14 @@ impl ProviderHttpClient {
                         "[{}] {} transport error retrying in {:.1}s (attempt {}/{}): {}",
                         self.provider_name,
                         current_utc_time(),
-                        delay.as_secs_f64(),
+                        retry_at
+                            .saturating_duration_since(Instant::now())
+                            .as_secs_f64(),
                         attempt + 1,
                         MAX_ATTEMPTS,
                         error
                     ));
-                    tokio::time::sleep(delay).await;
+                    tokio::time::sleep_until(retry_at.into()).await;
                     continue;
                 }
             }
@@ -231,30 +238,43 @@ fn is_retryable_transport_error(error: &reqwest::Error) -> bool {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RetryDelay {
-    Retry(Duration),
+enum RetryAt {
+    At(Instant),
     DoNotRetry,
 }
 
-fn retry_delay(headers: &reqwest::header::HeaderMap, attempt: u32) -> RetryDelay {
+fn retry_at(headers: &reqwest::header::HeaderMap, attempt: u32) -> RetryAt {
+    let now = Instant::now();
     if let Some(delay) = headers
         .get(reqwest::header::RETRY_AFTER)
         .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.trim().parse::<u64>().ok())
-        .map(Duration::from_secs)
+        .and_then(|value| {
+            let value = value.trim();
+            if let Ok(seconds) = value.parse::<u64>() {
+                return Some(Duration::from_secs(seconds));
+            }
+
+            OffsetDateTime::parse(value, &Rfc2822)
+                .ok()
+                .map(|retry_time| {
+                    (retry_time - OffsetDateTime::now_utc())
+                        .try_into()
+                        .unwrap_or(Duration::ZERO)
+                })
+        })
     {
         return if delay <= MAX_RETRY_DELAY {
-            RetryDelay::Retry(delay)
+            RetryAt::At(now + delay)
         } else {
-            RetryDelay::DoNotRetry
+            RetryAt::DoNotRetry
         };
     }
 
     let multiplier = 1_u32
         .checked_shl(attempt.saturating_sub(1))
         .unwrap_or(u32::MAX);
-    RetryDelay::Retry(
-        BASE_RETRY_DELAY
+    RetryAt::At(
+        now + BASE_RETRY_DELAY
             .saturating_mul(multiplier)
             .min(MAX_RETRY_DELAY),
     )
@@ -411,10 +431,36 @@ mod tests {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(reqwest::header::RETRY_AFTER, "7".parse().unwrap());
 
-        assert_eq!(
-            retry_delay(&headers, 1),
-            RetryDelay::Retry(Duration::from_secs(7))
+        let now = Instant::now();
+        let RetryAt::At(retry_at) = retry_at(&headers, 1) else {
+            panic!("missing retry time");
+        };
+        assert!(retry_at.saturating_duration_since(now) >= Duration::from_secs(7));
+    }
+
+    #[test]
+    fn parses_retry_after_http_date() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Wed, 01 Jan 2042 00:00:00 GMT".parse().unwrap(),
         );
+
+        assert_eq!(retry_at(&headers, 1), RetryAt::DoNotRetry);
+    }
+
+    #[test]
+    fn treats_past_retry_after_http_date_as_immediate_retry() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::RETRY_AFTER,
+            "Sat, 01 Jan 2000 00:00:00 GMT".parse().unwrap(),
+        );
+
+        let RetryAt::At(retry_at) = retry_at(&headers, 1) else {
+            panic!("missing retry time");
+        };
+        assert!(retry_at <= Instant::now());
     }
 
     #[test]
@@ -422,20 +468,23 @@ mod tests {
         let mut headers = reqwest::header::HeaderMap::new();
         headers.insert(reqwest::header::RETRY_AFTER, "120".parse().unwrap());
 
-        assert_eq!(retry_delay(&headers, 1), RetryDelay::DoNotRetry);
+        assert_eq!(retry_at(&headers, 1), RetryAt::DoNotRetry);
     }
 
     #[test]
     fn falls_back_to_exponential_delay() {
         let headers = reqwest::header::HeaderMap::new();
 
-        assert_eq!(
-            retry_delay(&headers, 1),
-            RetryDelay::Retry(Duration::from_secs(1))
-        );
-        assert_eq!(
-            retry_delay(&headers, 2),
-            RetryDelay::Retry(Duration::from_secs(2))
-        );
+        let now = Instant::now();
+        let RetryAt::At(first_retry_at) = retry_at(&headers, 1) else {
+            panic!("missing first retry time");
+        };
+        assert!(first_retry_at.saturating_duration_since(now) >= Duration::from_secs(1));
+
+        let now = Instant::now();
+        let RetryAt::At(second_retry_at) = retry_at(&headers, 2) else {
+            panic!("missing second retry time");
+        };
+        assert!(second_retry_at.saturating_duration_since(now) >= Duration::from_secs(2));
     }
 }
