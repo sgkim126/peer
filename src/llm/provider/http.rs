@@ -132,6 +132,7 @@ impl ProviderHttpClient {
                         attempt + 1,
                         MAX_ATTEMPTS,
                     ));
+                    while let Ok(Some(_)) = response.chunk().await {}
                     tokio::time::sleep_until(retry_at.into()).await;
                     continue;
                 }
