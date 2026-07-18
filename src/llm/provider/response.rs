@@ -16,7 +16,7 @@ pub enum LlmResponse {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct LlmCallResult {
     pub response: LlmResponse,
     pub usage: RawUsage,

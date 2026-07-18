@@ -1,5 +1,6 @@
 mod error;
 mod http;
+mod mistral;
 mod request;
 mod response;
 
@@ -9,8 +10,8 @@ use serde_json::Value;
 
 pub use error::LlmCallError;
 #[expect(unused_imports)]
+pub use mistral::MistralProvider;
 pub use request::{ConversationTurn, LlmRequest, ToolSpec};
-#[expect(unused_imports)]
 pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -26,7 +27,7 @@ pub struct Response {
     pub body: Value,
 }
 
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub trait LlmProvider {
     fn build_request(
         &self,
