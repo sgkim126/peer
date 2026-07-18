@@ -1,16 +1,17 @@
-use crate::llm::result::CheckOutput;
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
+    /// Gemini-specific opaque state that must be replayed with the tool call.
+    /// Gemini requires it to retain its reasoning context across stateless
+    /// function-calling requests.
+    pub thought_signature: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 #[expect(dead_code)]
 pub enum LlmResponse {
-    CheckOutput(CheckOutput),
     ToolCalls(Vec<ToolCall>),
 }
 

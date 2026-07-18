@@ -11,7 +11,7 @@ use time::{
     format_description::well_known::{Rfc2822, Rfc3339},
 };
 
-use super::LlmCallError;
+use super::{LlmCallError, Request, Response};
 use crate::console::Console;
 
 const MAX_ATTEMPTS: u32 = 3;
@@ -25,12 +25,6 @@ pub struct ProviderHttpClient {
     provider_name: &'static str,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct JsonHttpResponse {
-    pub status: StatusCode,
-    pub body: Value,
-}
-
 impl ProviderHttpClient {
     #[expect(dead_code)]
     pub fn new(client: reqwest::Client, console: Console, provider_name: &'static str) -> Self {
@@ -42,18 +36,13 @@ impl ProviderHttpClient {
     }
 
     #[expect(dead_code)]
-    pub fn post(&self, url: &str) -> reqwest::RequestBuilder {
-        self.client.post(url)
-    }
-
-    #[expect(dead_code)]
-    pub async fn send_json(
-        &self,
-        request: reqwest::RequestBuilder,
-        body: &Value,
-    ) -> Result<JsonHttpResponse, LlmCallError> {
-        let request = request
-            .json(body)
+    pub async fn send(&self, request: Request) -> Result<Response, LlmCallError> {
+        let Request { url, headers, body } = request;
+        let request = self
+            .client
+            .post(url)
+            .headers(headers)
+            .json(&body)
             .build()
             .map_err(|error| LlmCallError::Permanent {
                 message: format!("failed to build {} HTTP request", self.provider_name),
@@ -96,7 +85,7 @@ impl ProviderHttpClient {
                 source: Box::new(error),
             })?;
 
-        Ok(JsonHttpResponse { status, body })
+        Ok(Response { status, body })
     }
 
     async fn execute_with_retries(
