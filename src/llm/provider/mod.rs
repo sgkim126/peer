@@ -1,4 +1,5 @@
 mod error;
+mod gemini;
 mod http;
 mod mistral;
 mod request;
@@ -9,6 +10,8 @@ use reqwest::header::HeaderMap;
 use serde_json::Value;
 
 pub use error::LlmCallError;
+#[expect(unused_imports)]
+pub use gemini::GeminiProvider;
 #[expect(unused_imports)]
 pub use mistral::MistralProvider;
 pub use request::{ConversationTurn, LlmRequest, ToolSpec};

@@ -10,7 +10,7 @@ pub struct ToolCall {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub enum LlmResponse {
     ToolCalls(Vec<ToolCall>),
 }
