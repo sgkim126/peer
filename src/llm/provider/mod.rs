@@ -2,6 +2,7 @@ mod error;
 mod gemini;
 mod http;
 mod mistral;
+mod openai;
 mod request;
 mod response;
 
@@ -14,6 +15,8 @@ pub use error::LlmCallError;
 pub use gemini::GeminiProvider;
 #[expect(unused_imports)]
 pub use mistral::MistralProvider;
+#[expect(unused_imports)]
+pub use openai::OpenAiProvider;
 pub use request::{ConversationTurn, LlmRequest, ToolSpec};
 pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
 
