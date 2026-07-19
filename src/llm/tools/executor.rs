@@ -1,0 +1,150 @@
+use std::fmt;
+
+use crate::extract::ExtractError;
+use crate::llm::provider::ToolCall;
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub type ToolExecutionResult = Result<serde_json::Value, ToolExecutionError>;
+
+#[derive(Debug)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub enum ToolExecutionError {
+    UnknownTool {
+        name: String,
+    },
+    InvalidArguments {
+        tool: String,
+        source: serde_json::Error,
+    },
+    Extract(ExtractError),
+    Serialization(serde_json::Error),
+}
+
+impl fmt::Display for ToolExecutionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownTool { name } => write!(f, "unknown tool: {name}"),
+            Self::InvalidArguments { tool, source } => {
+                write!(f, "invalid arguments for {tool}: {source}")
+            }
+            Self::Extract(error) => error.fmt(f),
+            Self::Serialization(error) => write!(f, "cannot serialize tool result: {error}"),
+        }
+    }
+}
+
+impl std::error::Error for ToolExecutionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::UnknownTool { .. } => None,
+            Self::InvalidArguments { source, .. } => Some(source),
+            Self::Extract(error) => Some(error),
+            Self::Serialization(error) => Some(error),
+        }
+    }
+}
+
+impl From<ExtractError> for ToolExecutionError {
+    fn from(error: ExtractError) -> Self {
+        Self::Extract(error)
+    }
+}
+
+impl From<serde_json::Error> for ToolExecutionError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialization(error)
+    }
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub trait ToolExecutor {
+    async fn execute(&self, call: ToolCall) -> ToolExecutionResult;
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+    use std::error::Error;
+
+    struct EchoToolExecutor;
+
+    impl ToolExecutor for EchoToolExecutor {
+        async fn execute(&self, call: ToolCall) -> ToolExecutionResult {
+            Ok(call.arguments)
+        }
+    }
+
+    fn json_error() -> serde_json::Error {
+        serde_json::from_str::<serde_json::Value>("{").unwrap_err()
+    }
+
+    #[tokio::test]
+    async fn executor_returns_json_results() {
+        let arguments = json!({ "revision": "HEAD" });
+        let call = ToolCall {
+            id: "call-1".to_string(),
+            name: "get_commit_diff".to_string(),
+            arguments: arguments.clone(),
+            thought_signature: None,
+        };
+
+        let result = EchoToolExecutor.execute(call).await.unwrap();
+
+        assert_eq!(result, arguments);
+    }
+
+    #[test]
+    fn unknown_tool_has_no_source() {
+        let error = ToolExecutionError::UnknownTool {
+            name: "missing".to_string(),
+        };
+
+        assert_eq!(error.to_string(), "unknown tool: missing");
+        assert!(error.source().is_none());
+    }
+
+    #[test]
+    fn invalid_arguments_include_the_tool_and_source() {
+        let source = json_error();
+        let source_message = source.to_string();
+        let error = ToolExecutionError::InvalidArguments {
+            tool: "get_commit_diff".to_string(),
+            source,
+        };
+
+        assert_eq!(
+            error.to_string(),
+            format!("invalid arguments for get_commit_diff: {source_message}")
+        );
+        assert_eq!(error.source().unwrap().to_string(), source_message);
+    }
+
+    #[test]
+    fn extract_errors_preserve_their_message_and_source() {
+        let error = ToolExecutionError::from(ExtractError::InvalidTwoDotRange(
+            "main...feature".to_string(),
+        ));
+
+        assert_eq!(error.to_string(), "main...feature is not a two-dot range");
+        assert_eq!(
+            error.source().unwrap().to_string(),
+            "main...feature is not a two-dot range"
+        );
+        assert!(matches!(error, ToolExecutionError::Extract(_)));
+    }
+
+    #[test]
+    fn serde_errors_convert_to_serialization_errors() {
+        let source = json_error();
+        let source_message = source.to_string();
+        let error = ToolExecutionError::from(source);
+
+        assert_eq!(
+            error.to_string(),
+            format!("cannot serialize tool result: {source_message}")
+        );
+        assert_eq!(error.source().unwrap().to_string(), source_message);
+        assert!(matches!(error, ToolExecutionError::Serialization(_)));
+    }
+}
