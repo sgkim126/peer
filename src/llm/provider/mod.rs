@@ -1,3 +1,4 @@
+mod anthropic;
 mod error;
 mod gemini;
 mod http;
@@ -10,6 +11,8 @@ use reqwest::StatusCode;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
+#[expect(unused_imports)]
+pub use anthropic::AnthropicProvider;
 pub use error::LlmCallError;
 #[expect(unused_imports)]
 pub use gemini::GeminiProvider;
