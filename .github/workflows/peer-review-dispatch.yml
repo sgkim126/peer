@@ -62,7 +62,7 @@ permissions:
   pull-requests: write
 
 env:
-  PEER_VERSION: "0.9.0"
+  PEER_VERSION: "0.9.1"
 
 jobs:
   review:
