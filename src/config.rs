@@ -488,7 +488,7 @@ models = [
                     size: CheckConfig::default(),
                     intent: CheckConfig::default(),
                     quality: CheckConfig {
-                        max_iterations: NonZeroU32::new(5),
+                        max_iterations: NonZeroU32::new(10),
                     },
                     security: CheckConfig {
                         max_iterations: NonZeroU32::new(5),
