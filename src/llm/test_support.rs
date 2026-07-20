@@ -86,7 +86,7 @@ mod tests {
                 arguments: json!({
                     "id": id
                 }),
-                thought_signature: None,
+                provider_state: None,
             }]),
             usage: RawUsage {
                 input_tokens: 10,

@@ -86,7 +86,7 @@ mod tests {
             id: "call-1".to_string(),
             name: "get_commit_diff".to_string(),
             arguments: arguments.clone(),
-            thought_signature: None,
+            provider_state: None,
         };
 
         let result = EchoToolExecutor.execute(call).await.unwrap();

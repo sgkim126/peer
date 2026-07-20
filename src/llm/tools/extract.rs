@@ -363,7 +363,7 @@ mod tests {
             id: "call-1".to_string(),
             name: name.to_string(),
             arguments,
-            thought_signature: None,
+            provider_state: None,
         }
     }
 
