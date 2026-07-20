@@ -47,6 +47,7 @@ pub struct CheckUsage {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct CheckOutput {
     #[serde(default)]
     pub summary: String,

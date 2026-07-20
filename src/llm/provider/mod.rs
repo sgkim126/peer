@@ -1,15 +1,48 @@
+mod anthropic;
 mod error;
+mod gemini;
 mod http;
+mod mistral;
+mod openai;
 mod request;
 mod response;
 
+use reqwest::StatusCode;
+use reqwest::header::HeaderMap;
+use serde_json::Value;
+
+#[expect(unused_imports)]
+pub use anthropic::AnthropicProvider;
 pub use error::LlmCallError;
 #[expect(unused_imports)]
-pub use request::{ConversationTurn, LlmRequest, ToolSpec};
+pub use gemini::GeminiProvider;
 #[expect(unused_imports)]
+pub use mistral::MistralProvider;
+#[expect(unused_imports)]
+pub use openai::OpenAiProvider;
+pub use request::{ConversationTurn, LlmRequest, ToolSpec};
 pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
 
-#[expect(dead_code)]
+#[derive(Debug, Clone, PartialEq)]
+pub struct Request {
+    pub url: String,
+    pub headers: HeaderMap,
+    pub body: Value,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Response {
+    pub status: StatusCode,
+    pub body: Value,
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
 pub trait LlmProvider {
-    async fn send(&self, request: LlmRequest<'_>) -> Result<LlmCallResult, LlmCallError>;
+    fn build_request(
+        &self,
+        request: LlmRequest<'_>,
+        is_last_request: bool,
+    ) -> Result<Request, LlmCallError>;
+
+    fn parse_response(&self, response: Response) -> Result<LlmCallResult, LlmCallError>;
 }
