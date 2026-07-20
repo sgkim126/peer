@@ -267,3 +267,31 @@ fn file_diff_returns_one_file_between_revisions() {
     assert!(diff.contains("+after"));
     assert!(!diff.contains("other.txt"));
 }
+
+#[test]
+fn list_tree_returns_entries_at_the_requested_revision() {
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.path.join("src/nested")).unwrap();
+    repo.commit(
+        &[
+            ("src/lib.rs", b"pub fn run() {}\n"),
+            ("src/nested/mod.rs", b"pub mod inner;\n"),
+        ],
+        "add source tree",
+    );
+
+    let json = repo.extract(&["list-tree", "HEAD", "--path", "src", "--recursive"]);
+
+    assert_eq!(
+        json,
+        json!({
+            "command": "list-tree",
+            "entries": [
+                { "path": "src/lib.rs", "kind": "file" },
+                { "path": "src/nested", "kind": "directory" },
+                { "path": "src/nested/mod.rs", "kind": "file" }
+            ],
+            "truncated": false
+        })
+    );
+}

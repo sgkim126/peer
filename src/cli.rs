@@ -68,6 +68,13 @@ pub enum ExtractCommand {
         #[arg(long)]
         path: PathBuf,
     },
+    ListTree {
+        revision: String,
+        #[arg(long)]
+        path: Option<PathBuf>,
+        #[arg(long)]
+        recursive: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -240,6 +247,30 @@ mod tests {
                     from_revision: "HEAD~1".into(),
                     to_revision: "HEAD".into(),
                     path: PathBuf::from("src/foo.rs"),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn extract_list_tree() {
+        let cli = parse(&[
+            "peer",
+            "extract",
+            "list-tree",
+            "HEAD",
+            "--path",
+            "src",
+            "--recursive",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Extract {
+                command: ExtractCommand::ListTree {
+                    revision: "HEAD".into(),
+                    path: Some(PathBuf::from("src")),
+                    recursive: true,
                 },
             }
         );

@@ -5,6 +5,7 @@ mod commit_message;
 mod error;
 mod file_content;
 mod file_diff;
+mod list_tree;
 
 use std::path::{Component, Path, PathBuf};
 
@@ -21,6 +22,9 @@ pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
 pub use self::file_content::FileContent;
 pub use self::file_diff::FileDiff;
+pub use self::list_tree::TreeListing;
+#[expect(unused_imports)]
+pub use self::list_tree::{TreeEntry, TreeEntryKind};
 
 /// Provides the programmatic entry point to repository extraction.
 pub struct Extractor {
@@ -46,6 +50,7 @@ pub enum ExtractData {
     CommitMessage(CommitMessage),
     FileContent(FileContent),
     FileDiff(FileDiff),
+    ListTree(TreeListing),
 }
 
 pub async fn handler(
@@ -78,6 +83,15 @@ pub async fn handler(
         } => ExtractData::FileDiff(
             extractor
                 .file_diff(from_revision, to_revision, path)
+                .await?,
+        ),
+        ExtractCommand::ListTree {
+            revision,
+            path,
+            recursive,
+        } => ExtractData::ListTree(
+            extractor
+                .list_tree(revision, path.as_deref(), *recursive)
                 .await?,
         ),
     })
