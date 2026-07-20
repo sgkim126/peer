@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{num::NonZeroU8, path::PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -62,6 +62,27 @@ pub enum ExtractCommand {
         #[arg(long)]
         path: PathBuf,
     },
+    FileDiff {
+        from_revision: String,
+        to_revision: String,
+        #[arg(long)]
+        path: PathBuf,
+    },
+    ListTree {
+        revision: String,
+        #[arg(long)]
+        path: Option<PathBuf>,
+        #[arg(long)]
+        recursive: bool,
+    },
+    Grep {
+        revision: String,
+        query: String,
+        #[arg(long)]
+        path: Option<PathBuf>,
+        #[arg(long, default_value = "2")]
+        context_lines: NonZeroU8,
+    },
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -83,6 +104,8 @@ pub enum OutputFormat {
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
 
     fn parse(args: &[&str]) -> Cli {
@@ -213,6 +236,111 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn extract_file_diff() {
+        let cli = parse(&[
+            "peer",
+            "extract",
+            "file-diff",
+            "HEAD~1",
+            "HEAD",
+            "--path",
+            "src/foo.rs",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Extract {
+                command: ExtractCommand::FileDiff {
+                    from_revision: "HEAD~1".into(),
+                    to_revision: "HEAD".into(),
+                    path: PathBuf::from("src/foo.rs"),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn extract_list_tree() {
+        let cli = parse(&[
+            "peer",
+            "extract",
+            "list-tree",
+            "HEAD",
+            "--path",
+            "src",
+            "--recursive",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Extract {
+                command: ExtractCommand::ListTree {
+                    revision: "HEAD".into(),
+                    path: Some(PathBuf::from("src")),
+                    recursive: true,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn extract_grep() {
+        let cli = parse(&[
+            "peer",
+            "extract",
+            "grep",
+            "HEAD",
+            "validate_token",
+            "--path",
+            "src",
+            "--context-lines",
+            "2",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Extract {
+                command: ExtractCommand::Grep {
+                    revision: "HEAD".into(),
+                    query: "validate_token".into(),
+                    path: Some(PathBuf::from("src")),
+                    context_lines: NonZeroU8::new(2).unwrap(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn extract_grep_defaults_to_two_context_lines() {
+        let cli = parse(&["peer", "extract", "grep", "HEAD", "query"]);
+
+        assert_matches!(
+            cli.command,
+            Command::Extract {
+                command: ExtractCommand::Grep {
+                    context_lines,
+                    ..
+                },
+            } if context_lines == NonZeroU8::new(2).unwrap()
+        );
+    }
+
+    #[test]
+    fn extract_grep_rejects_zero_context_lines() {
+        let result = Cli::try_parse_from([
+            "peer",
+            "extract",
+            "grep",
+            "HEAD",
+            "query",
+            "--context-lines",
+            "0",
+        ]);
+
+        assert!(result.is_err());
     }
 
     #[test]

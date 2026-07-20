@@ -243,3 +243,103 @@ fn file_content_returns_binary() {
         })
     );
 }
+
+#[test]
+fn file_diff_returns_one_file_between_revisions() {
+    let repo = Repo::new();
+    repo.commit(
+        &[("file.txt", b"before\n"), ("other.txt", b"unchanged\n")],
+        "initial",
+    );
+    std::fs::write(repo.path.join("file.txt"), "after\n").unwrap();
+    git(&repo.path, &["add", "file.txt"]);
+    git(
+        &repo.path,
+        &["commit", "--no-gpg-sign", "-m", "update file"],
+    );
+
+    let json = repo.extract(&["file-diff", "HEAD~1", "HEAD", "--path", "file.txt"]);
+
+    assert_eq!(json["command"], "file-diff");
+    assert_eq!(json["truncated"], false);
+    let diff = json["diff"].as_str().unwrap();
+    assert!(diff.contains("-before"));
+    assert!(diff.contains("+after"));
+    assert!(!diff.contains("other.txt"));
+}
+
+#[test]
+fn list_tree_returns_entries_at_the_requested_revision() {
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.path.join("src/nested")).unwrap();
+    repo.commit(
+        &[
+            ("src/lib.rs", b"pub fn run() {}\n"),
+            ("src/nested/mod.rs", b"pub mod inner;\n"),
+        ],
+        "add source tree",
+    );
+
+    let json = repo.extract(&["list-tree", "HEAD", "--path", "src", "--recursive"]);
+
+    assert_eq!(
+        json,
+        json!({
+            "command": "list-tree",
+            "entries": [
+                { "path": "src/lib.rs", "kind": "file" },
+                { "path": "src/nested", "kind": "directory" },
+                { "path": "src/nested/mod.rs", "kind": "file" }
+            ],
+            "truncated": false
+        })
+    );
+}
+
+#[test]
+fn grep_returns_matches_from_the_requested_revision() {
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.path.join("src")).unwrap();
+    repo.commit(
+        &[(
+            "src/auth.rs",
+            b"fn authenticate() {\n    validate_token();\n}\n",
+        )],
+        "add authentication",
+    );
+
+    let json = repo.extract(&[
+        "grep",
+        "HEAD",
+        "validate_token",
+        "--path",
+        "src",
+        "--context-lines",
+        "1",
+    ]);
+
+    assert_eq!(json["command"], "grep");
+    assert_eq!(json["truncated"], false);
+    assert!(
+        json["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line.as_str().unwrap().contains("validate_token"))
+    );
+}
+
+#[test]
+fn grep_returns_an_empty_result_when_there_is_no_match() {
+    let repo = Repo::new();
+    repo.commit(&[("file.txt", b"content\n")], "add file");
+
+    assert_eq!(
+        repo.extract(&["grep", "HEAD", "missing"]),
+        json!({
+            "command": "grep",
+            "lines": [],
+            "truncated": false
+        })
+    );
+}
