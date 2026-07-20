@@ -295,3 +295,51 @@ fn list_tree_returns_entries_at_the_requested_revision() {
         })
     );
 }
+
+#[test]
+fn grep_returns_matches_from_the_requested_revision() {
+    let repo = Repo::new();
+    std::fs::create_dir_all(repo.path.join("src")).unwrap();
+    repo.commit(
+        &[(
+            "src/auth.rs",
+            b"fn authenticate() {\n    validate_token();\n}\n",
+        )],
+        "add authentication",
+    );
+
+    let json = repo.extract(&[
+        "grep",
+        "HEAD",
+        "validate_token",
+        "--path",
+        "src",
+        "--context-lines",
+        "1",
+    ]);
+
+    assert_eq!(json["command"], "grep");
+    assert_eq!(json["truncated"], false);
+    assert!(
+        json["lines"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line.as_str().unwrap().contains("validate_token"))
+    );
+}
+
+#[test]
+fn grep_returns_an_empty_result_when_there_is_no_match() {
+    let repo = Repo::new();
+    repo.commit(&[("file.txt", b"content\n")], "add file");
+
+    assert_eq!(
+        repo.extract(&["grep", "HEAD", "missing"]),
+        json!({
+            "command": "grep",
+            "lines": [],
+            "truncated": false
+        })
+    );
+}
