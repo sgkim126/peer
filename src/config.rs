@@ -524,23 +524,23 @@ models = [
                     ProviderConfig {
                         name: "openai".into(),
                         api_key_env: "OPENAI_API_KEY".into(),
-                        default_model: "gpt-5.4-mini".into(),
+                        default_model: "gpt-5.6-luna".into(),
                         base_url: None,
                         models: vec![
                             ModelConfig {
-                                name: "gpt-5.5".into(),
+                                name: "gpt-5.6-sol".into(),
                                 input_per_1m_usd: 5.0,
                                 output_per_1m_usd: 30.0,
                             },
                             ModelConfig {
-                                name: "gpt-5.4".into(),
+                                name: "gpt-5.6-terra".into(),
                                 input_per_1m_usd: 2.5,
                                 output_per_1m_usd: 15.0,
                             },
                             ModelConfig {
-                                name: "gpt-5.4-mini".into(),
-                                input_per_1m_usd: 0.75,
-                                output_per_1m_usd: 4.5,
+                                name: "gpt-5.6-luna".into(),
+                                input_per_1m_usd: 1.0,
+                                output_per_1m_usd: 6.0,
                             },
                         ],
                     },
