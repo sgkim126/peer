@@ -9,7 +9,7 @@ max_iterations = 3
 
 # Per-check overrides. Any omitted check uses `[llm].max_iterations`.
 [checks.quality]
-max_iterations = 5
+max_iterations = 10
 
 [checks.security]
 max_iterations = 5
