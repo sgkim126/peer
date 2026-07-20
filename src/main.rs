@@ -410,20 +410,24 @@ mod tests {
             .resolve_provider(&config.llm.default_provider, None)
             .unwrap();
         assert_eq!(provider.name, "openai");
-        assert_eq!(model.name, "gpt-5.4-mini");
+        assert_eq!(model.name, "gpt-5.6-luna");
     }
 
     #[test]
     fn model_override_replaces_the_selected_providers_default_model() {
         let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
 
-        apply_llm_defaults(&mut config, Some("openai".into()), Some("gpt-5.4".into()));
+        apply_llm_defaults(
+            &mut config,
+            Some("openai".into()),
+            Some("gpt-5.6-terra".into()),
+        );
 
         let (provider, model) = config
-            .resolve_provider(&config.llm.default_provider, Some("gpt-5.4"))
+            .resolve_provider(&config.llm.default_provider, Some("gpt-5.6-terra"))
             .unwrap();
         assert_eq!(provider.name, "openai");
-        assert_eq!(model.name, "gpt-5.4");
+        assert_eq!(model.name, "gpt-5.6-terra");
     }
 
     fn success_outcome() -> CheckOutcome {
