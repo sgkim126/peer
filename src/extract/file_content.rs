@@ -2,7 +2,7 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{ExtractError, Extractor};
+use super::{ExtractError, Extractor, validate_repository_relative_path};
 use crate::git::{CommitHash, GitError, run_git_bytes};
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -30,6 +30,7 @@ impl Extractor {
             "extract file content: {revision} {}",
             path.display()
         ));
+        validate_repository_relative_path(path)?;
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
         // TODO: Normalize Windows path separators to `/` for Git tree paths.
         let path = path.to_string_lossy().into_owned();
@@ -167,5 +168,16 @@ mod tests {
             .await
             .unwrap_err();
         assert_matches!(err, ExtractError::Git { .. });
+    }
+
+    #[tokio::test]
+    async fn file_content_rejects_absolute_and_parent_paths() {
+        let extractor = Extractor::new(std::path::PathBuf::from("/unused"), Console::default());
+
+        for path in [Path::new("/tmp/file.rs"), Path::new("src/../file.rs")] {
+            let error = extractor.file_content("HEAD", path).await.unwrap_err();
+
+            assert_matches!(error, ExtractError::InvalidRepositoryRelativePath(_));
+        }
     }
 }
