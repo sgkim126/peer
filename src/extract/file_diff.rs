@@ -20,6 +20,10 @@ impl Extractor {
         to_revision: &str,
         path: &Path,
     ) -> Result<FileDiff, ExtractError> {
+        self.debug(format_args!(
+            "extract file diff: {from_revision}..{to_revision} {}",
+            path.display()
+        ));
         validate_repository_relative_path(path)?;
         let from = CommitHash::resolve(from_revision, &self.project_root, self.console).await?;
         let to = CommitHash::resolve(to_revision, &self.project_root, self.console).await?;
