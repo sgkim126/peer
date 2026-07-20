@@ -4,8 +4,9 @@ mod commit_list;
 mod commit_message;
 mod error;
 mod file_content;
+mod file_diff;
 
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -19,6 +20,7 @@ pub use self::commit_list::CommitList;
 pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
 pub use self::file_content::FileContent;
+pub use self::file_diff::FileDiff;
 
 /// Provides the programmatic entry point to repository extraction.
 pub struct Extractor {
@@ -43,6 +45,7 @@ pub enum ExtractData {
     CommitList(CommitList),
     CommitMessage(CommitMessage),
     FileContent(FileContent),
+    FileDiff(FileDiff),
 }
 
 pub async fn handler(
@@ -68,5 +71,28 @@ pub async fn handler(
         ExtractCommand::FileContent { revision, path } => {
             ExtractData::FileContent(extractor.file_content(revision, path).await?)
         }
+        ExtractCommand::FileDiff {
+            from_revision,
+            to_revision,
+            path,
+        } => ExtractData::FileDiff(
+            extractor
+                .file_diff(from_revision, to_revision, path)
+                .await?,
+        ),
     })
+}
+
+fn validate_repository_relative_path(path: &Path) -> Result<(), ExtractError> {
+    if path.is_absolute()
+        || path
+            .components()
+            .any(|component| matches!(component, Component::ParentDir))
+    {
+        return Err(ExtractError::InvalidRepositoryRelativePath(
+            path.to_path_buf(),
+        ));
+    }
+
+    Ok(())
 }

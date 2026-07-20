@@ -1,4 +1,5 @@
 use std::fmt;
+use std::path::PathBuf;
 
 use crate::git::GitError;
 
@@ -6,6 +7,7 @@ use crate::git::GitError;
 pub enum ExtractError {
     Git(GitError),
     InvalidTwoDotRange(String),
+    InvalidRepositoryRelativePath(PathBuf),
     MalformedGitOutput(String),
 }
 
@@ -17,6 +19,9 @@ impl fmt::Display for ExtractError {
             }
             Self::InvalidTwoDotRange(range) => {
                 write!(f, "{range} is not a two-dot range")
+            }
+            Self::InvalidRepositoryRelativePath(path) => {
+                write!(f, "{} is not a repository-relative path", path.display())
             }
             Self::MalformedGitOutput(message) => {
                 write!(f, "git produced malformed output: {message}")
@@ -30,6 +35,7 @@ impl std::error::Error for ExtractError {
         match self {
             Self::Git(source) => Some(source),
             Self::InvalidTwoDotRange(_) => None,
+            Self::InvalidRepositoryRelativePath(_) => None,
             Self::MalformedGitOutput(_) => None,
         }
     }

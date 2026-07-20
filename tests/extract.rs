@@ -243,3 +243,27 @@ fn file_content_returns_binary() {
         })
     );
 }
+
+#[test]
+fn file_diff_returns_one_file_between_revisions() {
+    let repo = Repo::new();
+    repo.commit(
+        &[("file.txt", b"before\n"), ("other.txt", b"unchanged\n")],
+        "initial",
+    );
+    std::fs::write(repo.path.join("file.txt"), "after\n").unwrap();
+    git(&repo.path, &["add", "file.txt"]);
+    git(
+        &repo.path,
+        &["commit", "--no-gpg-sign", "-m", "update file"],
+    );
+
+    let json = repo.extract(&["file-diff", "HEAD~1", "HEAD", "--path", "file.txt"]);
+
+    assert_eq!(json["command"], "file-diff");
+    assert_eq!(json["truncated"], false);
+    let diff = json["diff"].as_str().unwrap();
+    assert!(diff.contains("-before"));
+    assert!(diff.contains("+after"));
+    assert!(!diff.contains("other.txt"));
+}

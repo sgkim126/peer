@@ -62,6 +62,12 @@ pub enum ExtractCommand {
         #[arg(long)]
         path: PathBuf,
     },
+    FileDiff {
+        from_revision: String,
+        to_revision: String,
+        #[arg(long)]
+        path: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Debug, PartialEq)]
@@ -209,6 +215,30 @@ mod tests {
             Command::Extract {
                 command: ExtractCommand::FileContent {
                     revision: "abc123".into(),
+                    path: PathBuf::from("src/foo.rs"),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn extract_file_diff() {
+        let cli = parse(&[
+            "peer",
+            "extract",
+            "file-diff",
+            "HEAD~1",
+            "HEAD",
+            "--path",
+            "src/foo.rs",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Extract {
+                command: ExtractCommand::FileDiff {
+                    from_revision: "HEAD~1".into(),
+                    to_revision: "HEAD".into(),
                     path: PathBuf::from("src/foo.rs"),
                 },
             }
