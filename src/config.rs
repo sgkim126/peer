@@ -293,7 +293,7 @@ mod tests {
                     size: CheckConfig::default(),
                     intent: CheckConfig::default(),
                     quality: CheckConfig {
-                        max_iterations: Some(5),
+                        max_iterations: Some(10),
                     },
                     security: CheckConfig {
                         max_iterations: Some(5),
