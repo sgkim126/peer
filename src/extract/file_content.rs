@@ -26,6 +26,10 @@ impl Extractor {
         revision: &str,
         path: &Path,
     ) -> Result<FileContent, ExtractError> {
+        self.debug(format_args!(
+            "extract file content: {revision} {}",
+            path.display()
+        ));
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
         // TODO: Normalize Windows path separators to `/` for Git tree paths.
         let path = path.to_string_lossy().into_owned();

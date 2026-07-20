@@ -22,6 +22,9 @@ impl Extractor {
         path: Option<&Path>,
         context_lines: NonZeroU8,
     ) -> Result<GrepResult, ExtractError> {
+        self.debug(format_args!(
+            "extract grep: {revision} query={query:?} path={path:?} context_lines={context_lines}"
+        ));
         validate_grep_arguments(query, context_lines)?;
         if let Some(path) = path {
             validate_repository_relative_path(path)?;

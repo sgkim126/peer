@@ -132,6 +132,7 @@ fn parse_binary_paths(numstat: &str, console: Console) -> Result<HashSet<&str>, 
 
 impl Extractor {
     pub async fn commit_files(&self, revision: &str) -> Result<CommitFiles, ExtractError> {
+        self.debug(format_args!("extract commit files: {revision}"));
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
 
         let name_status_out = run_git(
