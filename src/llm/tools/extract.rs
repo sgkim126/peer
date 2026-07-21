@@ -28,7 +28,6 @@ pub fn get_commit_message() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn get_commit_diff() -> ToolSpec {
     ToolSpec {
         name: "get_commit_diff".to_string(),
