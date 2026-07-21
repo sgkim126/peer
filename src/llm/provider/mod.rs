@@ -27,14 +27,12 @@ pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
 /// The agent deliberately keeps provider request construction separate from
 /// transport.  This wrapper gives command handlers one value to construct
 /// from configuration while preserving that split internally.
-#[expect(dead_code)]
 pub struct ProviderRuntime {
     provider: Provider,
     transport: ProviderHttpClient,
 }
 
 impl ProviderRuntime {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn try_new(
         name: &str,
         api_key_env: &str,
@@ -61,7 +59,6 @@ impl ProviderRuntime {
         })
     }
 
-    #[expect(dead_code)]
     pub fn into_parts(self) -> (Provider, ProviderHttpClient) {
         (self.provider, self.transport)
     }
@@ -188,7 +185,6 @@ pub struct Response {
     pub body: Value,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub trait LlmTransport {
     async fn send(&self, request: Request) -> Result<Response, LlmCallError>;
 }
@@ -199,7 +195,6 @@ impl LlmTransport for ProviderHttpClient {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub trait LlmProvider {
     fn build_request(
         &self,

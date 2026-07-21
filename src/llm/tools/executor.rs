@@ -5,11 +5,9 @@ use futures_util::future::join_all;
 use crate::extract::ExtractError;
 use crate::llm::provider::ToolCall;
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub type ToolExecutionResult = Result<serde_json::Value, ToolExecutionError>;
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum ToolExecutionError {
     UnknownTool {
         name: String,
@@ -58,7 +56,6 @@ impl From<serde_json::Error> for ToolExecutionError {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub trait ToolExecutor {
     async fn execute(&self, call: ToolCall) -> ToolExecutionResult;
 

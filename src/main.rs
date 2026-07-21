@@ -69,7 +69,35 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Check { .. } => unimplemented!(),
+        Command::Check { command } => {
+            let cwd = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(error) => {
+                    eprintln!("cannot determine current directory: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let result = match discover(&cwd) {
+                Ok((config, project_root)) => {
+                    check::handler(console, command, &config, project_root).await
+                }
+                Err(error) => Err(check::CheckCommandError::Config(error)),
+            };
+            match result {
+                Ok(result) => {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&result).expect("check result serializes")
+                    );
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Render { .. } => unimplemented!(),
     }
 }

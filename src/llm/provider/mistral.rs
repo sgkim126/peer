@@ -12,14 +12,12 @@ use crate::secret::Secret;
 const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct MistralProvider {
     api_key: Secret,
     base_url: String,
 }
 
 impl MistralProvider {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_env(api_key_env: &str, base_url: Option<&str>) -> Result<Self, LlmCallError> {
         let api_key = Secret::from_env(api_key_env).map_err(|error| LlmCallError::Permanent {
             message: format!("cannot read {api_key_env}"),

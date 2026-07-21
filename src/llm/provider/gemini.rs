@@ -13,14 +13,12 @@ const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-goog-api-key");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct GeminiProvider {
     api_key: Secret,
     base_url: String,
 }
 
 impl GeminiProvider {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_env(api_key_env: &str, base_url: Option<&str>) -> Result<Self, LlmCallError> {
         let api_key = Secret::from_env(api_key_env).map_err(|error| LlmCallError::Permanent {
             message: format!("cannot read {api_key_env}"),

@@ -9,7 +9,6 @@ use crate::llm::tools::ExtractToolExecutor;
 
 use super::CheckDefinition;
 
-#[expect(dead_code)]
 pub struct CheckRunConfig {
     pub model: String,
     pub max_iterations: u32,
@@ -39,7 +38,6 @@ impl fmt::Display for CheckRunError {
 }
 impl std::error::Error for CheckRunError {}
 
-#[expect(dead_code)]
 pub struct Checker {
     extractor: Extractor,
     runtime: ProviderRuntime,
@@ -47,7 +45,6 @@ pub struct Checker {
 }
 
 impl Checker {
-    #[expect(dead_code)]
     pub fn new(extractor: Extractor, runtime: ProviderRuntime, config: CheckRunConfig) -> Self {
         Self {
             extractor,
@@ -56,7 +53,6 @@ impl Checker {
         }
     }
 
-    #[expect(dead_code)]
     pub async fn run<C>(self, check: &C) -> Result<CheckResult, CheckRunError>
     where
         C: CheckDefinition,

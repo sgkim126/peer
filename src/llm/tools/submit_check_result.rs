@@ -2,7 +2,6 @@ use serde_json::json;
 
 use crate::llm::provider::ToolSpec;
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn submit_check_result() -> ToolSpec {
     ToolSpec {
         name: "submit_check_result".to_string(),

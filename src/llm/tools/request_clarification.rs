@@ -2,7 +2,6 @@ use serde_json::json;
 
 use crate::llm::provider::ToolSpec;
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn request_clarification() -> ToolSpec {
     ToolSpec {
         name: "request_clarification".to_string(),
