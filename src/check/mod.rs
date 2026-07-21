@@ -1,6 +1,7 @@
 mod intent;
 mod quality;
 pub mod runner;
+mod security;
 mod size;
 
 use std::fmt;
@@ -16,7 +17,7 @@ use crate::llm::provider::{ProviderCreationError, ProviderRuntime};
 use crate::llm::result::CheckTarget;
 use runner::{CheckRunConfig, CheckRunError, Checker};
 
-use self::{intent::IntentCheck, quality::QualityCheck, size::SizeCheck};
+use self::{intent::IntentCheck, quality::QualityCheck, security::SecurityCheck, size::SizeCheck};
 
 pub trait CheckDefinition {
     fn name(&self) -> &'static str;
@@ -98,6 +99,9 @@ pub async fn handler(
         CheckCommand::Quality { revision } => {
             Check::Quality(QualityCheck::try_new(&revision, &extractor).await?)
         }
+        CheckCommand::Security { revision } => {
+            Check::Security(SecurityCheck::try_new(&revision, &extractor).await?)
+        }
         _ => unimplemented!(),
     };
     let (provider_config, model_config) =
@@ -128,6 +132,7 @@ enum Check {
     Size(SizeCheck),
     Intent(IntentCheck),
     Quality(QualityCheck),
+    Security(SecurityCheck),
 }
 
 impl CheckDefinition for Check {
@@ -136,6 +141,7 @@ impl CheckDefinition for Check {
             Self::Size(check) => check.name(),
             Self::Intent(check) => check.name(),
             Self::Quality(check) => check.name(),
+            Self::Security(check) => check.name(),
         }
     }
 
@@ -144,6 +150,7 @@ impl CheckDefinition for Check {
             Self::Size(check) => check.target(),
             Self::Intent(check) => check.target(),
             Self::Quality(check) => check.target(),
+            Self::Security(check) => check.target(),
         }
     }
 
@@ -152,6 +159,7 @@ impl CheckDefinition for Check {
             Self::Size(check) => check.expected_commits(),
             Self::Intent(check) => check.expected_commits(),
             Self::Quality(check) => check.expected_commits(),
+            Self::Security(check) => check.expected_commits(),
         }
     }
 
@@ -164,6 +172,7 @@ impl CheckDefinition for Check {
             Self::Size(check) => check.agent_request(extractor, model).await,
             Self::Intent(check) => check.agent_request(extractor, model).await,
             Self::Quality(check) => check.agent_request(extractor, model).await,
+            Self::Security(check) => check.agent_request(extractor, model).await,
         }
     }
 }
