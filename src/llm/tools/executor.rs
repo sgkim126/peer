@@ -1,5 +1,7 @@
 use std::fmt;
 
+use futures_util::future::join_all;
+
 use crate::extract::ExtractError;
 use crate::llm::provider::ToolCall;
 
@@ -61,12 +63,11 @@ pub trait ToolExecutor {
     async fn execute(&self, call: ToolCall) -> ToolExecutionResult;
 
     async fn execute_all(&self, calls: Vec<ToolCall>) -> Vec<(String, ToolExecutionResult)> {
-        let mut results = Vec::with_capacity(calls.len());
-        for call in calls {
+        join_all(calls.into_iter().map(|call| async {
             let call_id = call.id.clone();
-            results.push((call_id, self.execute(call).await));
-        }
-        results
+            (call_id, self.execute(call).await)
+        }))
+        .await
     }
 }
 
