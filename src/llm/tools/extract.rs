@@ -102,7 +102,6 @@ pub fn get_file_content() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn get_file_diff() -> ToolSpec {
     ToolSpec {
         name: "get_file_diff".to_string(),
@@ -128,7 +127,6 @@ pub fn get_file_diff() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn list_tree() -> ToolSpec {
     ToolSpec {
         name: "list_tree".to_string(),
@@ -154,7 +152,6 @@ pub fn list_tree() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn grep() -> ToolSpec {
     ToolSpec {
         name: "grep".to_string(),
