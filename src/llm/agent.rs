@@ -46,10 +46,18 @@ pub struct AgentClarification {
     pub iterations: u32,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
+pub struct AgentFailure {
+    pub error: LlmCallError,
+    pub usage: RawUsage,
+    pub iterations: u32,
+}
+
+#[derive(Debug)]
 pub enum AgentOutcome {
     Completed(AgentCompletion),
     ClarificationRequested(AgentClarification),
+    Error(AgentFailure),
 }
 
 impl<P, T, E> Agent<P, T, E>
@@ -67,11 +75,7 @@ where
         }
     }
 
-    pub async fn run_loop(
-        &self,
-        request: AgentRequest,
-        max_iterations: u32,
-    ) -> Result<AgentOutcome, LlmCallError> {
+    pub async fn run_loop(&self, request: AgentRequest, max_iterations: u32) -> AgentOutcome {
         let clarification_tool_name = request_clarification().name;
         let submit_result_tool_name = submit_check_result().name;
         let terminal_tools = terminal_tools(
@@ -88,16 +92,25 @@ where
             } else {
                 &request.tools
             };
-            let http_request = self.provider.build_request(
+            let http_request = match self.provider.build_request(
                 LlmRequest {
                     model: &request.model,
                     conversation: &conversation,
                     tools,
                 },
                 is_last_request,
-            )?;
-            let response = self.transport.send(http_request).await?;
-            let result = self.provider.parse_response(response)?;
+            ) {
+                Ok(http_request) => http_request,
+                Err(error) => return error_outcome(error, usage, iteration),
+            };
+            let response = match self.transport.send(http_request).await {
+                Ok(response) => response,
+                Err(error) => return error_outcome(error, usage, iteration),
+            };
+            let result = match self.provider.parse_response(response) {
+                Ok(result) => result,
+                Err(error) => return error_outcome(error, usage, iteration),
+            };
             usage += result.usage;
 
             let LlmResponse::ToolCalls(tool_calls) = result.response;
@@ -117,40 +130,54 @@ where
                 .iter()
                 .find(|tool_call| tool_call.name == clarification_tool_name)
             {
-                return Ok(AgentOutcome::ClarificationRequested(AgentClarification {
-                    questions: parse_clarification_questions(tool_call)?,
+                let questions = match parse_clarification_questions(tool_call) {
+                    Ok(questions) => questions,
+                    Err(error) => return error_outcome(error, usage, iteration),
+                };
+                return AgentOutcome::ClarificationRequested(AgentClarification {
+                    questions,
                     usage,
                     iterations: iteration,
-                }));
+                });
             }
 
             if let Some(tool_call) = tool_calls
                 .iter()
                 .find(|tool_call| tool_call.name == submit_result_tool_name)
             {
-                let output =
-                    serde_json::from_value(tool_call.arguments.clone()).map_err(|error| {
-                        permanent_error(
-                            format!("invalid submit_check_result arguments: {error}"),
-                            AgentError::InvalidCheckOutput { source: error },
-                        )
-                    })?;
+                let output = match serde_json::from_value(tool_call.arguments.clone()) {
+                    Ok(output) => output,
+                    Err(error) => {
+                        return error_outcome(
+                            permanent_error(
+                                format!("invalid submit_check_result arguments: {error}"),
+                                AgentError::InvalidCheckOutput { source: error },
+                            ),
+                            usage,
+                            iteration,
+                        );
+                    }
+                };
 
-                return Ok(AgentOutcome::Completed(AgentCompletion {
+                return AgentOutcome::Completed(AgentCompletion {
                     output,
                     usage,
                     iterations: iteration,
-                }));
+                });
             }
 
             if is_last_request {
-                return Err(permanent_error(
-                    format!(
-                        "LLM agent did not submit a check result within {} iterations",
-                        max_iterations
+                return error_outcome(
+                    permanent_error(
+                        format!(
+                            "LLM agent did not submit a check result within {} iterations",
+                            max_iterations
+                        ),
+                        AgentError::LoopExhausted,
                     ),
-                    AgentError::LoopExhausted,
-                ));
+                    usage,
+                    iteration,
+                );
             }
 
             conversation.push(ConversationTurn::AssistantToolCalls(tool_calls.clone()));
@@ -163,13 +190,17 @@ where
                 });
             }
         }
-        Err(permanent_error(
-            format!(
-                "LLM agent did not submit a check result within {} iterations",
-                max_iterations
+        error_outcome(
+            permanent_error(
+                format!(
+                    "LLM agent did not submit a check result within {} iterations",
+                    max_iterations
+                ),
+                AgentError::LoopExhausted,
             ),
-            AgentError::LoopExhausted,
-        ))
+            usage,
+            max_iterations,
+        )
     }
 }
 
@@ -218,6 +249,14 @@ fn permanent_error(message: String, source: AgentError) -> LlmCallError {
         message,
         source: Box::new(source),
     }
+}
+
+fn error_outcome(error: LlmCallError, usage: RawUsage, iterations: u32) -> AgentOutcome {
+    AgentOutcome::Error(AgentFailure {
+        error,
+        usage,
+        iterations,
+    })
 }
 
 #[derive(Debug)]
@@ -364,7 +403,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
-        let outcome = agent.run_loop(request(tools), 2).await.unwrap();
+        let outcome = agent.run_loop(request(tools), 2).await;
 
         let AgentOutcome::Completed(result) = outcome else {
             panic!("expected completed outcome");
@@ -372,6 +411,31 @@ mod tests {
         assert_eq!(result.output.summary, "done");
         assert_eq!(result.usage.input_tokens, 10);
         assert_eq!(result.iterations, 1);
+    }
+
+    #[tokio::test]
+    async fn returns_usage_with_invalid_check_output() {
+        let provider =
+            MockProvider::new([Ok(call_result(LlmResponse::ToolCalls(vec![tool_call(
+                "call-submit",
+                &submit_check_result().name,
+                json!({ "findings": [{}] }),
+            )])))]);
+        let transport = TestTransport::new([Ok(response())]);
+        let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
+
+        let outcome = agent.run_loop(request(tools()), 2).await;
+
+        let AgentOutcome::Error(failure) = outcome else {
+            panic!("expected error outcome");
+        };
+        assert_eq!(
+            failure.error.to_string(),
+            "permanent LLM call failure: invalid submit_check_result arguments: missing field `commit`"
+        );
+        assert_eq!(failure.usage.input_tokens, 10);
+        assert_eq!(failure.usage.output_tokens, 5);
+        assert_eq!(failure.iterations, 1);
     }
 
     #[tokio::test]
@@ -392,7 +456,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, FailingToolExecutor, Console::default());
-        let outcome = agent.run_loop(request(tools), 2).await.unwrap();
+        let outcome = agent.run_loop(request(tools), 2).await;
 
         let AgentOutcome::ClarificationRequested(clarification) = outcome else {
             panic!("expected clarification outcome");
@@ -424,7 +488,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
-        agent.run_loop(request(tools), 3).await.unwrap();
+        agent.run_loop(request(tools), 3).await;
 
         let requests = agent.provider.requests();
         assert_eq!(requests.len(), 2);
@@ -462,7 +526,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
-        agent.run_loop(request(tools), 2).await.unwrap();
+        agent.run_loop(request(tools), 2).await;
 
         let requests = agent.provider.requests();
         assert!(requests[1].is_last_request);
@@ -494,7 +558,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, FailingToolExecutor, Console::default());
-        agent.run_loop(request(tools), 3).await.unwrap();
+        agent.run_loop(request(tools), 3).await;
 
         let ConversationTurn::ToolResult { result, .. } =
             &agent.provider.requests()[1].conversation[1]
