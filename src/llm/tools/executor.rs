@@ -59,6 +59,15 @@ impl From<serde_json::Error> for ToolExecutionError {
 #[cfg_attr(not(test), expect(dead_code))]
 pub trait ToolExecutor {
     async fn execute(&self, call: ToolCall) -> ToolExecutionResult;
+
+    async fn execute_all(&self, calls: Vec<ToolCall>) -> Vec<(String, ToolExecutionResult)> {
+        let mut results = Vec::with_capacity(calls.len());
+        for call in calls {
+            let call_id = call.id.clone();
+            results.push((call_id, self.execute(call).await));
+        }
+        results
+    }
 }
 
 #[cfg(test)]
@@ -92,6 +101,39 @@ mod tests {
         let result = EchoToolExecutor.execute(call).await.unwrap();
 
         assert_eq!(result, arguments);
+    }
+
+    #[tokio::test]
+    async fn execute_all_returns_results_with_call_ids() {
+        let executor = EchoToolExecutor;
+        let results = executor
+            .execute_all(vec![
+                ToolCall {
+                    id: "call-1".to_string(),
+                    name: "get_commit_diff".to_string(),
+                    arguments: json!({ "revision": "HEAD" }),
+                    provider_state: None,
+                },
+                ToolCall {
+                    id: "call-2".to_string(),
+                    name: "get_commit_diff".to_string(),
+                    arguments: json!({ "revision": "HEAD~1" }),
+                    provider_state: None,
+                },
+            ])
+            .await;
+
+        assert_eq!(results.len(), 2);
+        assert_eq!(results[0].0, "call-1");
+        assert_eq!(
+            results[0].1.as_ref().unwrap(),
+            &json!({ "revision": "HEAD" })
+        );
+        assert_eq!(results[1].0, "call-2");
+        assert_eq!(
+            results[1].1.as_ref().unwrap(),
+            &json!({ "revision": "HEAD~1" })
+        );
     }
 
     #[test]

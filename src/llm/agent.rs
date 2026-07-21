@@ -181,9 +181,7 @@ where
             }
 
             conversation.push(ConversationTurn::AssistantToolCalls(tool_calls.clone()));
-            for tool_call in tool_calls {
-                let call_id = tool_call.id.clone();
-                let result = self.tool_executor.execute(tool_call).await;
+            for (call_id, result) in self.tool_executor.execute_all(tool_calls).await {
                 conversation.push(ConversationTurn::ToolResult {
                     call_id,
                     result: tool_result_json(result),
