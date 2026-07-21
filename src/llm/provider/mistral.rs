@@ -199,7 +199,7 @@ fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> 
         id,
         name,
         arguments,
-        thought_signature: None,
+        provider_state: None,
     })
 }
 
@@ -413,7 +413,7 @@ mod tests {
                 arguments: json!({
                     "hash": "abc1234"
                 }),
-                thought_signature: None,
+                provider_state: None,
             }]),
             ConversationTurn::ToolResult {
                 call_id: "call-1".to_string(),
@@ -513,7 +513,7 @@ mod tests {
                 "hash": "abc1234"
             })
         );
-        assert_eq!(tool_calls[0].thought_signature, None);
+        assert_eq!(tool_calls[0].provider_state, None);
     }
 
     #[test]

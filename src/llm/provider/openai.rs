@@ -58,7 +58,7 @@ impl LlmProvider for OpenAiProvider {
         headers.insert(AUTHORIZATION, authorization);
 
         Ok(Request {
-            url: format!("{}/v1/chat/completions", self.base_url),
+            url: format!("{}/v1/responses", self.base_url),
             headers,
             body: request_body(request, is_last_request)?,
         })
@@ -77,15 +77,50 @@ fn request_body(
     request: LlmRequest<'_>,
     is_last_request: bool,
 ) -> Result<serde_json::Value, LlmCallError> {
-    let messages = request
-        .conversation
-        .iter()
-        .map(message)
-        .collect::<Result<Vec<_>, _>>()?;
+    let mut input = Vec::new();
+    for turn in request.conversation {
+        match turn {
+            ConversationTurn::System(content) => {
+                input.push(json!({ "role": "system", "content": content }))
+            }
+            ConversationTurn::User(content) => {
+                input.push(json!({ "role": "user", "content": content }))
+            }
+            ConversationTurn::AssistantToolCalls(tool_calls) => {
+                if let Some(tool_call) = tool_calls.first() {
+                    let reasoning_items = match provider_state(tool_call)? {
+                        Some(provider_state) => {
+                            let error =
+                                invalid_provider_state(tool_call, "missing reasoning array");
+                            provider_state
+                                .get("reasoning")
+                                .and_then(serde_json::Value::as_array)
+                                .cloned()
+                                .ok_or(error)?
+                        }
+                        None => Vec::new(),
+                    };
+                    input.extend(reasoning_items);
+                }
+                input.extend(
+                    tool_calls
+                        .iter()
+                        .map(function_call)
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+            }
+            ConversationTurn::ToolResult { call_id, result } => input.push(json!({
+                "type": "function_call_output",
+                "call_id": call_id,
+                "output": result.to_string(),
+            })),
+        }
+    }
+
     let tools: Vec<_> = request.tools.iter().map(tool).collect();
     let mut body = json!({
         "model": request.model,
-        "messages": messages,
+        "input": input,
         "tools": tools,
         "tool_choice": "required",
     });
@@ -96,68 +131,93 @@ fn request_body(
     Ok(body)
 }
 
-fn message(turn: &ConversationTurn) -> Result<serde_json::Value, LlmCallError> {
-    match turn {
-        ConversationTurn::System(content) => Ok(json!({
-            "role": "system",
-            "content": content,
-        })),
-        ConversationTurn::User(content) => Ok(json!({
-            "role": "user",
-            "content": content,
-        })),
-        ConversationTurn::AssistantToolCalls(tool_calls) => Ok(json!({
-            "role": "assistant",
-            "content": null,
-            "tool_calls": tool_calls
-                .iter()
-                .map(tool_call)
-                .collect::<Result<Vec<_>, _>>()?,
-        })),
-        ConversationTurn::ToolResult { call_id, result } => Ok(json!({
-            "role": "tool",
-            "tool_call_id": call_id,
-            "content": result.to_string(),
-        })),
-    }
-}
-
 fn tool(spec: &ToolSpec) -> serde_json::Value {
     json!({
         "type": "function",
-        "function": {
-            "name": spec.name,
-            "description": spec.description,
-            "parameters": spec.parameters,
-        },
+        "name": spec.name,
+        "description": spec.description,
+        "parameters": spec.parameters,
+        "strict": false,
     })
 }
 
-fn tool_call(tool_call: &ToolCall) -> Result<serde_json::Value, LlmCallError> {
-    Ok(json!({
-        "id": tool_call.id,
-        "type": "function",
-        "function": {
+fn function_call(tool_call: &ToolCall) -> Result<serde_json::Value, LlmCallError> {
+    let Some(provider_state) = provider_state(tool_call)? else {
+        return Ok(json!({
+            "type": "function_call",
+            "call_id": tool_call.id,
             "name": tool_call.name,
-            "arguments": serde_json::to_string(&tool_call.arguments).map_err(|error| {
-                LlmCallError::Permanent {
-                    message: format!("failed to encode tool call arguments: {error}"),
-                    source: Box::new(error),
-                }
-            })?,
-        },
-    }))
+            "arguments": tool_call.arguments.to_string(),
+        }));
+    };
+
+    let error = invalid_provider_state(tool_call, "missing function_call item");
+    let function_call = provider_state.get("function_call").cloned().ok_or(error)?;
+    if function_call
+        .get("type")
+        .and_then(serde_json::Value::as_str)
+        != Some("function_call")
+        || function_call
+            .get("call_id")
+            .and_then(serde_json::Value::as_str)
+            != Some(tool_call.id.as_str())
+    {
+        return Err(invalid_provider_state(
+            tool_call,
+            "function_call item does not match tool call",
+        ));
+    }
+
+    Ok(function_call)
+}
+
+fn provider_state(tool_call: &ToolCall) -> Result<Option<serde_json::Value>, LlmCallError> {
+    tool_call
+        .provider_state
+        .as_deref()
+        .map(|state| {
+            serde_json::from_str(state).map_err(|error| LlmCallError::Permanent {
+                message: format!(
+                    "invalid provider_state JSON for tool call {}: {error}",
+                    tool_call.id
+                ),
+                source: Box::new(error),
+            })
+        })
+        .transpose()
+}
+
+fn invalid_provider_state(tool_call: &ToolCall, message: &str) -> LlmCallError {
+    permanent_parse_error(format!(
+        "invalid provider_state for tool call {}: {message}",
+        tool_call.id
+    ))
 }
 
 fn parse_success(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError> {
-    let message = body
-        .pointer("/choices/0/message")
-        .ok_or(permanent_parse_error("missing choices[0].message"))?;
+    let output = body
+        .get("output")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(permanent_parse_error("missing output array"))?;
     let usage = RawUsage {
-        input_tokens: required_u64(body, "/usage/prompt_tokens")?,
-        output_tokens: required_u64(body, "/usage/completion_tokens")?,
+        input_tokens: required_u64(body, "/usage/input_tokens")?,
+        output_tokens: required_u64(body, "/usage/output_tokens")?,
     };
-    let tool_calls = parse_tool_calls(message)?;
+    let reasoning = output
+        .iter()
+        .filter(|item| item.get("type").and_then(serde_json::Value::as_str) == Some("reasoning"))
+        .cloned()
+        .collect::<Vec<_>>();
+    let tool_calls = output
+        .iter()
+        .filter(|item| {
+            item.get("type").and_then(serde_json::Value::as_str) == Some("function_call")
+        })
+        .map(|item| parse_tool_call(item, &reasoning))
+        .collect::<Result<Vec<_>, _>>()?;
+    if tool_calls.is_empty() {
+        return Err(permanent_parse_error("missing function_call item"));
+    }
 
     Ok(LlmCallResult {
         response: LlmResponse::ToolCalls(tool_calls),
@@ -165,30 +225,13 @@ fn parse_success(body: &serde_json::Value) -> Result<LlmCallResult, LlmCallError
     })
 }
 
-fn parse_tool_calls(message: &serde_json::Value) -> Result<Vec<ToolCall>, LlmCallError> {
-    let tool_calls = message
-        .get("tool_calls")
-        .and_then(serde_json::Value::as_array)
-        .ok_or(permanent_parse_error(
-            "missing choices[0].message.tool_calls",
-        ))?
-        .iter()
-        .map(parse_tool_call)
-        .collect::<Result<Vec<_>, _>>()?;
-
-    if tool_calls.is_empty() {
-        return Err(permanent_parse_error(
-            "choices[0].message.tool_calls is empty",
-        ));
-    }
-
-    Ok(tool_calls)
-}
-
-fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> {
-    let id = required_string(value, "/id")?.to_string();
-    let name = required_string(value, "/function/name")?.to_string();
-    let arguments = required_string(value, "/function/arguments")?;
+fn parse_tool_call(
+    value: &serde_json::Value,
+    reasoning: &[serde_json::Value],
+) -> Result<ToolCall, LlmCallError> {
+    let id = required_string(value, "/call_id")?.to_string();
+    let name = required_string(value, "/name")?.to_string();
+    let arguments = required_string(value, "/arguments")?;
     let arguments = serde_json::from_str(arguments).map_err(|error| LlmCallError::Permanent {
         message: format!("failed to parse tool call arguments for {name}"),
         source: Box::new(error),
@@ -198,7 +241,7 @@ fn parse_tool_call(value: &serde_json::Value) -> Result<ToolCall, LlmCallError> 
         id,
         name,
         arguments,
-        thought_signature: None,
+        provider_state: Some(json!({ "reasoning": reasoning, "function_call": value }).to_string()),
     })
 }
 
@@ -342,7 +385,7 @@ mod tests {
     }
 
     #[test]
-    fn builds_request_with_auth_messages_and_tools() {
+    fn builds_responses_request_with_auth_input_and_tools() {
         let tools = [
             ToolSpec {
                 name: "commit_diff".to_string(),
@@ -375,19 +418,17 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(
-            request.url,
-            "https://openai.example.test/v1/chat/completions"
-        );
+        assert_eq!(request.url, "https://openai.example.test/v1/responses");
         assert_eq!(request.headers[AUTHORIZATION], "Bearer test-api-key");
         assert!(request.headers[AUTHORIZATION].is_sensitive());
         assert_eq!(request.body["model"], "gpt-4.1");
-        assert_eq!(request.body["messages"][0]["role"], "system");
-        assert_eq!(request.body["messages"][0]["content"], "You review code.");
-        assert_eq!(request.body["messages"][1]["role"], "user");
+        assert_eq!(request.body["input"][0]["role"], "system");
+        assert_eq!(request.body["input"][0]["content"], "You review code.");
+        assert_eq!(request.body["input"][1]["role"], "user");
         assert_eq!(request.body["tools"].as_array().unwrap().len(), tools.len());
-        assert_eq!(request.body["tools"][0]["function"]["name"], "commit_diff");
-        assert_eq!(request.body["tools"][1]["function"]["name"], "test_tool");
+        assert_eq!(request.body["tools"][0]["name"], "commit_diff");
+        assert_eq!(request.body["tools"][1]["name"], "test_tool");
+        assert_eq!(request.body["tools"][0]["strict"], false);
         assert_eq!(request.body["tool_choice"], "required");
         assert!(request.body.get("response_format").is_none());
     }
@@ -420,7 +461,7 @@ mod tests {
                 arguments: json!({
                     "hash": "abc1234"
                 }),
-                thought_signature: None,
+                provider_state: None,
             }]),
             ConversationTurn::ToolResult {
                 call_id: "call-1".to_string(),
@@ -441,18 +482,72 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(request.body["messages"][0]["role"], "assistant");
+        assert_eq!(request.body["input"][0]["type"], "function_call");
+        assert_eq!(request.body["input"][0]["call_id"], "call-1");
         assert_eq!(
-            request.body["messages"][0]["tool_calls"][0]["function"]["arguments"],
+            request.body["input"][0]["arguments"],
             "{\"hash\":\"abc1234\"}"
         );
-        assert_eq!(request.body["messages"][1]["role"], "tool");
-        assert_eq!(request.body["messages"][1]["tool_call_id"], "call-1");
-        assert_eq!(
-            request.body["messages"][1]["content"],
-            "{\"diff\":\"+hello\"}"
-        );
+        assert_eq!(request.body["input"][1]["type"], "function_call_output");
+        assert_eq!(request.body["input"][1]["call_id"], "call-1");
+        assert_eq!(request.body["input"][1]["output"], "{\"diff\":\"+hello\"}");
         assert!(request.body["tools"].as_array().unwrap().is_empty());
+    }
+
+    #[test]
+    fn rejects_invalid_provider_state_json_when_replaying_tool_calls() {
+        let conversation = [ConversationTurn::AssistantToolCalls(vec![ToolCall {
+            id: "call-1".to_string(),
+            name: "commit_diff".to_string(),
+            arguments: json!({ "hash": "abc1234" }),
+            provider_state: Some("not json".to_string()),
+        }])];
+
+        let error = provider()
+            .build_request(
+                LlmRequest {
+                    model: "gpt-4.1",
+                    conversation: &conversation,
+                    tools: &[],
+                },
+                false,
+            )
+            .unwrap_err();
+
+        assert_matches!(error, LlmCallError::Permanent { .. });
+        assert!(
+            error
+                .to_string()
+                .contains("invalid provider_state JSON for tool call call-1")
+        );
+    }
+
+    #[test]
+    fn rejects_malformed_provider_state_when_replaying_tool_calls() {
+        let conversation = [ConversationTurn::AssistantToolCalls(vec![ToolCall {
+            id: "call-1".to_string(),
+            name: "commit_diff".to_string(),
+            arguments: json!({ "hash": "abc1234" }),
+            provider_state: Some(json!({ "function_call": {} }).to_string()),
+        }])];
+
+        let error = provider()
+            .build_request(
+                LlmRequest {
+                    model: "gpt-4.1",
+                    conversation: &conversation,
+                    tools: &[],
+                },
+                false,
+            )
+            .unwrap_err();
+
+        assert_matches!(error, LlmCallError::Permanent { .. });
+        assert!(
+            error
+                .to_string()
+                .contains("invalid provider_state for tool call call-1: missing reasoning array")
+        );
     }
 
     #[test]
@@ -486,22 +581,20 @@ mod tests {
         let response = Response {
             status: StatusCode::OK,
             body: json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "tool_calls": [{
-                            "id": "call-1",
-                            "type": "function",
-                            "function": {
-                                "name": "commit_diff",
-                                "arguments": "{\"hash\":\"abc1234\"}"
-                            }
-                        }]
-                    }
+                "output": [{
+                    "id": "rs-1",
+                    "type": "reasoning",
+                    "summary": []
+                }, {
+                    "id": "fc-1",
+                    "call_id": "call-1",
+                    "type": "function_call",
+                    "name": "commit_diff",
+                    "arguments": "{\"hash\":\"abc1234\"}"
                 }],
                 "usage": {
-                    "prompt_tokens": 100,
-                    "completion_tokens": 25
+                    "input_tokens": 100,
+                    "output_tokens": 25
                 }
             }),
         };
@@ -520,7 +613,7 @@ mod tests {
                 "hash": "abc1234"
             })
         );
-        assert_eq!(tool_calls[0].thought_signature, None);
+        assert!(tool_calls[0].provider_state.is_some());
     }
 
     #[test]
@@ -528,15 +621,17 @@ mod tests {
         let response = Response {
             status: StatusCode::OK,
             body: json!({
-                "choices": [{
-                    "message": {
-                        "role": "assistant",
-                        "content": "{\"summary\":\"content json\",\"findings\":[]}"
-                    }
+                "output": [{
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{
+                        "type": "output_text",
+                        "text": "{\"summary\":\"content json\",\"findings\":[]}"
+                    }]
                 }],
                 "usage": {
-                    "prompt_tokens": 10,
-                    "completion_tokens": 5
+                    "input_tokens": 10,
+                    "output_tokens": 5
                 }
             }),
         };
@@ -544,11 +639,7 @@ mod tests {
         let error = provider().parse_response(response).unwrap_err();
 
         assert_matches!(error, LlmCallError::Permanent { .. });
-        assert!(
-            error
-                .to_string()
-                .contains("missing choices[0].message.tool_calls")
-        );
+        assert!(error.to_string().contains("missing function_call item"));
     }
 
     #[test]

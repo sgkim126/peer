@@ -158,7 +158,7 @@ fn function_call(tool_call: &ToolCall) -> serde_json::Value {
             "args": tool_call.arguments,
         },
     });
-    if let Some(signature) = &tool_call.thought_signature {
+    if let Some(signature) = &tool_call.provider_state {
         part["thoughtSignature"] = json!(signature);
     }
     part
@@ -224,7 +224,7 @@ fn parse_tool_call(index: usize, part: &serde_json::Value) -> Result<ToolCall, L
         id: call_id,
         name,
         arguments,
-        thought_signature: part
+        provider_state: part
             .get("thoughtSignature")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned),
@@ -467,7 +467,7 @@ mod tests {
                 arguments: json!({
                     "hash": "abc1234"
                 }),
-                thought_signature: Some("opaque-signature".to_string()),
+                provider_state: Some("opaque-signature".to_string()),
             }]),
             ConversationTurn::ToolResult {
                 call_id: "gemini:0:commit_diff".to_string(),
@@ -562,7 +562,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_function_call_and_preserves_thought_signature() {
+    fn parses_function_call_and_preserves_provider_state() {
         let response = Response {
             status: StatusCode::OK,
             body: json!({
@@ -601,7 +601,7 @@ mod tests {
             })
         );
         assert_eq!(
-            tool_calls[0].thought_signature.as_deref(),
+            tool_calls[0].provider_state.as_deref(),
             Some("opaque-signature")
         );
     }
