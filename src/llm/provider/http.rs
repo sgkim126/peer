@@ -35,7 +35,6 @@ impl ProviderHttpClient {
         }
     }
 
-    #[expect(dead_code)]
     pub async fn send(&self, request: Request) -> Result<Response, LlmCallError> {
         let Request { url, headers, body } = request;
         let request = self

@@ -16,6 +16,7 @@ pub use anthropic::AnthropicProvider;
 pub use error::LlmCallError;
 #[expect(unused_imports)]
 pub use gemini::GeminiProvider;
+pub use http::ProviderHttpClient;
 #[expect(unused_imports)]
 pub use mistral::MistralProvider;
 #[expect(unused_imports)]
@@ -34,6 +35,17 @@ pub struct Request {
 pub struct Response {
     pub status: StatusCode,
     pub body: Value,
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub trait LlmTransport {
+    async fn send(&self, request: Request) -> Result<Response, LlmCallError>;
+}
+
+impl LlmTransport for ProviderHttpClient {
+    async fn send(&self, request: Request) -> Result<Response, LlmCallError> {
+        ProviderHttpClient::send(self, request).await
+    }
 }
 
 #[cfg_attr(not(test), expect(dead_code))]
