@@ -37,7 +37,7 @@ pub struct Response {
     pub body: Value,
 }
 
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub trait LlmTransport {
     async fn send(&self, request: Request) -> Result<Response, LlmCallError>;
 }

@@ -1,3 +1,4 @@
+mod agent;
 mod provider;
 mod result;
 pub mod tools;
