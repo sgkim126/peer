@@ -1,0 +1,121 @@
+use std::fmt;
+
+use crate::console::Console;
+use crate::extract::{ExtractError, Extractor};
+use crate::llm::agent::{Agent, AgentOutcome};
+use crate::llm::provider::{LlmCallError, ProviderRuntime};
+use crate::llm::result::{CheckResult, CheckUsage};
+use crate::llm::tools::ExtractToolExecutor;
+
+use super::CheckDefinition;
+
+#[expect(dead_code)]
+pub struct CheckRunConfig {
+    pub model: String,
+    pub max_iterations: u32,
+    pub input_per_1m_usd: f64,
+    pub output_per_1m_usd: f64,
+    pub console: Console,
+}
+
+#[derive(Debug)]
+#[expect(dead_code)]
+pub enum CheckRunError {
+    Preparation(ExtractError),
+    LlmCall(LlmCallError),
+    InvalidOutput(String),
+    ClarificationRequested(Vec<String>),
+}
+
+impl fmt::Display for CheckRunError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Preparation(e) => write!(f, "failed to prepare check: {e}"),
+            Self::LlmCall(e) => e.fmt(f),
+            Self::InvalidOutput(e) => write!(f, "invalid check output: {e}"),
+            Self::ClarificationRequested(_) => f.write_str("check requested clarification"),
+        }
+    }
+}
+impl std::error::Error for CheckRunError {}
+
+#[expect(dead_code)]
+pub struct Checker {
+    extractor: Extractor,
+    runtime: ProviderRuntime,
+    config: CheckRunConfig,
+}
+
+impl Checker {
+    #[expect(dead_code)]
+    pub fn new(extractor: Extractor, runtime: ProviderRuntime, config: CheckRunConfig) -> Self {
+        Self {
+            extractor,
+            runtime,
+            config,
+        }
+    }
+
+    #[expect(dead_code)]
+    pub async fn run<C>(self, check: &C) -> Result<CheckResult, CheckRunError>
+    where
+        C: CheckDefinition,
+    {
+        let request = check
+            .agent_request(&self.extractor, &self.config.model)
+            .await
+            .map_err(CheckRunError::Preparation)?;
+        let target = check.target();
+        let target_description = match &target {
+            crate::llm::result::CheckTarget::Commit(commit) => commit.to_string(),
+            crate::llm::result::CheckTarget::Range(range) => range.clone(),
+        };
+        self.config.console.debug(format_args!(
+            "check {} for {}",
+            check.name(),
+            target_description
+        ));
+        let (provider, transport) = self.runtime.into_parts();
+        let agent = Agent::new(
+            provider,
+            transport,
+            ExtractToolExecutor::new(self.extractor),
+            self.config.console,
+        );
+        match agent.run_loop(request, self.config.max_iterations).await {
+            AgentOutcome::Completed(done) => {
+                if !done.output.findings.iter().all(|finding| {
+                    // Expected commits are full hashes produced while resolving the check
+                    // target, but a finding may report an abbreviated commit hash.
+                    check
+                        .expected_commits()
+                        .iter()
+                        .any(|expected| expected.as_ref().starts_with(finding.commit.as_ref()))
+                }) {
+                    return Err(CheckRunError::InvalidOutput(
+                        "finding commit is outside the check target".to_string(),
+                    ));
+                }
+                Ok(CheckResult {
+                    check: check.name().to_string(),
+                    target,
+                    summary: done.output.summary,
+                    findings: done.output.findings,
+                    iterations: done.iterations,
+                    is_exhausted: false,
+                    exhaustion_reason: None,
+                    usage: CheckUsage::from_raw_usage(
+                        done.usage,
+                        &self.config.model,
+                        self.config.input_per_1m_usd,
+                        self.config.output_per_1m_usd,
+                    ),
+                })
+            }
+            AgentOutcome::ClarificationRequested(request) => {
+                Err(CheckRunError::ClarificationRequested(request.questions))
+            }
+            AgentOutcome::Error(failure) => Err(CheckRunError::LlmCall(failure.error)),
+        }
+    }
+}
