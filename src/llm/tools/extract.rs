@@ -46,7 +46,6 @@ pub fn get_commit_diff() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn get_changed_files() -> ToolSpec {
     ToolSpec {
         name: "get_changed_files".to_string(),

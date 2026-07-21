@@ -1,3 +1,4 @@
+mod intent;
 pub mod runner;
 mod size;
 
@@ -14,7 +15,7 @@ use crate::llm::provider::{ProviderCreationError, ProviderRuntime};
 use crate::llm::result::CheckTarget;
 use runner::{CheckRunConfig, CheckRunError, Checker};
 
-use self::size::SizeCheck;
+use self::{intent::IntentCheck, size::SizeCheck};
 
 pub trait CheckDefinition {
     fn name(&self) -> &'static str;
@@ -90,6 +91,9 @@ pub async fn handler(
         CheckCommand::Size { revision } => {
             Check::Size(SizeCheck::try_new(&revision, &extractor).await?)
         }
+        CheckCommand::Intent { revision } => {
+            Check::Intent(IntentCheck::try_new(&revision, &extractor).await?)
+        }
         _ => unimplemented!(),
     };
     let (provider_config, model_config) =
@@ -118,24 +122,28 @@ pub async fn handler(
 
 enum Check {
     Size(SizeCheck),
+    Intent(IntentCheck),
 }
 
 impl CheckDefinition for Check {
     fn name(&self) -> &'static str {
         match self {
             Self::Size(check) => check.name(),
+            Self::Intent(check) => check.name(),
         }
     }
 
     fn target(&self) -> CheckTarget {
         match self {
             Self::Size(check) => check.target(),
+            Self::Intent(check) => check.target(),
         }
     }
 
     fn expected_commits(&self) -> &[CommitHash] {
         match self {
             Self::Size(check) => check.expected_commits(),
+            Self::Intent(check) => check.expected_commits(),
         }
     }
 
@@ -146,6 +154,7 @@ impl CheckDefinition for Check {
     ) -> Result<AgentRequest, ExtractError> {
         match self {
             Self::Size(check) => check.agent_request(extractor, model).await,
+            Self::Intent(check) => check.agent_request(extractor, model).await,
         }
     }
 }
