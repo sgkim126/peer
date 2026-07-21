@@ -1,6 +1,6 @@
 use std::fmt;
 
-use futures_util::future::join_all;
+use futures_util::stream::{self, StreamExt};
 
 use crate::extract::ExtractError;
 use crate::llm::provider::ToolCall;
@@ -63,11 +63,20 @@ pub trait ToolExecutor {
     async fn execute(&self, call: ToolCall) -> ToolExecutionResult;
 
     async fn execute_all(&self, calls: Vec<ToolCall>) -> Vec<(String, ToolExecutionResult)> {
-        join_all(calls.into_iter().map(|call| async {
-            let call_id = call.id.clone();
-            (call_id, self.execute(call).await)
-        }))
-        .await
+        let concurrency = std::thread::available_parallelism()
+            .ok()
+            .map(|cpus| cpus.get())
+            .unwrap_or(1)
+            .saturating_mul(2);
+
+        stream::iter(calls)
+            .map(|call| async {
+                let call_id = call.id.clone();
+                (call_id, self.execute(call).await)
+            })
+            .buffered(concurrency)
+            .collect()
+            .await
     }
 }
 
