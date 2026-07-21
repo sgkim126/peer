@@ -1,7 +1,6 @@
 use super::response::ToolCall;
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum ConversationTurn {
     System(String),
     User(String),

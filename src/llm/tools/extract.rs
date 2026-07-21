@@ -82,7 +82,6 @@ pub fn get_commits_in_range() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn get_file_content() -> ToolSpec {
     ToolSpec {
         name: "get_file_content".to_string(),

@@ -1,4 +1,5 @@
 pub mod runner;
+mod size;
 
 use std::fmt;
 use std::path::PathBuf;
@@ -12,6 +13,8 @@ use crate::llm::agent::AgentRequest;
 use crate::llm::provider::{ProviderCreationError, ProviderRuntime};
 use crate::llm::result::CheckTarget;
 use runner::{CheckRunConfig, CheckRunError, Checker};
+
+use self::size::SizeCheck;
 
 pub trait CheckDefinition {
     fn name(&self) -> &'static str;
@@ -84,11 +87,10 @@ pub async fn handler(
     let extractor = Extractor::new(project_root, console);
 
     let check: Check = match command {
-        CheckCommand::Size { .. } => Check::Unimplemented,
-        CheckCommand::Intent { .. } => Check::Unimplemented,
-        CheckCommand::Quality { .. } => Check::Unimplemented,
-        CheckCommand::Security { .. } => Check::Unimplemented,
-        CheckCommand::Coherence { .. } => Check::Unimplemented,
+        CheckCommand::Size { revision } => {
+            Check::Size(SizeCheck::try_new(&revision, &extractor).await?)
+        }
+        _ => unimplemented!(),
     };
     let (provider_config, model_config) =
         config.resolve_provider(&config.llm.default_provider, None)?;
@@ -115,27 +117,35 @@ pub async fn handler(
 }
 
 enum Check {
-    Unimplemented,
+    Size(SizeCheck),
 }
 
 impl CheckDefinition for Check {
     fn name(&self) -> &'static str {
-        unimplemented!();
+        match self {
+            Self::Size(check) => check.name(),
+        }
     }
 
     fn target(&self) -> CheckTarget {
-        unimplemented!();
+        match self {
+            Self::Size(check) => check.target(),
+        }
     }
 
     fn expected_commits(&self) -> &[CommitHash] {
-        unimplemented!();
+        match self {
+            Self::Size(check) => check.expected_commits(),
+        }
     }
 
     async fn agent_request(
         &self,
-        _extractor: &Extractor,
-        _model: &str,
+        extractor: &Extractor,
+        model: &str,
     ) -> Result<AgentRequest, ExtractError> {
-        unimplemented!();
+        match self {
+            Self::Size(check) => check.agent_request(extractor, model).await,
+        }
     }
 }
