@@ -92,26 +92,80 @@ impl Checker {
                         "finding commit is outside the check target".to_string(),
                     ));
                 }
-                Ok(CheckResult {
-                    check: check.name().to_string(),
+                Ok(build_result(
+                    check,
                     target,
-                    summary: done.output.summary,
-                    findings: done.output.findings,
-                    iterations: done.iterations,
-                    is_exhausted: false,
-                    exhaustion_reason: None,
-                    usage: CheckUsage::from_raw_usage(
-                        done.usage,
-                        &self.config.model,
-                        self.config.input_per_1m_usd,
-                        self.config.output_per_1m_usd,
-                    ),
-                })
+                    done.output.summary,
+                    done.output.findings,
+                    done.iterations,
+                    done.usage,
+                    false,
+                    None,
+                    &self.config,
+                ))
             }
-            AgentOutcome::ClarificationRequested(request) => {
-                Err(CheckRunError::ClarificationRequested(request.questions))
-            }
-            AgentOutcome::Error(failure) => Err(CheckRunError::LlmCall(failure.error)),
+            AgentOutcome::ClarificationRequested(request) => Ok(build_result(
+                check,
+                target,
+                format!(
+                    "Checker asks:\n{}",
+                    request
+                        .questions
+                        .iter()
+                        .map(|question| format!("- {question}"))
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                ),
+                Vec::new(),
+                request.iterations,
+                request.usage,
+                true,
+                Some("clarification required".to_string()),
+                &self.config,
+            )),
+            AgentOutcome::Error(failure) => Ok(build_result(
+                check,
+                target,
+                format!("Check did not complete: {}", failure.error),
+                Vec::new(),
+                failure.iterations,
+                failure.usage,
+                true,
+                Some(failure.error.to_string()),
+                &self.config,
+            )),
         }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn build_result<C>(
+    check: &C,
+    target: crate::llm::result::CheckTarget,
+    summary: String,
+    findings: Vec<crate::llm::result::Finding>,
+    iterations: u32,
+    usage: crate::llm::provider::RawUsage,
+    is_exhausted: bool,
+    exhaustion_reason: Option<String>,
+    config: &CheckRunConfig,
+) -> CheckResult
+where
+    C: CheckDefinition,
+{
+    CheckResult {
+        check: check.name().to_string(),
+        target,
+        summary,
+        findings,
+        iterations,
+        is_exhausted,
+        exhaustion_reason,
+        usage: CheckUsage::from_raw_usage(
+            usage,
+            &config.model,
+            config.input_per_1m_usd,
+            config.output_per_1m_usd,
+        ),
     }
 }
