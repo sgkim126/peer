@@ -86,7 +86,7 @@ async fn main() -> ExitCode {
             if comments_file.is_none() {
                 eprintln!("warning: review comments file was not provided.");
             }
-            let _review_context = match llm::context::ReviewContext::load(
+            let review_context = match llm::context::ReviewContext::load(
                 title,
                 body_file.as_deref(),
                 comments_file.as_deref(),
@@ -107,7 +107,7 @@ async fn main() -> ExitCode {
             };
             let result = match discover(&cwd) {
                 Ok((config, project_root)) => {
-                    check::handler(console, command, &config, project_root).await
+                    check::handler(console, command, &config, project_root, &review_context).await
                 }
                 Err(error) => Err(check::CheckCommandError::Config(error)),
             };

@@ -3,6 +3,7 @@ use std::fmt;
 use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::agent::{Agent, AgentOutcome};
+use crate::llm::context::ReviewContext;
 use crate::llm::provider::{LlmCallError, ProviderRuntime};
 use crate::llm::result::{CheckResult, CheckUsage};
 use crate::llm::tools::ExtractToolExecutor;
@@ -53,12 +54,16 @@ impl Checker {
         }
     }
 
-    pub async fn run<C>(self, check: &C) -> Result<CheckResult, CheckRunError>
+    pub async fn run<C>(
+        self,
+        check: &C,
+        review_context: &ReviewContext,
+    ) -> Result<CheckResult, CheckRunError>
     where
         C: CheckDefinition,
     {
         let request = check
-            .agent_request(&self.extractor, &self.config.model)
+            .agent_request(&self.extractor, &self.config.model, review_context)
             .await
             .map_err(CheckRunError::Preparation)?;
         let target = check.target();
