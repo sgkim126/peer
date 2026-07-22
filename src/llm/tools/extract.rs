@@ -28,7 +28,6 @@ pub fn get_commit_message() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn get_commit_diff() -> ToolSpec {
     ToolSpec {
         name: "get_commit_diff".to_string(),
@@ -46,7 +45,6 @@ pub fn get_commit_diff() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn get_changed_files() -> ToolSpec {
     ToolSpec {
         name: "get_changed_files".to_string(),
@@ -82,7 +80,6 @@ pub fn get_commits_in_range() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn get_file_content() -> ToolSpec {
     ToolSpec {
         name: "get_file_content".to_string(),
@@ -104,7 +101,6 @@ pub fn get_file_content() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn get_file_diff() -> ToolSpec {
     ToolSpec {
         name: "get_file_diff".to_string(),
@@ -130,7 +126,6 @@ pub fn get_file_diff() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn list_tree() -> ToolSpec {
     ToolSpec {
         name: "list_tree".to_string(),
@@ -156,7 +151,6 @@ pub fn list_tree() -> ToolSpec {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn grep() -> ToolSpec {
     ToolSpec {
         name: "grep".to_string(),

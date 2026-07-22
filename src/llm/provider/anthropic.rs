@@ -16,14 +16,12 @@ const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-api-key");
 const VERSION_HEADER: HeaderName = HeaderName::from_static("anthropic-version");
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct AnthropicProvider {
     api_key: Secret,
     base_url: String,
 }
 
 impl AnthropicProvider {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_env(api_key_env: &str, base_url: Option<&str>) -> Result<Self, LlmCallError> {
         let api_key = Secret::from_env(api_key_env).map_err(|error| LlmCallError::Permanent {
             message: format!("cannot read {api_key_env}"),

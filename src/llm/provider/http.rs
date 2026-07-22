@@ -26,7 +26,6 @@ pub struct ProviderHttpClient {
 }
 
 impl ProviderHttpClient {
-    #[expect(dead_code)]
     pub fn new(client: reqwest::Client, console: Console, provider_name: &'static str) -> Self {
         Self {
             client,

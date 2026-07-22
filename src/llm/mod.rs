@@ -1,6 +1,6 @@
-mod agent;
-mod provider;
-mod result;
+pub mod agent;
+pub mod provider;
+pub mod result;
 pub mod tools;
 
 #[cfg(test)]

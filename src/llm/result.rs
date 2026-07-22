@@ -47,7 +47,6 @@ pub struct CheckUsage {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct CheckOutput {
     #[serde(default)]
     pub summary: String,
@@ -55,7 +54,6 @@ pub struct CheckOutput {
 }
 
 impl CheckUsage {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_raw_usage(
         usage: RawUsage,
         model: impl Into<String>,
@@ -77,7 +75,6 @@ fn cost_usd(usage: RawUsage, input_per_1m_usd: f64, output_per_1m_usd: f64) -> f
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-#[expect(dead_code)]
 pub struct CheckResult {
     pub check: String,
     pub target: CheckTarget,

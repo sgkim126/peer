@@ -18,7 +18,6 @@ impl Secret {
         Self(value)
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_env(name: &str) -> Result<Self, SecretError> {
         match std::env::var(name) {
             Ok(value) if !value.is_empty() => Ok(Self::new(value)),

@@ -1,7 +1,6 @@
 use super::response::ToolCall;
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum ConversationTurn {
     System(String),
     User(String),
@@ -18,14 +17,12 @@ pub enum ConversationTurn {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct ToolSpec {
     pub name: String,
     pub description: String,
     pub parameters: serde_json::Value,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct LlmRequest<'a> {
     pub model: &'a str,
     pub conversation: &'a [ConversationTurn],

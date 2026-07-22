@@ -76,7 +76,6 @@ pub struct ModelConfig {
 
 impl Config {
     /// Returns the configured iteration limit for a check, falling back to `[llm]`.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn max_iterations_for(&self, check: &str) -> NonZeroU32 {
         let override_value = match check {
             "size" => self.checks.size.max_iterations,
@@ -93,7 +92,6 @@ impl Config {
     /// Finds the named provider and selected model, returning references to both.
     /// Uses the provider's default model when `model_name` is absent.
     /// Returns `InvalidConfig` if either is absent.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn resolve_provider(
         &self,
         provider_name: &str,
