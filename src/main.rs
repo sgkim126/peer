@@ -85,6 +85,13 @@ async fn main() -> ExitCode {
             };
             match result {
                 Ok(result) => {
+                    console.verbose(format_args!(
+                        "{} model cost: ${:.6} (input {} tokens, output {} tokens)",
+                        result.usage.model,
+                        result.usage.cost_usd,
+                        result.usage.input_tokens,
+                        result.usage.output_tokens,
+                    ));
                     println!(
                         "{}",
                         serde_json::to_string_pretty(&result).expect("check result serializes")
