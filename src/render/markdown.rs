@@ -2,14 +2,21 @@ use std::fmt::Write;
 
 use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, Finding, Severity};
 
+use super::escape_markdown;
+
 pub fn render(result: &CheckResult) -> String {
     let mut output = String::new();
-    writeln!(output, "## Check: {}", result.check).unwrap();
+    writeln!(output, "## Check: {}", escape_markdown(&result.check)).unwrap();
     writeln!(output).unwrap();
-    writeln!(output, "- **Target:** `{}`", display_target(&result.target)).unwrap();
+    writeln!(
+        output,
+        "- **Target:** {}",
+        escape_markdown(display_target(&result.target))
+    )
+    .unwrap();
     writeln!(output, "- **Status:** {}", status(result)).unwrap();
     writeln!(output).unwrap();
-    writeln!(output, "{}", result.summary).unwrap();
+    writeln!(output, "{}", escape_markdown(&result.summary)).unwrap();
     writeln!(output).unwrap();
     writeln!(output, "### Findings").unwrap();
     writeln!(output).unwrap();
@@ -26,10 +33,12 @@ pub fn render(result: &CheckResult) -> String {
         writeln!(
             output,
             "> {}",
-            result
-                .exhaustion_reason
-                .as_deref()
-                .unwrap_or("check did not complete")
+            escape_markdown(
+                result
+                    .exhaustion_reason
+                    .as_deref()
+                    .unwrap_or("check did not complete")
+            )
         )
         .unwrap();
     }
@@ -45,8 +54,8 @@ fn render_finding(finding: &Finding) -> String {
     format!(
         "**{}** — {} ({})",
         severity_name(finding.severity),
-        finding.message,
-        finding_context(finding)
+        escape_markdown(&finding.message),
+        escape_markdown(&finding_context(finding))
     )
 }
 
@@ -95,7 +104,7 @@ fn write_usage_markdown(output: &mut String, usage: &CheckUsage) {
     writeln!(output, "- **Input tokens:** {}", usage.input_tokens).unwrap();
     writeln!(output, "- **Output tokens:** {}", usage.output_tokens).unwrap();
     writeln!(output, "- **Cost:** ${:.6}", usage.cost_usd).unwrap();
-    writeln!(output, "- **Model:** {}", usage.model).unwrap();
+    writeln!(output, "- **Model:** {}", escape_markdown(&usage.model)).unwrap();
 }
 
 #[cfg(test)]
@@ -169,5 +178,26 @@ mod tests {
 
         assert!(output.contains("### Usage"));
         assert!(output.contains("- **Cost:** $0.001000"));
+    }
+
+    #[test]
+    fn escapes_dynamic_content_and_flattens_newlines() {
+        let mut result = result();
+        result.check = "check <unsafe>".to_string();
+        result.summary = "Summary\n# injected heading [link](url) ~struck~".to_string();
+        result.findings[0].message = "message\n- injected finding **bold**".to_string();
+        result.findings[0].location = Some(FileLocation {
+            file: "src/[unsafe].rs".to_string(),
+            line: None,
+        });
+
+        let output = render(&result);
+
+        assert!(output.contains("## Check: check \\<unsafe\\>"));
+        assert!(output.contains("Summary \\# injected heading \\[link\\]\\(url\\) \\~struck\\~"));
+        assert!(output.contains("message \\- injected finding \\*\\*bold\\*\\*"));
+        assert!(output.contains("src/\\[unsafe\\]\\.rs"));
+        assert!(!output.contains("\n# injected heading"));
+        assert!(!output.contains("\n- injected finding"));
     }
 }

@@ -2,14 +2,16 @@ use std::fmt::Write;
 
 use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, Finding, Severity};
 
+use super::{escape_html, escape_markdown};
+
 pub fn render(result: &CheckResult, repo: &str) -> String {
     let mut body = String::new();
-    writeln!(body, "## Check: {}", result.check).unwrap();
+    writeln!(body, "## Check: {}", escape_github_markdown(&result.check)).unwrap();
     writeln!(body).unwrap();
     writeln!(body, "- **Target:** {}", target(&result.target, repo)).unwrap();
     writeln!(body, "- **Status:** {}", status(result)).unwrap();
     writeln!(body).unwrap();
-    writeln!(body, "{}", result.summary).unwrap();
+    writeln!(body, "{}", escape_github_markdown(&result.summary)).unwrap();
     writeln!(body).unwrap();
     writeln!(body, "### Findings").unwrap();
     writeln!(body).unwrap();
@@ -26,10 +28,12 @@ pub fn render(result: &CheckResult, repo: &str) -> String {
         writeln!(
             body,
             "> {}",
-            result
-                .exhaustion_reason
-                .as_deref()
-                .unwrap_or("check did not complete")
+            escape_github_markdown(
+                result
+                    .exhaustion_reason
+                    .as_deref()
+                    .unwrap_or("check did not complete")
+            )
         )
         .unwrap();
     }
@@ -41,9 +45,9 @@ pub fn render(result: &CheckResult, repo: &str) -> String {
 
     format!(
         "<details>\n<summary>Check: {} - Status: {} - Target: {}</summary>\n\n{}\n</details>",
-        result.check,
+        escape_github_html(&result.check),
         status(result),
-        display_target(&result.target),
+        escape_github_html(display_target(&result.target)),
         body.trim_end()
     )
 }
@@ -55,7 +59,8 @@ fn render_finding(finding: &Finding, repo: &str) -> String {
         let label = location_label(location.file.as_str(), location.line);
         write!(
             context,
-            " · [`{label}`]({})",
+            " · [{}]({})",
+            escape_github_markdown(&label),
             file_url(repo, commit, &location.file, location.line)
         )
         .unwrap();
@@ -63,7 +68,7 @@ fn render_finding(finding: &Finding, repo: &str) -> String {
     format!(
         "**{}** — {} ({context})",
         severity_name(finding.severity),
-        finding.message
+        escape_github_markdown(&finding.message)
     )
 }
 
@@ -109,7 +114,12 @@ fn write_usage_markdown(output: &mut String, usage: &CheckUsage) {
     writeln!(output, "- **Input tokens:** {}", usage.input_tokens).unwrap();
     writeln!(output, "- **Output tokens:** {}", usage.output_tokens).unwrap();
     writeln!(output, "- **Cost:** ${:.6}", usage.cost_usd).unwrap();
-    writeln!(output, "- **Model:** {}", usage.model).unwrap();
+    writeln!(
+        output,
+        "- **Model:** {}",
+        escape_github_markdown(&usage.model)
+    )
+    .unwrap();
 }
 
 fn target(target: &CheckTarget, repo: &str) -> String {
@@ -118,7 +128,7 @@ fn target(target: &CheckTarget, repo: &str) -> String {
             let commit = commit.as_ref();
             format!("[`{commit}`]({})", commit_url(repo, commit))
         }
-        CheckTarget::Range(range) => format!("`{range}`"),
+        CheckTarget::Range(range) => escape_github_markdown(range),
     }
 }
 
@@ -152,6 +162,18 @@ fn encode_path(path: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("/")
+}
+
+fn escape_github_markdown(value: &str) -> String {
+    neutralize_mentions(&escape_markdown(value))
+}
+
+fn escape_github_html(value: &str) -> String {
+    neutralize_mentions(&escape_html(value))
+}
+
+fn neutralize_mentions(value: &str) -> String {
+    value.replace('@', "`@`")
 }
 
 #[cfg(test)]
@@ -204,5 +226,43 @@ mod tests {
 
         assert!(output.contains("https://github.com/owner/repo/commit/abc1234"));
         assert!(output.contains("https://github.com/owner/repo/blob/abc1234/src/main.rs#L42"));
+    }
+
+    #[test]
+    fn escapes_markdown_and_details_summary_content() {
+        let mut result = result();
+        result.check = "check </summary><script>".to_string();
+        result.summary = "> quote\n- list".to_string();
+        result.findings[0].message = "[link](url)".to_string();
+        result.findings[0].location = Some(FileLocation {
+            file: "src/]unsafe[.rs".to_string(),
+            line: Some(7),
+        });
+
+        let output = render(&result, "owner/repo");
+
+        assert!(output.contains("<summary>Check: check &lt;/summary&gt;&lt;script&gt;"));
+        assert!(output.contains("\\> quote \\- list"));
+        assert!(output.contains("\\[link\\]\\(url\\)"));
+        assert!(output.contains("[src/\\]unsafe\\[\\.rs:7]"));
+        assert!(output.contains("src/%5Dunsafe%5B.rs#L7"));
+        assert!(!output.contains("</summary><script>"));
+    }
+
+    #[test]
+    fn neutralizes_mentions_in_dynamic_content() {
+        let mut result = result();
+        result.check = "@reviewers".to_string();
+        result.summary = "Please notify @org/team".to_string();
+        result.findings[0].message = "Assigned to @alice".to_string();
+
+        let output = render(&result, "owner/repo");
+
+        assert!(output.contains("`@`reviewers"));
+        assert!(output.contains("`@`org/team"));
+        assert!(output.contains("`@`alice"));
+        assert!(!output.contains("@reviewers"));
+        assert!(!output.contains("@org/team"));
+        assert!(!output.contains("@alice"));
     }
 }

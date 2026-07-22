@@ -4,20 +4,22 @@ use owo_colors::Style;
 
 use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, Finding, Severity};
 
+use super::escape_terminal;
+
 pub fn render(result: &CheckResult, use_color: bool) -> String {
     let mut output = String::new();
     writeln!(
         output,
         "{} {}",
         label("Check:", use_color),
-        bold(&result.check, use_color)
+        bold(&escape_terminal(&result.check), use_color)
     )
     .unwrap();
     writeln!(
         output,
         "{} {}",
         label("Target:", use_color),
-        display_target(&result.target)
+        escape_terminal(display_target(&result.target))
     )
     .unwrap();
     writeln!(
@@ -28,7 +30,7 @@ pub fn render(result: &CheckResult, use_color: bool) -> String {
     )
     .unwrap();
     writeln!(output).unwrap();
-    writeln!(output, "{}", result.summary).unwrap();
+    writeln!(output, "{}", escape_terminal(&result.summary)).unwrap();
     writeln!(output).unwrap();
     writeln!(output, "{}", label("Findings:", use_color)).unwrap();
     if result.findings.is_empty() {
@@ -44,10 +46,12 @@ pub fn render(result: &CheckResult, use_color: bool) -> String {
             output,
             "{} {}",
             styled("Warning:", Style::new().yellow().bold(), use_color),
-            result
-                .exhaustion_reason
-                .as_deref()
-                .unwrap_or("unknown reason")
+            escape_terminal(
+                result
+                    .exhaustion_reason
+                    .as_deref()
+                    .unwrap_or("unknown reason")
+            )
         )
         .unwrap();
     }
@@ -71,8 +75,12 @@ fn render_finding(finding: &Finding, use_color: bool) -> String {
             severity_style(finding.severity),
             use_color
         ),
-        finding.message,
-        styled(finding_context(finding), Style::new().dimmed(), use_color)
+        escape_terminal(&finding.message),
+        styled(
+            escape_terminal(&finding_context(finding)),
+            Style::new().dimmed(),
+            use_color
+        )
     )
 }
 
@@ -81,7 +89,10 @@ fn write_usage(output: &mut String, usage: &CheckUsage) {
     write!(
         output,
         "Usage: {} input, {} output, ${:.6} ({})",
-        usage.input_tokens, usage.output_tokens, usage.cost_usd, usage.model
+        usage.input_tokens,
+        usage.output_tokens,
+        usage.cost_usd,
+        escape_terminal(&usage.model)
     )
     .unwrap();
 }
@@ -208,5 +219,33 @@ mod tests {
 
         assert!(output.contains("Usage: 100 input, 20 output, $0.001000 (test-model)"));
         assert!(!output.contains("\u{1b}["));
+    }
+
+    #[test]
+    fn escapes_control_characters_and_flattens_newlines() {
+        let mut result = result();
+        result.check = "security\u{1b}[2J".to_string();
+        result.summary = "Summary\nforged output\u{7}".to_string();
+        result.findings[0].message = "message\u{1b}[31m\nnext line".to_string();
+
+        let output = render(&result, true);
+
+        assert!(output.contains(r"security\u{1b}[2J"));
+        assert!(output.contains(r"Summary forged output\u{7}"));
+        assert!(output.contains(r"message\u{1b}[31m next line"));
+        assert!(!output.contains("security\u{1b}[2J"));
+        assert!(!output.contains("message\u{1b}[31m"));
+        assert!(!output.contains("\nforged output"));
+        assert!(!output.contains("\nnext line"));
+    }
+
+    #[test]
+    fn preserves_unicode_text() {
+        let mut result = result();
+        result.summary = "변경 사항을 확인했습니다.".to_string();
+
+        let output = render(&result, false);
+
+        assert!(output.contains("변경 사항을 확인했습니다."));
     }
 }
