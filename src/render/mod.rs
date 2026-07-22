@@ -1,4 +1,5 @@
 mod markdown;
+mod terminal;
 
 use std::fmt;
 use std::io::IsTerminal;
@@ -24,7 +25,7 @@ pub fn render(input: &str, options: RenderOptions) -> Result<String, RenderError
 fn render_impl(
     input: &str,
     options: RenderOptions,
-    _use_color: bool,
+    use_color: bool,
 ) -> Result<String, RenderError> {
     let result: CheckResult = serde_json::from_str(input).map_err(RenderError::InvalidResult)?;
     let result = sort_findings(result);
@@ -34,7 +35,7 @@ fn render_impl(
             serde_json::to_string_pretty(&result).map_err(RenderError::Serialization)
         }
         OutputFormat::Markdown => Ok(markdown::render(&result)),
-        OutputFormat::Terminal => unimplemented!("terminal rendering is not implemented"),
+        OutputFormat::Terminal => Ok(terminal::render(&result, use_color)),
     }
 }
 
