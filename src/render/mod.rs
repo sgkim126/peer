@@ -75,7 +75,7 @@ fn sort_findings(mut result: CheckResult) -> CheckResult {
         result
             .ordered_commits
             .iter()
-            .position(|commit| commit.as_ref().starts_with(finding.commit.as_ref()))
+            .position(|commit| commit.matches(&finding.commit))
             .unwrap_or(usize::MAX)
     });
     result

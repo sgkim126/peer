@@ -86,7 +86,7 @@ impl Checker {
                     check
                         .expected_commits()
                         .iter()
-                        .any(|expected| expected.as_ref().starts_with(finding.commit.as_ref()))
+                        .any(|expected| expected.matches(&finding.commit))
                 }) {
                     return Err(CheckRunError::InvalidOutput(
                         "finding commit is outside the check target".to_string(),

@@ -47,6 +47,11 @@ impl CommitHash {
         }
         Ok(Self(s.to_string()))
     }
+
+    /// Returns true when the hashes are identical or one is a prefix of the other.
+    pub fn matches(&self, other: &Self) -> bool {
+        self.0.starts_with(&other.0) || other.0.starts_with(&self.0)
+    }
 }
 
 impl fmt::Display for CommitHash {
@@ -174,6 +179,18 @@ mod tests {
 
         let hash2 = "b".repeat(64);
         CommitHash::new(&hash2).unwrap();
+    }
+
+    #[test]
+    fn matches_identical_and_abbreviated_hashes() {
+        let full = CommitHash::new("abc1234567890").unwrap();
+        let abbreviated = CommitHash::new("abc1234").unwrap();
+        let different = CommitHash::new("def5678").unwrap();
+
+        assert!(full.matches(&full));
+        assert!(full.matches(&abbreviated));
+        assert!(abbreviated.matches(&full));
+        assert!(!full.matches(&different));
     }
 
     #[test]
