@@ -156,6 +156,7 @@ where
     CheckResult {
         check: check.name().to_string(),
         target,
+        ordered_commits: check.expected_commits().to_vec(),
         summary,
         findings,
         iterations,
