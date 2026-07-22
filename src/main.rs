@@ -107,8 +107,14 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Render { format } => {
-            let options = render::RenderOptions::from_cli(format);
+        Command::Render { format, repo } => {
+            let options = match render::RenderOptions::from_cli(format, repo) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("failed to configure render: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             let mut input = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut input) {
                 eprintln!("failed to read render input: {error}");

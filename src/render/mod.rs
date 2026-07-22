@@ -1,3 +1,4 @@
+mod github;
 mod markdown;
 mod terminal;
 
@@ -9,12 +10,41 @@ use crate::llm::result::CheckResult;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderOptions {
-    format: OutputFormat,
+    format: RenderFormat,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+enum RenderFormat {
+    Json,
+    Terminal,
+    Markdown,
+    Github { repo: String },
 }
 
 impl RenderOptions {
-    pub fn from_cli(format: OutputFormat) -> Self {
-        Self { format }
+    pub fn from_cli(
+        format: OutputFormat,
+        repo: Option<String>,
+    ) -> Result<Self, RenderOptionsError> {
+        match (format, repo) {
+            (OutputFormat::Json, None) => Ok(Self {
+                format: RenderFormat::Json,
+            }),
+            (OutputFormat::Terminal, None) => Ok(Self {
+                format: RenderFormat::Terminal,
+            }),
+            (OutputFormat::Markdown, None) => Ok(Self {
+                format: RenderFormat::Markdown,
+            }),
+            (OutputFormat::Github, Some(repo)) => {
+                validate_github_repo(&repo)?;
+                Ok(Self {
+                    format: RenderFormat::Github { repo },
+                })
+            }
+            (OutputFormat::Github, None) => Err(RenderOptionsError::GithubRepoRequired),
+            (_, Some(_)) => Err(RenderOptionsError::RepoRequiresGithubFormat),
+        }
     }
 }
 
@@ -31,11 +61,12 @@ fn render_impl(
     let result = sort_findings(result);
 
     match options.format {
-        OutputFormat::Json => {
+        RenderFormat::Json => {
             serde_json::to_string_pretty(&result).map_err(RenderError::Serialization)
         }
-        OutputFormat::Markdown => Ok(markdown::render(&result)),
-        OutputFormat::Terminal => Ok(terminal::render(&result, use_color)),
+        RenderFormat::Markdown => Ok(markdown::render(&result)),
+        RenderFormat::Terminal => Ok(terminal::render(&result, use_color)),
+        RenderFormat::Github { repo } => Ok(github::render(&result, &repo)),
     }
 }
 
@@ -48,6 +79,25 @@ fn sort_findings(mut result: CheckResult) -> CheckResult {
             .unwrap_or(usize::MAX)
     });
     result
+}
+
+fn validate_github_repo(repo: &str) -> Result<(), RenderOptionsError> {
+    let Some((owner, name)) = repo.split_once('/') else {
+        return Err(RenderOptionsError::MalformedRepo);
+    };
+    if owner.is_empty()
+        || name.is_empty()
+        || name.contains('/')
+        || !owner.chars().all(is_github_repo_char)
+        || !name.chars().all(is_github_repo_char)
+    {
+        return Err(RenderOptionsError::MalformedRepo);
+    }
+    Ok(())
+}
+
+fn is_github_repo_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')
 }
 
 #[derive(Debug)]
@@ -73,6 +123,27 @@ impl std::error::Error for RenderError {
         }
     }
 }
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum RenderOptionsError {
+    GithubRepoRequired,
+    RepoRequiresGithubFormat,
+    MalformedRepo,
+}
+
+impl fmt::Display for RenderOptionsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::GithubRepoRequired => write!(f, "--format github requires --repo <owner/name>"),
+            Self::RepoRequiresGithubFormat => {
+                write!(f, "--repo can only be used with --format github")
+            }
+            Self::MalformedRepo => write!(f, "--repo must use the form owner/name"),
+        }
+    }
+}
+
+impl std::error::Error for RenderOptionsError {}
 
 #[cfg(test)]
 mod tests {
@@ -135,8 +206,17 @@ mod tests {
     #[test]
     fn render_orders_findings_by_commit_order() {
         let input = serde_json::to_string(&result()).unwrap();
-        let output = render(&input, RenderOptions::from_cli(OutputFormat::Markdown)).unwrap();
+        let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
+        let output = render(&input, options).unwrap();
 
         assert!(output.find("abc1234").unwrap() < output.find("def5678").unwrap());
+    }
+
+    #[test]
+    fn github_requires_a_repo() {
+        assert_eq!(
+            RenderOptions::from_cli(OutputFormat::Github, None),
+            Err(RenderOptionsError::GithubRepoRequired)
+        );
     }
 }
