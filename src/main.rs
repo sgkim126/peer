@@ -7,6 +7,7 @@ mod extract;
 mod git;
 mod init;
 mod llm;
+mod render;
 mod secret;
 
 use clap::Parser;
@@ -15,6 +16,7 @@ use crate::cli::{Cli, Command};
 use crate::config::discover;
 use crate::console::Console;
 
+use std::io::Read;
 use std::process::ExitCode;
 
 #[tokio::main]
@@ -105,6 +107,32 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Render { .. } => unimplemented!(),
+        Command::Render { format, repo } => {
+            let options = match render::RenderOptions::from_cli(format, repo) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("failed to configure render: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let mut input = String::new();
+            if let Err(error) = std::io::stdin().read_to_string(&mut input) {
+                eprintln!("failed to read render input: {error}");
+                console.debug(format_args!("{error:?}"));
+                return ExitCode::FAILURE;
+            }
+
+            match render::render(&input, options) {
+                Ok(output) => {
+                    println!("{output}");
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("failed to render: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    ExitCode::FAILURE
+                }
+            }
+        }
     }
 }

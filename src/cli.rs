@@ -24,6 +24,9 @@ pub enum Command {
 
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
+
+        #[arg(long, required_if_eq("format", "github"))]
+        repo: Option<String>,
     },
 
     Extract {
@@ -39,6 +42,9 @@ pub enum Command {
     Render {
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
+
+        #[arg(long, required_if_eq("format", "github"))]
+        repo: Option<String>,
     },
 }
 
@@ -100,6 +106,7 @@ pub enum OutputFormat {
     Json,
     Terminal,
     Markdown,
+    Github,
 }
 
 #[cfg(test)]
@@ -130,6 +137,7 @@ mod tests {
             Command::Review {
                 target: "HEAD~3..HEAD".into(),
                 format: OutputFormat::Terminal,
+                repo: None,
             }
         );
     }
@@ -143,6 +151,7 @@ mod tests {
             Command::Review {
                 target: "abc123".into(),
                 format: OutputFormat::Json,
+                repo: None,
             }
         );
     }
@@ -156,6 +165,36 @@ mod tests {
             Command::Review {
                 target: "main".into(),
                 format: OutputFormat::Markdown,
+                repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn review_with_github_format_requires_repo() {
+        let result = Cli::try_parse_from(["peer", "review", "HEAD", "--format", "github"]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn review_with_github_format_and_repo() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "HEAD",
+            "--format",
+            "github",
+            "--repo",
+            "owner/repository",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD".into(),
+                format: OutputFormat::Github,
+                repo: Some("owner/repository".into()),
             }
         );
     }
@@ -420,7 +459,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Render {
-                format: OutputFormat::Terminal
+                format: OutputFormat::Terminal,
+                repo: None,
             }
         );
     }
@@ -432,9 +472,37 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Render {
-                format: OutputFormat::Json
+                format: OutputFormat::Json,
+                repo: None,
             }
         );
+    }
+
+    #[test]
+    fn render_with_github_format_and_repo() {
+        let cli = parse(&[
+            "peer",
+            "render",
+            "--format",
+            "github",
+            "--repo",
+            "owner/repository",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Render {
+                format: OutputFormat::Github,
+                repo: Some("owner/repository".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn render_with_github_format_requires_repo() {
+        let result = Cli::try_parse_from(["peer", "render", "--format", "github"]);
+
+        assert!(result.is_err());
     }
 
     #[test]

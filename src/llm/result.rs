@@ -78,6 +78,8 @@ fn cost_usd(usage: RawUsage, input_per_1m_usd: f64, output_per_1m_usd: f64) -> f
 pub struct CheckResult {
     pub check: String,
     pub target: CheckTarget,
+    /// Target commits in review order, from oldest to newest.
+    pub ordered_commits: Vec<CommitHash>,
     pub summary: String,
     pub findings: Vec<Finding>,
     pub iterations: u32,

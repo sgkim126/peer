@@ -16,6 +16,7 @@ tokio = { version = "1.52", features = ["rt-multi-thread", "macros", "process"] 
 toml = "1.1.2"
 reqwest = { version = "0.13", features = ["json"] }
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
+owo-colors = "4.3"
 
 [dev-dependencies]
 tempfile = "3.27"
