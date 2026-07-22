@@ -140,6 +140,8 @@ impl From<LlmCallError> for ProviderCreationError {
 mod runtime_tests {
     use super::*;
 
+    use std::assert_matches;
+
     #[test]
     fn factory_rejects_unknown_provider() {
         let Err(error) = ProviderRuntime::try_new(
@@ -151,10 +153,10 @@ mod runtime_tests {
             panic!("unknown provider must be rejected");
         };
 
-        assert!(matches!(
+        assert_matches!(
             error,
             ProviderCreationError::Unsupported { name } if name == "unknown"
-        ));
+        );
     }
 
     #[test]
@@ -168,7 +170,7 @@ mod runtime_tests {
             panic!("missing provider key must fail initialization");
         };
 
-        assert!(matches!(error, ProviderCreationError::Initialization(_)));
+        assert_matches!(error, ProviderCreationError::Initialization(_));
     }
 }
 

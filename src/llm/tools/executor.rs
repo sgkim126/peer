@@ -81,6 +81,7 @@ pub trait ToolExecutor {
 mod tests {
     use super::*;
     use serde_json::json;
+    use std::assert_matches;
     use std::error::Error;
 
     struct EchoToolExecutor;
@@ -180,7 +181,7 @@ mod tests {
             error.source().unwrap().to_string(),
             "main...feature is not a two-dot range"
         );
-        assert!(matches!(error, ToolExecutionError::Extract(_)));
+        assert_matches!(error, ToolExecutionError::Extract(_));
     }
 
     #[test]
@@ -194,6 +195,6 @@ mod tests {
             format!("cannot serialize tool result: {source_message}")
         );
         assert_eq!(error.source().unwrap().to_string(), source_message);
-        assert!(matches!(error, ToolExecutionError::Serialization(_)));
+        assert_matches!(error, ToolExecutionError::Serialization(_));
     }
 }
