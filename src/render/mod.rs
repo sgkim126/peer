@@ -107,14 +107,6 @@ impl RenderOptions {
 }
 
 pub fn render(input: &str, options: RenderOptions) -> Result<String, RenderError> {
-    render_impl(input, options, std::io::stdout().is_terminal())
-}
-
-fn render_impl(
-    input: &str,
-    options: RenderOptions,
-    use_color: bool,
-) -> Result<String, RenderError> {
     let result: CheckResult = serde_json::from_str(input).map_err(RenderError::InvalidResult)?;
     let result = sort_findings(result);
 
@@ -123,7 +115,10 @@ fn render_impl(
             serde_json::to_string_pretty(&result).map_err(RenderError::Serialization)
         }
         RenderFormat::Markdown => Ok(markdown::render(&result)),
-        RenderFormat::Terminal => Ok(terminal::render(&result, use_color)),
+        RenderFormat::Terminal => {
+            let use_color = std::io::stdout().is_terminal();
+            Ok(terminal::render(&result, use_color))
+        }
         RenderFormat::Github { repo } => Ok(github::render(&result, &repo)),
     }
 }
