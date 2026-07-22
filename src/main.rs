@@ -71,7 +71,33 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Check { command } => {
+        Command::Check {
+            title,
+            body_file,
+            comments_file,
+            command,
+        } => {
+            if title.is_none() {
+                eprintln!("warning: review title was not provided.");
+            }
+            if body_file.is_none() {
+                eprintln!("warning: review body file was not provided.");
+            }
+            if comments_file.is_none() {
+                eprintln!("warning: review comments file was not provided.");
+            }
+            let _review_context = match llm::context::ReviewContext::load(
+                title,
+                body_file.as_deref(),
+                comments_file.as_deref(),
+            ) {
+                Ok(context) => context,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
             let cwd = match std::env::current_dir() {
                 Ok(cwd) => cwd,
                 Err(error) => {

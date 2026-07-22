@@ -35,6 +35,15 @@ pub enum Command {
     },
 
     Check {
+        #[arg(long)]
+        title: Option<String>,
+
+        #[arg(long)]
+        body_file: Option<PathBuf>,
+
+        #[arg(long)]
+        comments_file: Option<PathBuf>,
+
         #[command(subcommand)]
         command: CheckCommand,
     },
@@ -389,6 +398,9 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                title: None,
+                body_file: None,
+                comments_file: None,
                 command: CheckCommand::Size {
                     revision: "abc123".into(),
                 },
@@ -403,6 +415,9 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                title: None,
+                body_file: None,
+                comments_file: None,
                 command: CheckCommand::Intent {
                     revision: "abc123".into(),
                 },
@@ -417,6 +432,9 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                title: None,
+                body_file: None,
+                comments_file: None,
                 command: CheckCommand::Quality {
                     revision: "abc123".into(),
                 },
@@ -431,6 +449,9 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                title: None,
+                body_file: None,
+                comments_file: None,
                 command: CheckCommand::Security {
                     revision: "abc123".into(),
                 },
@@ -445,8 +466,39 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                title: None,
+                body_file: None,
+                comments_file: None,
                 command: CheckCommand::Coherence {
                     range: "HEAD~3..HEAD".into(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn check_with_review_context() {
+        let cli = parse(&[
+            "peer",
+            "check",
+            "--title",
+            "Add review context",
+            "--body-file",
+            "body.md",
+            "--comments-file",
+            "comments.json",
+            "quality",
+            "HEAD",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Check {
+                title: Some("Add review context".into()),
+                body_file: Some(PathBuf::from("body.md")),
+                comments_file: Some(PathBuf::from("comments.json")),
+                command: CheckCommand::Quality {
+                    revision: "HEAD".into(),
                 },
             }
         );
