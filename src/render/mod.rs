@@ -128,11 +128,13 @@ pub fn render_review_result(
     result: crate::review::ReviewResult,
     options: RenderOptions,
 ) -> Result<String, RenderError> {
+    let summary = result.summary;
     let checks = result
         .checks
         .into_iter()
         .map(sort_findings)
         .collect::<Vec<_>>();
+    let usage_by_model = crate::review::usage_by_model(&checks);
 
     match options.format {
         RenderFormat::Json => {
@@ -143,27 +145,61 @@ pub fn render_review_result(
                     .or_default()
                     .push(check);
             }
-            serde_json::to_string_pretty(&checks_by_name).map_err(RenderError::Serialization)
+            #[derive(serde::Serialize)]
+            struct JsonOutput {
+                summary: crate::review::ReviewSummary,
+                #[serde(flatten)]
+                checks_by_name: BTreeMap<String, Vec<CheckResult>>,
+            }
+            serde_json::to_string_pretty(&JsonOutput {
+                summary,
+                checks_by_name,
+            })
+            .map_err(RenderError::Serialization)
         }
         RenderFormat::Terminal => {
             let use_color = std::io::stdout().is_terminal();
-            Ok(checks
+            let checks = checks
                 .iter()
                 .map(|result| terminal::render(result, use_color))
                 .collect::<Vec<_>>()
-                .join("\n\n"))
+                .join("\n\n");
+            Ok(join_review_sections([
+                terminal::render_review_summary(&summary, &usage_by_model, use_color),
+                checks,
+            ]))
         }
-        RenderFormat::Markdown => Ok(checks
-            .iter()
-            .map(markdown::render)
-            .collect::<Vec<_>>()
-            .join("\n\n")),
-        RenderFormat::Github { repo } => Ok(checks
-            .iter()
-            .map(|result| github::render(result, &repo))
-            .collect::<Vec<_>>()
-            .join("\n\n")),
+        RenderFormat::Markdown => {
+            let checks = checks
+                .iter()
+                .map(markdown::render)
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            Ok(join_review_sections([
+                markdown::render_review_summary(&summary, &usage_by_model),
+                checks,
+            ]))
+        }
+        RenderFormat::Github { repo } => {
+            let checks = checks
+                .iter()
+                .map(|result| github::render(result, &repo))
+                .collect::<Vec<_>>()
+                .join("\n\n");
+            Ok(join_review_sections([
+                github::render_review_summary(&summary, &usage_by_model),
+                checks,
+            ]))
+        }
     }
+}
+
+fn join_review_sections(sections: impl IntoIterator<Item = String>) -> String {
+    sections
+        .into_iter()
+        .filter(|section| !section.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n")
 }
 
 fn sort_findings(mut result: CheckResult) -> CheckResult {
@@ -285,6 +321,14 @@ mod tests {
         }
     }
 
+    fn review_summary() -> crate::review::ReviewSummary {
+        crate::review::ReviewSummary {
+            peer_version: "0.1.0".to_string(),
+            provider: "test-provider".to_string(),
+            model: "test-model".to_string(),
+        }
+    }
+
     #[test]
     fn orders_findings_with_abbreviated_commit_hashes() {
         let mut result = result();
@@ -313,6 +357,7 @@ mod tests {
         let mut second = result();
         second.target = CheckTarget::Commit(CommitHash::new("fedcba9").unwrap());
         let review = crate::review::ReviewResult {
+            summary: review_summary(),
             checks: vec![result(), second],
             errors: Vec::new(),
         };
@@ -321,6 +366,12 @@ mod tests {
         let output = render_review_result(review, options).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
+        assert!(output.starts_with("{\n  \"summary\""));
+        assert!(output.find("\"summary\"").unwrap() < output.find("\"security\"").unwrap());
+        assert_eq!(value["summary"]["peer_version"], "0.1.0");
+        assert_eq!(value["summary"]["provider"], "test-provider");
+        assert_eq!(value["summary"]["model"], "test-model");
+        assert!(value["summary"].get("usage_by_model").is_none());
         assert_eq!(value["security"].as_array().unwrap().len(), 2);
         assert_eq!(value["security"][0]["check"], "security");
         assert_eq!(value["security"][0]["findings"][0]["commit"], "abc1234");
@@ -328,19 +379,50 @@ mod tests {
     }
 
     #[test]
-    fn joins_each_review_check_in_human_readable_formats() {
+    fn renders_review_summary_before_checks_in_human_readable_formats() {
         let mut second = result();
         second.check = "quality".into();
-        let review = crate::review::ReviewResult {
-            checks: vec![result(), second],
-            errors: Vec::new(),
-        };
-        let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
+        for (format, repo, expected_usage, expected_provider) in [
+            (
+                OutputFormat::Terminal,
+                None,
+                "  - test-model: 200 input, 40 output, $0.002000",
+                "- Provider: test-provider",
+            ),
+            (
+                OutputFormat::Markdown,
+                None,
+                "- **test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
+                "- **Provider:** test-provider",
+            ),
+            (
+                OutputFormat::Github,
+                Some("owner/repo".to_string()),
+                "- **test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
+                "- **Provider:** test-provider",
+            ),
+        ] {
+            let review = crate::review::ReviewResult {
+                summary: review_summary(),
+                checks: vec![result(), second.clone()],
+                errors: Vec::new(),
+            };
+            let options = RenderOptions::from_cli(format, repo).unwrap();
 
-        let output = render_review_result(review, options).unwrap();
+            let output = render_review_result(review, options).unwrap();
 
-        assert!(output.contains("## Check: security"));
-        assert!(output.contains("## Check: quality"));
+            assert!(output.contains("security"));
+            assert!(output.contains("quality"));
+            assert!(output.contains("Total token usage"));
+            assert!(output.contains(expected_usage));
+            assert!(output.contains("Review summary"));
+            assert!(output.contains("Peer version:"));
+            assert!(output.contains(expected_provider));
+            assert!(
+                output.find("Review summary").unwrap() < output.find("Total token usage").unwrap()
+            );
+            assert!(output.find("Total token usage").unwrap() < output.find("security").unwrap());
+        }
     }
 
     #[test]

@@ -28,10 +28,18 @@ pub struct ReviewPlan {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReviewResult {
+    pub summary: ReviewSummary,
     pub checks: Vec<CheckResult>,
 
     #[serde(skip)]
     pub errors: Vec<ReviewCheckError>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ReviewSummary {
+    pub peer_version: String,
+    pub provider: String,
+    pub model: String,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
@@ -221,6 +229,14 @@ pub async fn run(
     project_root: PathBuf,
     review_context: &ReviewContext,
 ) -> ReviewResult {
+    let (provider, model) = config
+        .resolve_provider(&config.llm.default_provider, None)
+        .expect("validated config must resolve its default provider and model");
+    let summary = ReviewSummary {
+        peer_version: env!("CARGO_PKG_VERSION").to_string(),
+        provider: provider.name.clone(),
+        model: model.name.clone(),
+    };
     let mut checks = Vec::with_capacity(plan.checks.len());
     let mut errors = Vec::new();
 
@@ -245,7 +261,11 @@ pub async fn run(
         }
     }
 
-    ReviewResult { checks, errors }
+    ReviewResult {
+        summary,
+        checks,
+        errors,
+    }
 }
 
 #[derive(Debug)]
