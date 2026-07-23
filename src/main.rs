@@ -37,7 +37,87 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
-        Command::Review { .. } => unimplemented!(),
+        Command::Review {
+            target,
+            format,
+            repo,
+        } => {
+            let options = match render::RenderOptions::from_cli(format, repo) {
+                Ok(options) => options,
+                Err(error) => {
+                    eprintln!("failed to configure render: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            let cwd = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(error) => {
+                    eprintln!("cannot determine current directory.");
+                    console.debug(format_args!("{error:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let (config, project_root) = match discover(&cwd) {
+                Ok(discovered) => discovered,
+                Err(error) => {
+                    eprintln!("{error}");
+                    console.debug(format_args!("{error:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let target = match review::resolve_target(&target, &project_root, console).await {
+                Ok(target) => target,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            if let Err(error) = review::validate_target(
+                &target,
+                config.review.max_commits.get(),
+                &project_root,
+                console,
+            )
+            .await
+            {
+                eprintln!("error: {error}");
+                console.debug(format_args!("{error:?}"));
+                return ExitCode::FAILURE;
+            }
+
+            let plan = review::plan_checks(&target);
+            console.debug(format_args!("{plan:?}"));
+            let result = review::run(
+                plan,
+                console,
+                &config,
+                project_root,
+                &llm::context::ReviewContext::default(),
+            )
+            .await;
+            for error in &result.errors {
+                eprintln!("error: {error}");
+                console.debug(format_args!("{error:?}"));
+            }
+            let has_errors = !result.errors.is_empty();
+
+            match render::render_review_result(result, options) {
+                Ok(output) => {
+                    println!("{output}");
+                    if has_errors {
+                        ExitCode::FAILURE
+                    } else {
+                        ExitCode::SUCCESS
+                    }
+                }
+                Err(error) => {
+                    eprintln!("failed to render review output: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Extract { command } => {
             let cwd = match std::env::current_dir() {
                 Ok(cwd) => cwd,

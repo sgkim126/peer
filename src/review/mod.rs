@@ -26,7 +26,6 @@ pub struct ReviewPlan {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-#[expect(dead_code)]
 pub struct ReviewResult {
     pub checks: Vec<CheckResult>,
 
@@ -35,7 +34,6 @@ pub struct ReviewResult {
 }
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct ReviewCheckError {
     pub check: ReviewCheck,
     pub error: CheckCommandError,
@@ -94,7 +92,6 @@ impl std::error::Error for ReviewCheckError {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn resolve_target(
     target: &str,
     project_root: &Path,
@@ -134,7 +131,6 @@ pub async fn resolve_target(
     Ok(ReviewTarget::Range { revision, commits })
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn validate_target(
     target: &ReviewTarget,
     max_commits: u32,
@@ -168,7 +164,6 @@ pub async fn validate_target(
     Ok(())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
     let mut checks = Vec::new();
     match target {
@@ -200,7 +195,6 @@ fn append_commit_checks(checks: &mut Vec<ReviewCheck>, commit: &CommitHash) {
     });
 }
 
-#[expect(dead_code)]
 pub async fn run(
     plan: ReviewPlan,
     console: Console,

@@ -124,7 +124,6 @@ pub fn render(input: &str, options: RenderOptions) -> Result<String, RenderError
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn render_review_result(
     result: crate::review::ReviewResult,
     options: RenderOptions,
