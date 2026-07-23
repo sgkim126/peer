@@ -11,12 +11,12 @@ use std::path::PathBuf;
 use crate::cli::CheckCommand;
 use crate::config::Config;
 use crate::console::Console;
-use crate::context::ReviewContext;
+use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
 use crate::llm::provider::{ProviderCreationError, ProviderRuntime};
-use crate::llm::result::CheckTarget;
+use crate::llm::result::{CheckTarget, LlmUsage};
 use runner::{CheckRunConfig, CheckRunError, Checker};
 
 use self::{
@@ -32,7 +32,7 @@ pub trait CheckDefinition {
         &self,
         extractor: &Extractor,
         model: &str,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<AgentRequest, ExtractError>;
 }
 
@@ -92,7 +92,8 @@ pub async fn handler(
     command: CheckCommand,
     config: &Config,
     project_root: PathBuf,
-    review_context: &ReviewContext,
+    review_context: &ReviewContextDigest,
+    context_usage: Option<LlmUsage>,
 ) -> Result<crate::llm::result::CheckResult, CheckCommandError> {
     let extractor = Extractor::new(project_root, console);
 
@@ -129,6 +130,7 @@ pub async fn handler(
             max_iterations: config.max_iterations_for(check.name()).get(),
             input_per_1m_usd: model_config.input_per_1m_usd,
             output_per_1m_usd: model_config.output_per_1m_usd,
+            context_usage,
             console,
         },
     )
@@ -180,7 +182,7 @@ impl CheckDefinition for Check {
         &self,
         extractor: &Extractor,
         model: &str,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<AgentRequest, ExtractError> {
         match self {
             Self::Size(check) => check.agent_request(extractor, model, review_context).await,

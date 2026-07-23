@@ -94,7 +94,7 @@ async fn main() -> ExitCode {
                 console,
                 &config,
                 project_root,
-                &context::ReviewContext::default(),
+                &context::ReviewContextDigest::default(),
             )
             .await;
             for check in &result.checks {
@@ -206,14 +206,39 @@ async fn main() -> ExitCode {
             };
             let result = match discover(&cwd) {
                 Ok((config, project_root)) => {
-                    check::handler(console, command, &config, project_root, &review_context).await
+                    let compression =
+                        match context::compress_review_context(&review_context, &config, console)
+                            .await
+                        {
+                            Ok(compression) => compression,
+                            Err(error) => {
+                                eprintln!("error: {error}");
+                                console.debug(format_args!("{error:?}"));
+                                return ExitCode::FAILURE;
+                            }
+                        };
+                    check::handler(
+                        console,
+                        command,
+                        &config,
+                        project_root,
+                        &compression.digest,
+                        compression.usage,
+                    )
+                    .await
                 }
                 Err(error) => Err(check::CheckCommandError::Config(error)),
             };
             match result {
                 Ok(result) => {
+                    if let Some(usage) = &result.context_usage {
+                        console.verbose(format_args!(
+                            "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
+                            usage.model, usage.cost_usd, usage.input_tokens, usage.output_tokens,
+                        ));
+                    }
                     console.verbose(format_args!(
-                        "{} model cost: ${:.6} (input {} tokens, output {} tokens)",
+                        "{} check model cost: ${:.6} (input {} tokens, output {} tokens)",
                         result.usage.model,
                         result.usage.cost_usd,
                         result.usage.input_tokens,

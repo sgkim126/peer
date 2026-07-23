@@ -281,7 +281,7 @@ impl std::error::Error for RenderOptionsError {}
 mod tests {
     use super::*;
     use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, CheckUsage, FileLocation, Finding, Severity};
+    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
 
     fn result() -> CheckResult {
         CheckResult {
@@ -312,7 +312,8 @@ mod tests {
             iterations: 2,
             is_exhausted: false,
             exhaustion_reason: None,
-            usage: CheckUsage {
+            context_usage: None,
+            usage: LlmUsage {
                 input_tokens: 100,
                 output_tokens: 20,
                 cost_usd: 0.001,

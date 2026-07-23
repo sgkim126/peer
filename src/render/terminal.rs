@@ -3,7 +3,7 @@ use std::fmt::{self, Write};
 
 use owo_colors::Style;
 
-use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, Finding, Severity};
+use crate::llm::result::{CheckResult, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
 use super::escape_terminal;
@@ -65,7 +65,10 @@ pub fn render(result: &CheckResult, use_color: bool) -> String {
         result.iterations
     )
     .unwrap();
-    write_usage(&mut output, &result.usage);
+    if let Some(usage) = &result.context_usage {
+        write_usage(&mut output, "Context usage", usage);
+    }
+    write_usage(&mut output, "Check usage", &result.usage);
     output
 }
 
@@ -115,11 +118,11 @@ fn render_finding(finding: &Finding, use_color: bool) -> String {
     )
 }
 
-fn write_usage(output: &mut String, usage: &CheckUsage) {
+fn write_usage(output: &mut String, label: &str, usage: &LlmUsage) {
     writeln!(output).unwrap();
     write!(
         output,
-        "Usage: {} input, {} output, ${:.6} ({})",
+        "{label}: {} input, {} output, ${:.6} ({})",
         usage.input_tokens,
         usage.output_tokens,
         usage.cost_usd,
@@ -204,7 +207,7 @@ fn finding_context(finding: &Finding) -> String {
 mod tests {
     use super::*;
     use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, CheckUsage, FileLocation, Finding, Severity};
+    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
 
     fn result() -> CheckResult {
         CheckResult {
@@ -235,7 +238,8 @@ mod tests {
             iterations: 2,
             is_exhausted: false,
             exhaustion_reason: None,
-            usage: CheckUsage {
+            context_usage: None,
+            usage: LlmUsage {
                 input_tokens: 100,
                 output_tokens: 20,
                 cost_usd: 0.001,
@@ -248,8 +252,24 @@ mod tests {
     fn has_no_ansi_codes_without_tty() {
         let output = render(&result(), false);
 
-        assert!(output.contains("Usage: 100 input, 20 output, $0.001000 (test-model)"));
+        assert!(output.contains("Check usage: 100 input, 20 output, $0.001000 (test-model)"));
         assert!(!output.contains("\u{1b}["));
+    }
+
+    #[test]
+    fn includes_context_usage_separately() {
+        let mut result = result();
+        result.context_usage = Some(LlmUsage {
+            input_tokens: 40,
+            output_tokens: 10,
+            cost_usd: 0.0004,
+            model: "context-model".to_string(),
+        });
+
+        let output = render(&result, false);
+
+        assert!(output.contains("Context usage: 40 input, 10 output, $0.000400 (context-model)"));
+        assert!(output.contains("Check usage: 100 input, 20 output"));
     }
 
     #[test]

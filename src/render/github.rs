@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, Finding, Severity};
+use crate::llm::result::{CheckResult, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
 use super::{escape_html, escape_markdown};
@@ -43,7 +43,10 @@ pub fn render(result: &CheckResult, repo: &str) -> String {
     writeln!(body, "### Metadata").unwrap();
     writeln!(body).unwrap();
     writeln!(body, "- **Iterations:** {}", result.iterations).unwrap();
-    write_usage_markdown(&mut body, &result.usage);
+    if let Some(usage) = &result.context_usage {
+        write_usage_markdown(&mut body, "Context usage", usage);
+    }
+    write_usage_markdown(&mut body, "Check usage", &result.usage);
 
     format!(
         "<details>\n<summary>Check: {} - Status: {} - Target: {}</summary>\n\n{}\n</details>",
@@ -135,9 +138,9 @@ fn location_label(file: &str, line: Option<u32>) -> String {
     }
 }
 
-fn write_usage_markdown(output: &mut String, usage: &CheckUsage) {
+fn write_usage_markdown(output: &mut String, heading: &str, usage: &LlmUsage) {
     writeln!(output).unwrap();
-    writeln!(output, "### Usage").unwrap();
+    writeln!(output, "### {heading}").unwrap();
     writeln!(output).unwrap();
     writeln!(output, "- **Input tokens:** {}", usage.input_tokens).unwrap();
     writeln!(output, "- **Output tokens:** {}", usage.output_tokens).unwrap();
@@ -208,7 +211,7 @@ fn neutralize_mentions(value: &str) -> String {
 mod tests {
     use super::*;
     use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, CheckUsage, FileLocation, Finding, Severity};
+    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
 
     fn result() -> CheckResult {
         CheckResult {
@@ -239,7 +242,8 @@ mod tests {
             iterations: 2,
             is_exhausted: false,
             exhaustion_reason: None,
-            usage: CheckUsage {
+            context_usage: None,
+            usage: LlmUsage {
                 input_tokens: 100,
                 output_tokens: 20,
                 cost_usd: 0.001,
@@ -292,5 +296,22 @@ mod tests {
         assert!(!output.contains("@reviewers"));
         assert!(!output.contains("@org/team"));
         assert!(!output.contains("@alice"));
+    }
+
+    #[test]
+    fn includes_context_usage_separately() {
+        let mut result = result();
+        result.context_usage = Some(LlmUsage {
+            input_tokens: 40,
+            output_tokens: 10,
+            cost_usd: 0.0004,
+            model: "contextmodel".to_string(),
+        });
+
+        let output = render(&result, "owner/repo");
+
+        assert!(output.contains("### Context usage"));
+        assert!(output.contains("### Check usage"));
+        assert!(output.contains("- **Model:** contextmodel"));
     }
 }

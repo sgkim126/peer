@@ -1,4 +1,4 @@
-use crate::context::ReviewContext;
+use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
@@ -49,7 +49,7 @@ impl CheckDefinition for SizeCheck {
         &self,
         extractor: &Extractor,
         model: &str,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<AgentRequest, ExtractError> {
         let diff = extractor.commit_diff(self.commit.as_ref()).await?;
         let files = extractor.commit_files(self.commit.as_ref()).await?;

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, Finding, Severity};
+use crate::llm::result::{CheckResult, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
 use super::escape_markdown;
@@ -48,7 +48,10 @@ pub fn render(result: &CheckResult) -> String {
     writeln!(output, "### Metadata").unwrap();
     writeln!(output).unwrap();
     writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
-    write_usage_markdown(&mut output, &result.usage);
+    if let Some(usage) = &result.context_usage {
+        write_usage_markdown(&mut output, "Context usage", usage);
+    }
+    write_usage_markdown(&mut output, "Check usage", &result.usage);
     output.trim_end().to_string()
 }
 
@@ -125,9 +128,9 @@ fn finding_context(finding: &Finding) -> String {
     }
 }
 
-fn write_usage_markdown(output: &mut String, usage: &CheckUsage) {
+fn write_usage_markdown(output: &mut String, heading: &str, usage: &LlmUsage) {
     writeln!(output).unwrap();
-    writeln!(output, "### Usage").unwrap();
+    writeln!(output, "### {heading}").unwrap();
     writeln!(output).unwrap();
     writeln!(output, "- **Input tokens:** {}", usage.input_tokens).unwrap();
     writeln!(output, "- **Output tokens:** {}", usage.output_tokens).unwrap();
@@ -139,7 +142,7 @@ fn write_usage_markdown(output: &mut String, usage: &CheckUsage) {
 mod tests {
     use super::*;
     use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, CheckUsage, FileLocation, Finding, Severity};
+    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
 
     fn result() -> CheckResult {
         CheckResult {
@@ -170,7 +173,8 @@ mod tests {
             iterations: 2,
             is_exhausted: false,
             exhaustion_reason: None,
-            usage: CheckUsage {
+            context_usage: None,
+            usage: LlmUsage {
                 input_tokens: 100,
                 output_tokens: 20,
                 cost_usd: 0.001,
@@ -204,8 +208,25 @@ mod tests {
     fn includes_usage() {
         let output = render(&result());
 
-        assert!(output.contains("### Usage"));
+        assert!(output.contains("### Check usage"));
         assert!(output.contains("- **Cost:** $0.001000"));
+    }
+
+    #[test]
+    fn includes_context_usage_separately() {
+        let mut result = result();
+        result.context_usage = Some(LlmUsage {
+            input_tokens: 40,
+            output_tokens: 10,
+            cost_usd: 0.0004,
+            model: "contextmodel".to_string(),
+        });
+
+        let output = render(&result);
+
+        assert!(output.contains("### Context usage"));
+        assert!(output.contains("### Check usage"));
+        assert!(output.contains("- **Model:** contextmodel"));
     }
 
     #[test]

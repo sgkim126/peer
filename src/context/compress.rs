@@ -1,10 +1,14 @@
-#![cfg_attr(not(test), expect(dead_code))]
-
 use std::fmt;
 
+use crate::config::Config;
 use crate::console::Console;
+use crate::error::PeerError;
 use crate::llm::agent::{Agent, AgentOutcome};
-use crate::llm::provider::{ConversationTurn, LlmCallError, LlmProvider, LlmTransport, RawUsage};
+use crate::llm::provider::{
+    ConversationTurn, LlmCallError, LlmProvider, LlmTransport, ProviderCreationError,
+    ProviderRuntime, RawUsage,
+};
+use crate::llm::result::LlmUsage;
 use crate::llm::tools::{NoToolExecutor, submit_review_context_digest};
 
 use super::{DigestValidationError, ReviewContext, ReviewContextDigest};
@@ -24,10 +28,16 @@ duplicate items, and keep the digest concise."#;
 #[derive(Debug, Clone, PartialEq)]
 pub struct ContextCompression {
     pub digest: ReviewContextDigest,
-    pub usage: Option<RawUsage>,
+    pub usage: Option<LlmUsage>,
 }
 
-pub struct ReviewContextCompressor<P, T>
+#[derive(Debug)]
+struct RawContextCompression {
+    digest: ReviewContextDigest,
+    usage: Option<RawUsage>,
+}
+
+struct ReviewContextCompressor<P, T>
 where
     P: LlmProvider,
     T: LlmTransport,
@@ -43,7 +53,7 @@ where
     P: LlmProvider,
     T: LlmTransport,
 {
-    pub fn new(provider: P, transport: T, model: impl Into<String>, console: Console) -> Self {
+    fn new(provider: P, transport: T, model: impl Into<String>, console: Console) -> Self {
         Self {
             provider,
             transport,
@@ -52,12 +62,12 @@ where
         }
     }
 
-    pub async fn compress(
+    async fn compress(
         self,
         context: &ReviewContext,
-    ) -> Result<ContextCompression, ContextCompressionError> {
+    ) -> Result<RawContextCompression, ContextCompressionError> {
         if context.is_empty() {
-            return Ok(ContextCompression {
+            return Ok(RawContextCompression {
                 digest: ReviewContextDigest::default(),
                 usage: None,
             });
@@ -82,7 +92,7 @@ where
                 digest
                     .validate(context)
                     .map_err(|source| ContextCompressionError::InvalidDigest { source })?;
-                Ok(ContextCompression {
+                Ok(RawContextCompression {
                     digest,
                     usage: Some(terminal.usage),
                 })
@@ -92,6 +102,47 @@ where
             }),
         }
     }
+}
+
+pub async fn compress_review_context(
+    context: &ReviewContext,
+    config: &Config,
+    console: Console,
+) -> Result<ContextCompression, ContextCompressionError> {
+    if context.is_empty() {
+        return Ok(ContextCompression {
+            digest: ReviewContextDigest::default(),
+            usage: None,
+        });
+    }
+
+    let (provider_config, model_config) = config
+        .resolve_provider(&config.llm.default_provider, None)
+        .map_err(ContextCompressionError::Config)?;
+    let runtime = ProviderRuntime::try_new(
+        &provider_config.name,
+        &provider_config.api_key_env,
+        provider_config.base_url.as_deref(),
+        console,
+    )
+    .map_err(ContextCompressionError::Provider)?;
+    let (provider, transport) = runtime.into_parts();
+    let compression =
+        ReviewContextCompressor::new(provider, transport, &model_config.name, console)
+            .compress(context)
+            .await?;
+
+    Ok(ContextCompression {
+        digest: compression.digest,
+        usage: compression.usage.map(|usage| {
+            LlmUsage::from_raw_usage(
+                usage,
+                &model_config.name,
+                model_config.input_per_1m_usd,
+                model_config.output_per_1m_usd,
+            )
+        }),
+    })
 }
 
 fn compression_request(model: &str, context: &ReviewContext) -> crate::llm::agent::AgentRequest {
@@ -110,6 +161,8 @@ fn compression_request(model: &str, context: &ReviewContext) -> crate::llm::agen
 
 #[derive(Debug)]
 pub enum ContextCompressionError {
+    Config(PeerError),
+    Provider(ProviderCreationError),
     LlmCall { source: LlmCallError },
     InvalidArguments { source: serde_json::Error },
     InvalidDigest { source: DigestValidationError },
@@ -119,6 +172,8 @@ pub enum ContextCompressionError {
 impl fmt::Display for ContextCompressionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::Config(source) => source.fmt(f),
+            Self::Provider(source) => source.fmt(f),
             Self::LlmCall { source, .. } => {
                 write!(f, "failed to compress review context: {source}")
             }
@@ -141,6 +196,8 @@ impl fmt::Display for ContextCompressionError {
 impl std::error::Error for ContextCompressionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::Config(source) => Some(source),
+            Self::Provider(source) => Some(source),
             Self::LlmCall { source, .. } => Some(source),
             Self::InvalidArguments { source, .. } => Some(source),
             Self::InvalidDigest { source, .. } => Some(source),
@@ -268,6 +325,19 @@ mod tests {
             .compress(&ReviewContext::default())
             .await
             .unwrap();
+
+        assert_eq!(result.digest, ReviewContextDigest::default());
+        assert_eq!(result.usage, None);
+    }
+
+    #[tokio::test]
+    async fn configured_compression_skips_empty_context_before_provider_creation() {
+        let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+
+        let result =
+            compress_review_context(&ReviewContext::default(), &config, Console::default())
+                .await
+                .unwrap();
 
         assert_eq!(result.digest, ReviewContextDigest::default());
         assert_eq!(result.usage, None);

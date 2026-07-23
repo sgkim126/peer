@@ -2,8 +2,7 @@ mod compress;
 mod digest;
 mod review;
 
-#[expect(unused_imports)]
-pub use compress::{ContextCompression, ContextCompressionError, ReviewContextCompressor};
+pub use compress::compress_review_context;
 #[expect(unused_imports)]
 pub use digest::{
     DigestValidationError, MissingContext, ReviewContextDigest, ReviewContextItem,

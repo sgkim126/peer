@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), expect(dead_code))]
-
 use serde_json::json;
 
 use crate::llm::provider::ToolSpec;

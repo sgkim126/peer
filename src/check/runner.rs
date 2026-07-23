@@ -1,11 +1,11 @@
 use std::fmt;
 
 use crate::console::Console;
-use crate::context::ReviewContext;
+use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::agent::{Agent, AgentOutcome};
 use crate::llm::provider::{LlmCallError, ProviderRuntime};
-use crate::llm::result::{CheckOutput, CheckResult, CheckUsage};
+use crate::llm::result::{CheckOutput, CheckResult, LlmUsage};
 use crate::llm::tools::{ExtractToolExecutor, request_clarification, submit_check_result};
 
 use super::CheckDefinition;
@@ -15,6 +15,7 @@ pub struct CheckRunConfig {
     pub max_iterations: u32,
     pub input_per_1m_usd: f64,
     pub output_per_1m_usd: f64,
+    pub context_usage: Option<LlmUsage>,
     pub console: Console,
 }
 
@@ -57,7 +58,7 @@ impl Checker {
     pub async fn run<C>(
         self,
         check: &C,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<CheckResult, CheckRunError>
     where
         C: CheckDefinition,
@@ -231,11 +232,37 @@ where
         iterations,
         is_exhausted,
         exhaustion_reason,
-        usage: CheckUsage::from_raw_usage(
+        context_usage: config.context_usage.clone(),
+        usage: LlmUsage::from_raw_usage(
             usage,
             &config.model,
             config.input_per_1m_usd,
             config.output_per_1m_usd,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_non_empty_clarification_questions() {
+        assert_eq!(
+            parse_clarification_questions(json!({
+                "questions": ["Which deployment policy applies?"]
+            }))
+            .unwrap(),
+            ["Which deployment policy applies?"]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_clarification_questions() {
+        assert_eq!(
+            parse_clarification_questions(json!({ "questions": [] })).unwrap_err(),
+            "invalid request_clarification arguments: questions must not be empty"
+        );
     }
 }

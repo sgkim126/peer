@@ -1,4 +1,4 @@
-use crate::context::ReviewContext;
+use crate::context::ReviewContextDigest;
 use crate::extract::{CommitList, ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
@@ -51,7 +51,7 @@ impl CheckDefinition for CoherenceCheck {
         &self,
         extractor: &Extractor,
         model: &str,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<AgentRequest, ExtractError> {
         let mut entries = Vec::with_capacity(self.commits.commits.len());
         for (index, commit) in self.commits.commits.iter().enumerate() {

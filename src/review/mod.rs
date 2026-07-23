@@ -8,7 +8,7 @@ use crate::check::{self, CheckCommandError};
 use crate::cli::CheckCommand;
 use crate::config::Config;
 use crate::console::Console;
-use crate::context::ReviewContext;
+use crate::context::ReviewContextDigest;
 use crate::git::{CommitHash, GitError, run_git};
 use crate::llm::result::CheckResult;
 
@@ -227,7 +227,7 @@ pub async fn run(
     console: Console,
     config: &Config,
     project_root: PathBuf,
-    review_context: &ReviewContext,
+    review_context: &ReviewContextDigest,
 ) -> ReviewResult {
     let (provider, model) = config
         .resolve_provider(&config.llm.default_provider, None)
@@ -250,6 +250,7 @@ pub async fn run(
             config,
             project_root.clone(),
             review_context,
+            None,
         )
         .await
         {
