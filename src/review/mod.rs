@@ -1,8 +1,15 @@
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use serde::{Deserialize, Serialize};
+
+use crate::check::{self, CheckCommandError};
+use crate::cli::CheckCommand;
+use crate::config::Config;
 use crate::console::Console;
 use crate::git::{CommitHash, GitError, run_git};
+use crate::llm::context::ReviewContext;
+use crate::llm::result::CheckResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {
@@ -11,6 +18,80 @@ pub enum ReviewTarget {
         revision: String,
         commits: Vec<CommitHash>,
     },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReviewPlan {
+    pub checks: Vec<ReviewCheck>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+#[expect(dead_code)]
+pub struct ReviewResult {
+    pub checks: Vec<CheckResult>,
+
+    #[serde(skip, default)]
+    pub errors: Vec<ReviewCheckError>,
+}
+
+#[derive(Debug)]
+#[expect(dead_code)]
+pub struct ReviewCheckError {
+    pub check: ReviewCheck,
+    pub error: CheckCommandError,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReviewCheck {
+    Size { revision: CommitHash },
+    Intent { revision: CommitHash },
+    Quality { revision: CommitHash },
+    Security { revision: CommitHash },
+    Coherence { range: String },
+}
+
+impl From<ReviewCheck> for CheckCommand {
+    fn from(check: ReviewCheck) -> Self {
+        match check {
+            ReviewCheck::Size { revision } => Self::Size {
+                revision: revision.to_string(),
+            },
+            ReviewCheck::Intent { revision } => Self::Intent {
+                revision: revision.to_string(),
+            },
+            ReviewCheck::Quality { revision } => Self::Quality {
+                revision: revision.to_string(),
+            },
+            ReviewCheck::Security { revision } => Self::Security {
+                revision: revision.to_string(),
+            },
+            ReviewCheck::Coherence { range } => Self::Coherence { range },
+        }
+    }
+}
+
+impl fmt::Display for ReviewCheck {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Size { revision } => write!(f, "size {revision}"),
+            Self::Intent { revision } => write!(f, "intent {revision}"),
+            Self::Quality { revision } => write!(f, "quality {revision}"),
+            Self::Security { revision } => write!(f, "security {revision}"),
+            Self::Coherence { range } => write!(f, "coherence {range}"),
+        }
+    }
+}
+
+impl fmt::Display for ReviewCheckError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} failed: {}", self.check, self.error)
+    }
+}
+
+impl std::error::Error for ReviewCheckError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
 }
 
 #[cfg_attr(not(test), expect(dead_code))]
@@ -85,6 +166,73 @@ pub async fn validate_target(
     }
 
     Ok(())
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
+    let mut checks = Vec::new();
+    match target {
+        ReviewTarget::Commit(commit) => append_commit_checks(&mut checks, commit),
+        ReviewTarget::Range { revision, commits } => {
+            for commit in commits {
+                append_commit_checks(&mut checks, commit);
+            }
+            checks.push(ReviewCheck::Coherence {
+                range: revision.clone(),
+            });
+        }
+    }
+    ReviewPlan { checks }
+}
+
+fn append_commit_checks(checks: &mut Vec<ReviewCheck>, commit: &CommitHash) {
+    checks.push(ReviewCheck::Size {
+        revision: commit.clone(),
+    });
+    checks.push(ReviewCheck::Intent {
+        revision: commit.clone(),
+    });
+    checks.push(ReviewCheck::Quality {
+        revision: commit.clone(),
+    });
+    checks.push(ReviewCheck::Security {
+        revision: commit.clone(),
+    });
+}
+
+#[expect(dead_code)]
+pub async fn run(
+    plan: ReviewPlan,
+    console: Console,
+    config: &Config,
+    project_root: PathBuf,
+    review_context: &ReviewContext,
+) -> ReviewResult {
+    let mut checks = Vec::with_capacity(plan.checks.len());
+    let mut errors = Vec::new();
+
+    // Checks are intentionally ordered: output follows commit order and the
+    // range-level coherence check runs after all per-commit checks.
+    for review_check in plan.checks {
+        let command = CheckCommand::from(review_check.clone());
+        match check::handler(
+            console,
+            command,
+            config,
+            project_root.clone(),
+            review_context,
+        )
+        .await
+        {
+            Ok(result) => checks.push(result),
+            Err(error) => errors.push(ReviewCheckError {
+                check: review_check,
+                error,
+            }),
+        }
+    }
+
+    ReviewResult { checks, errors }
 }
 
 #[derive(Debug)]
@@ -231,6 +379,24 @@ mod tests {
             Err(ReviewTargetError::TooManyCommits {
                 actual: 2,
                 maximum: 1
+            })
+        );
+    }
+
+    #[test]
+    fn plans_commit_checks_and_range_coherence() {
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let plan = plan_checks(&ReviewTarget::Range {
+            revision: "main..HEAD".into(),
+            commits: vec![first, second],
+        });
+
+        assert_eq!(plan.checks.len(), 9);
+        assert_eq!(
+            plan.checks.last(),
+            Some(&ReviewCheck::Coherence {
+                range: "main..HEAD".into()
             })
         );
     }
