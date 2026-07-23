@@ -3,6 +3,7 @@ use std::num::NonZeroU32;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value, json};
 
 use crate::git::CommitHash;
 
@@ -66,7 +67,7 @@ impl ReviewContext {
         Some(format!("{REVIEW_CONTEXT_HEADER}\n{context}"))
     }
 
-    fn is_empty(&self) -> bool {
+    pub fn is_empty(&self) -> bool {
         matches!(
             (
                 self.title.as_deref(),
@@ -75,6 +76,59 @@ impl ReviewContext {
             ),
             (None | Some(""), None | Some(""), [])
         )
+    }
+
+    pub fn compression_input(&self) -> Value {
+        let mut input = Map::new();
+        if let Some(title) = self.title.as_ref().filter(|value| !value.is_empty()) {
+            input.insert(
+                "title".to_string(),
+                json!({ "source": "title", "text": title }),
+            );
+        }
+        if let Some(body) = self.body.as_ref().filter(|value| !value.is_empty()) {
+            input.insert(
+                "body".to_string(),
+                json!({ "source": "body", "text": body }),
+            );
+        }
+        if !self.comments.is_empty() {
+            input.insert(
+                "threads".to_string(),
+                Value::Array(
+                    self.comments
+                        .iter()
+                        .enumerate()
+                        .map(|(index, thread)| {
+                            json!({
+                                "source": format!("thread:{index}"),
+                                "commit": thread.commit,
+                                "location": thread.location,
+                                "comments": thread.comments,
+                            })
+                        })
+                        .collect(),
+                ),
+            );
+        }
+        Value::Object(input)
+    }
+
+    pub fn source_ids(&self) -> Vec<String> {
+        let mut sources = Vec::new();
+        if self.title.as_ref().is_some_and(|value| !value.is_empty()) {
+            sources.push("title".to_string());
+        }
+        if self.body.as_ref().is_some_and(|value| !value.is_empty()) {
+            sources.push("body".to_string());
+        }
+        sources.extend(
+            self.comments
+                .iter()
+                .enumerate()
+                .map(|(index, _)| format!("thread:{index}")),
+        );
+        sources
     }
 }
 
