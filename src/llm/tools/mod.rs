@@ -3,6 +3,8 @@ mod extract;
 mod request_clarification;
 mod submit_check_result;
 
+#[expect(unused_imports)]
+pub use executor::NoToolExecutor;
 #[cfg_attr(not(test), expect(unused_imports))]
 pub use executor::ToolExecutionError;
 pub use executor::{ToolExecutionResult, ToolExecutor};

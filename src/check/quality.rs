@@ -70,14 +70,8 @@ impl CheckDefinition for QualityCheck {
                     serde_json::to_string_pretty(&input).expect("quality check input serializes")
                 )),
             ],
-            tools: vec![
-                get_file_content(),
-                get_file_diff(),
-                list_tree(),
-                grep(),
-                request_clarification(),
-                submit_check_result(),
-            ],
+            tools: vec![get_file_content(), get_file_diff(), list_tree(), grep()],
+            terminal_tools: vec![request_clarification(), submit_check_result()],
         };
         if let Some(prompt) = review_context.to_prompt() {
             request.conversation.push(ConversationTurn::User(prompt));

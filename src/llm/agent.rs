@@ -1,5 +1,3 @@
-#![cfg_attr(not(test), expect(dead_code))]
-
 use std::fmt;
 
 use crate::console::Console;
@@ -7,10 +5,7 @@ use crate::llm::provider::{
     ConversationTurn, LlmCallError, LlmProvider, LlmRequest, LlmResponse, LlmTransport, RawUsage,
     ToolCall, ToolSpec,
 };
-use crate::llm::result::CheckOutput;
-use crate::llm::tools::{
-    ToolExecutionResult, ToolExecutor, request_clarification, submit_check_result,
-};
+use crate::llm::tools::{ToolExecutionResult, ToolExecutor};
 
 use serde_json::json;
 
@@ -18,6 +13,7 @@ pub struct AgentRequest {
     pub model: String,
     pub conversation: Vec<ConversationTurn>,
     pub tools: Vec<ToolSpec>,
+    pub terminal_tools: Vec<ToolSpec>,
 }
 
 pub struct Agent<P, T, E>
@@ -33,15 +29,8 @@ where
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct AgentCompletion {
-    pub output: CheckOutput,
-    pub usage: RawUsage,
-    pub iterations: u32,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct AgentClarification {
-    pub questions: Vec<String>,
+pub struct AgentTerminal {
+    pub call: ToolCall,
     pub usage: RawUsage,
     pub iterations: u32,
 }
@@ -55,8 +44,7 @@ pub struct AgentFailure {
 
 #[derive(Debug)]
 pub enum AgentOutcome {
-    Completed(AgentCompletion),
-    ClarificationRequested(AgentClarification),
+    Terminal(AgentTerminal),
     Error(AgentFailure),
 }
 
@@ -76,27 +64,35 @@ where
     }
 
     pub async fn run_loop(&self, request: AgentRequest, max_iterations: u32) -> AgentOutcome {
-        let clarification_tool_name = request_clarification().name;
-        let submit_result_tool_name = submit_check_result().name;
-        let terminal_tools = terminal_tools(
-            &request.tools,
-            [&submit_result_tool_name, &clarification_tool_name],
-        );
-        let mut conversation = request.conversation;
+        let AgentRequest {
+            model,
+            mut conversation,
+            tools,
+            terminal_tools,
+        } = request;
+        let all_tools = tools
+            .iter()
+            .chain(&terminal_tools)
+            .cloned()
+            .collect::<Vec<_>>();
+        let terminal_tool_names = terminal_tools
+            .iter()
+            .map(|tool| tool.name.as_str())
+            .collect::<Vec<_>>();
         let mut usage = RawUsage::default();
 
         for iteration in 1..=max_iterations {
             let is_last_request = iteration == max_iterations;
-            let tools = if is_last_request {
+            let request_tools = if is_last_request {
                 &terminal_tools
             } else {
-                &request.tools
+                &all_tools
             };
             let http_request = match self.provider.build_request(
                 LlmRequest {
-                    model: &request.model,
+                    model: &model,
                     conversation: &conversation,
-                    tools,
+                    tools: request_tools,
                 },
                 is_last_request,
             ) {
@@ -124,54 +120,43 @@ where
                     .join(", "),
             ));
 
-            // TODO: Define a policy for responses containing both
-            // `request_clarification` and `submit_check_result` tool calls.
-            if let Some(tool_call) = tool_calls
+            let called_terminal_tools = tool_calls
                 .iter()
-                .find(|tool_call| tool_call.name == clarification_tool_name)
-            {
-                let questions = match parse_clarification_questions(tool_call) {
-                    Ok(questions) => questions,
-                    Err(error) => return error_outcome(error, usage, iteration),
-                };
-                return AgentOutcome::ClarificationRequested(AgentClarification {
-                    questions,
-                    usage,
-                    iterations: iteration,
-                });
-            }
-
-            if let Some(tool_call) = tool_calls
-                .iter()
-                .find(|tool_call| tool_call.name == submit_result_tool_name)
-            {
-                let output = match serde_json::from_value(tool_call.arguments.clone()) {
-                    Ok(output) => output,
-                    Err(error) => {
-                        return error_outcome(
-                            permanent_error(
-                                format!("invalid submit_check_result arguments: {error}"),
-                                AgentError::InvalidCheckOutput { source: error },
+                .filter(|call| terminal_tool_names.contains(&call.name.as_str()))
+                .collect::<Vec<_>>();
+            match called_terminal_tools.as_slice() {
+                [tool_call] => {
+                    return AgentOutcome::Terminal(AgentTerminal {
+                        call: (*tool_call).clone(),
+                        usage,
+                        iterations: iteration,
+                    });
+                }
+                [] => {}
+                calls => {
+                    return error_outcome(
+                        permanent_error(
+                            format!(
+                                "LLM agent called multiple terminal tools: {}",
+                                calls
+                                    .iter()
+                                    .map(|call| call.name.as_str())
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
                             ),
-                            usage,
-                            iteration,
-                        );
-                    }
-                };
-
-                return AgentOutcome::Completed(AgentCompletion {
-                    output,
-                    usage,
-                    iterations: iteration,
-                });
+                            AgentError::MultipleTerminalCalls,
+                        ),
+                        usage,
+                        iteration,
+                    );
+                }
             }
 
             if is_last_request {
                 return error_outcome(
                     permanent_error(
                         format!(
-                            "LLM agent did not submit a check result within {} iterations",
-                            max_iterations
+                            "LLM agent did not call a terminal tool within {max_iterations} iterations"
                         ),
                         AgentError::LoopExhausted,
                     ),
@@ -191,8 +176,7 @@ where
         error_outcome(
             permanent_error(
                 format!(
-                    "LLM agent did not submit a check result within {} iterations",
-                    max_iterations
+                    "LLM agent did not call a terminal tool within {max_iterations} iterations"
                 ),
                 AgentError::LoopExhausted,
             ),
@@ -200,39 +184,6 @@ where
             max_iterations,
         )
     }
-}
-
-fn terminal_tools(tools: &[ToolSpec], terminal_tool_names: [&str; 2]) -> Vec<ToolSpec> {
-    tools
-        .iter()
-        .filter(|tool| terminal_tool_names.contains(&tool.name.as_str()))
-        .cloned()
-        .collect()
-}
-
-fn parse_clarification_questions(tool_call: &ToolCall) -> Result<Vec<String>, LlmCallError> {
-    #[derive(serde::Deserialize)]
-    struct ClarificationArguments {
-        questions: Vec<String>,
-    }
-
-    let arguments: ClarificationArguments = serde_json::from_value(tool_call.arguments.clone())
-        .map_err(|error| {
-            permanent_error(
-                format!("invalid request_clarification arguments: {error}"),
-                AgentError::InvalidClarificationRequest {
-                    source: Some(Box::new(error)),
-                },
-            )
-        })?;
-    if arguments.questions.is_empty() {
-        return Err(permanent_error(
-            "invalid request_clarification arguments: questions must not be empty".to_string(),
-            AgentError::InvalidClarificationRequest { source: None },
-        ));
-    }
-
-    Ok(arguments.questions)
 }
 
 fn tool_result_json(result: ToolExecutionResult) -> serde_json::Value {
@@ -259,22 +210,14 @@ fn error_outcome(error: LlmCallError, usage: RawUsage, iterations: u32) -> Agent
 
 #[derive(Debug)]
 enum AgentError {
-    InvalidCheckOutput {
-        source: serde_json::Error,
-    },
-    InvalidClarificationRequest {
-        source: Option<Box<dyn std::error::Error>>,
-    },
+    MultipleTerminalCalls,
     LoopExhausted,
 }
 
 impl fmt::Display for AgentError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::InvalidCheckOutput { .. } => f.write_str("invalid check output"),
-            Self::InvalidClarificationRequest { .. } => {
-                f.write_str("invalid clarification request")
-            }
+            Self::MultipleTerminalCalls => f.write_str("multiple terminal tool calls"),
             Self::LoopExhausted => f.write_str("agent loop exhausted"),
         }
     }
@@ -282,11 +225,7 @@ impl fmt::Display for AgentError {
 
 impl std::error::Error for AgentError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::InvalidCheckOutput { source } => Some(source),
-            Self::InvalidClarificationRequest { source } => source.as_deref(),
-            Self::LoopExhausted => None,
-        }
+        None
     }
 }
 
@@ -370,15 +309,11 @@ mod tests {
     }
 
     fn tools() -> Vec<ToolSpec> {
-        vec![
-            ToolSpec {
-                name: "get_commit_diff".to_string(),
-                description: "Read a commit diff".to_string(),
-                parameters: json!({ "type": "object" }),
-            },
-            submit_check_result(),
-            request_clarification(),
-        ]
+        vec![ToolSpec {
+            name: "get_commit_diff".to_string(),
+            description: "Read a commit diff".to_string(),
+            parameters: json!({ "type": "object" }),
+        }]
     }
 
     fn request(tools: Vec<ToolSpec>) -> AgentRequest {
@@ -386,6 +321,7 @@ mod tests {
             model: "test-model".to_string(),
             conversation: Vec::new(),
             tools,
+            terminal_tools: vec![request_clarification(), submit_check_result()],
         }
     }
 
@@ -403,16 +339,51 @@ mod tests {
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
         let outcome = agent.run_loop(request(tools), 2).await;
 
-        let AgentOutcome::Completed(result) = outcome else {
-            panic!("expected completed outcome");
+        let AgentOutcome::Terminal(result) = outcome else {
+            panic!("expected terminal outcome");
         };
-        assert_eq!(result.output.summary, "done");
+        assert_eq!(result.call.name, submit_check_result().name);
+        assert_eq!(
+            result.call.arguments,
+            json!({ "summary": "done", "findings": [] })
+        );
         assert_eq!(result.usage.input_tokens, 10);
         assert_eq!(result.iterations, 1);
     }
 
     #[tokio::test]
-    async fn returns_usage_with_invalid_check_output() {
+    async fn completes_from_a_custom_terminal_tool() {
+        let completion_tool = ToolSpec {
+            name: "submit_custom_output".to_string(),
+            description: "Submit custom output".to_string(),
+            parameters: json!({ "type": "object" }),
+        };
+        let provider =
+            MockProvider::new([Ok(call_result(LlmResponse::ToolCalls(vec![tool_call(
+                "call-submit",
+                &completion_tool.name,
+                json!({ "value": "done" }),
+            )])))]);
+        let transport = TestTransport::new([Ok(response())]);
+        let request = AgentRequest {
+            model: "test-model".to_string(),
+            conversation: Vec::new(),
+            tools: Vec::new(),
+            terminal_tools: vec![completion_tool],
+        };
+
+        let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
+        let outcome = agent.run_loop(request, 1).await;
+
+        let AgentOutcome::Terminal(result) = outcome else {
+            panic!("expected terminal outcome");
+        };
+        assert_eq!(result.call.name, "submit_custom_output");
+        assert_eq!(result.call.arguments, json!({ "value": "done" }));
+    }
+
+    #[tokio::test]
+    async fn does_not_parse_terminal_tool_arguments() {
         let provider =
             MockProvider::new([Ok(call_result(LlmResponse::ToolCalls(vec![tool_call(
                 "call-submit",
@@ -424,16 +395,13 @@ mod tests {
 
         let outcome = agent.run_loop(request(tools()), 2).await;
 
-        let AgentOutcome::Error(failure) = outcome else {
-            panic!("expected error outcome");
+        let AgentOutcome::Terminal(result) = outcome else {
+            panic!("expected terminal outcome");
         };
-        assert_eq!(
-            failure.error.to_string(),
-            "permanent LLM call failure: invalid submit_check_result arguments: missing field `commit`"
-        );
-        assert_eq!(failure.usage.input_tokens, 10);
-        assert_eq!(failure.usage.output_tokens, 5);
-        assert_eq!(failure.iterations, 1);
+        assert_eq!(result.call.arguments, json!({ "findings": [{}] }));
+        assert_eq!(result.usage.input_tokens, 10);
+        assert_eq!(result.usage.output_tokens, 5);
+        assert_eq!(result.iterations, 1);
     }
 
     #[tokio::test]
@@ -456,15 +424,46 @@ mod tests {
         let agent = Agent::new(provider, transport, FailingToolExecutor, Console::default());
         let outcome = agent.run_loop(request(tools), 2).await;
 
-        let AgentOutcome::ClarificationRequested(clarification) = outcome else {
-            panic!("expected clarification outcome");
+        let AgentOutcome::Terminal(terminal) = outcome else {
+            panic!("expected terminal outcome");
+        };
+        assert_eq!(terminal.call.name, request_clarification().name);
+        assert_eq!(
+            terminal.call.arguments,
+            json!({ "questions": ["Which deployment policy applies?"] })
+        );
+        assert_eq!(terminal.usage.input_tokens, 10);
+        assert_eq!(terminal.iterations, 1);
+    }
+
+    #[tokio::test]
+    async fn rejects_multiple_terminal_tool_calls() {
+        let provider = MockProvider::new([Ok(call_result(LlmResponse::ToolCalls(vec![
+            tool_call(
+                "call-question",
+                &request_clarification().name,
+                json!({ "questions": ["Which policy applies?"] }),
+            ),
+            tool_call(
+                "call-submit",
+                &submit_check_result().name,
+                json!({ "findings": [] }),
+            ),
+        ])))]);
+        let transport = TestTransport::new([Ok(response())]);
+
+        let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
+        let outcome = agent.run_loop(request(tools()), 2).await;
+
+        let AgentOutcome::Error(failure) = outcome else {
+            panic!("expected error outcome");
         };
         assert_eq!(
-            clarification.questions,
-            ["Which deployment policy applies?"]
+            failure.error.to_string(),
+            "permanent LLM call failure: LLM agent called multiple terminal tools: request_clarification, submit_check_result"
         );
-        assert_eq!(clarification.usage.input_tokens, 10);
-        assert_eq!(clarification.iterations, 1);
+        assert_eq!(failure.usage.input_tokens, 10);
+        assert_eq!(failure.iterations, 1);
     }
 
     #[tokio::test]
@@ -534,7 +533,7 @@ mod tests {
                 .iter()
                 .map(|tool| tool.name.as_str())
                 .collect::<Vec<_>>(),
-            [submit_check_result().name, request_clarification().name]
+            [request_clarification().name, submit_check_result().name]
         );
     }
 

@@ -67,11 +67,8 @@ impl CheckDefinition for SizeCheck {
                     serde_json::to_string_pretty(&input).expect("size check input serializes")
                 )),
             ],
-            tools: vec![
-                get_file_content(),
-                request_clarification(),
-                submit_check_result(),
-            ],
+            tools: vec![get_file_content()],
+            terminal_tools: vec![request_clarification(), submit_check_result()],
         };
         if let Some(prompt) = review_context.to_prompt() {
             request.conversation.push(ConversationTurn::User(prompt));
