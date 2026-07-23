@@ -1,9 +1,9 @@
 use std::fmt;
 
 use crate::console::Console;
+use crate::context::ReviewContext;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::agent::{Agent, AgentOutcome};
-use crate::llm::context::ReviewContext;
 use crate::llm::provider::{LlmCallError, ProviderRuntime};
 use crate::llm::result::{CheckOutput, CheckResult, CheckUsage};
 use crate::llm::tools::{ExtractToolExecutor, request_clarification, submit_check_result};

@@ -8,8 +8,8 @@ use crate::check::{self, CheckCommandError};
 use crate::cli::CheckCommand;
 use crate::config::Config;
 use crate::console::Console;
+use crate::context::ReviewContext;
 use crate::git::{CommitHash, GitError, run_git};
-use crate::llm::context::ReviewContext;
 use crate::llm::result::CheckResult;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

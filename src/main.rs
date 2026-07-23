@@ -2,6 +2,7 @@ mod check;
 mod cli;
 mod config;
 mod console;
+mod context;
 mod error;
 mod extract;
 mod git;
@@ -93,7 +94,7 @@ async fn main() -> ExitCode {
                 console,
                 &config,
                 project_root,
-                &llm::context::ReviewContext::default(),
+                &context::ReviewContext::default(),
             )
             .await;
             for check in &result.checks {
@@ -184,7 +185,7 @@ async fn main() -> ExitCode {
             if comments_file.is_none() {
                 eprintln!("warning: review comments file was not provided.");
             }
-            let review_context = match llm::context::ReviewContext::load(
+            let review_context = match context::ReviewContext::load(
                 title,
                 body_file.as_deref(),
                 comments_file.as_deref(),

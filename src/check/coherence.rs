@@ -1,7 +1,7 @@
+use crate::context::ReviewContext;
 use crate::extract::{CommitList, ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
-use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 use crate::llm::result::CheckTarget;
 use crate::llm::tools::{
