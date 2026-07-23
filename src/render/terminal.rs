@@ -1,8 +1,10 @@
+use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 
 use owo_colors::Style;
 
 use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, Finding, Severity};
+use crate::review::{ModelUsage, ReviewSummary};
 
 use super::escape_terminal;
 
@@ -65,6 +67,35 @@ pub fn render(result: &CheckResult, use_color: bool) -> String {
     .unwrap();
     write_usage(&mut output, &result.usage);
     output
+}
+
+pub fn render_review_summary(
+    summary: &ReviewSummary,
+    usage_by_model: &BTreeMap<String, ModelUsage>,
+    use_color: bool,
+) -> String {
+    let mut output = String::new();
+    writeln!(output, "{}", label("Review summary:", use_color)).unwrap();
+    writeln!(output, "- Peer version: {}", summary.peer_version).unwrap();
+    writeln!(output, "- Provider: {}", summary.provider).unwrap();
+    writeln!(output, "- Model: {}", summary.model).unwrap();
+    writeln!(output, "- Total token usage:").unwrap();
+    if usage_by_model.is_empty() {
+        write!(output, "  - none").unwrap();
+    } else {
+        for (model, usage) in usage_by_model {
+            writeln!(
+                output,
+                "  - {}: {} input, {} output, ${:.6}",
+                escape_terminal(model),
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cost_usd,
+            )
+            .unwrap();
+        }
+    }
+    output.trim_end().to_string()
 }
 
 fn render_finding(finding: &Finding, use_color: bool) -> String {

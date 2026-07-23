@@ -1,6 +1,8 @@
+use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use crate::llm::result::{CheckResult, CheckTarget, CheckUsage, Finding, Severity};
+use crate::review::{ModelUsage, ReviewSummary};
 
 use super::escape_markdown;
 
@@ -47,6 +49,32 @@ pub fn render(result: &CheckResult) -> String {
     writeln!(output).unwrap();
     writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
     write_usage_markdown(&mut output, &result.usage);
+    output.trim_end().to_string()
+}
+
+pub fn render_review_summary(
+    summary: &ReviewSummary,
+    usage_by_model: &BTreeMap<String, ModelUsage>,
+) -> String {
+    let mut output = format!(
+        "## Review summary\n\n- **Peer version:** {}\n- **Provider:** {}\n- **Model:** {}\n\n### Total token usage\n\n",
+        summary.peer_version, summary.provider, summary.model,
+    );
+    if usage_by_model.is_empty() {
+        output.push_str("None.");
+    } else {
+        for (model, usage) in usage_by_model {
+            writeln!(
+                output,
+                "- **{}:** {} input tokens, {} output tokens, ${:.6}",
+                escape_markdown(model),
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cost_usd,
+            )
+            .unwrap();
+        }
+    }
     output.trim_end().to_string()
 }
 

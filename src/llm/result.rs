@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::{fmt, path::Path};
 
 use crate::console::Console;
 use crate::git::CommitHash;
@@ -36,6 +36,15 @@ pub struct Finding {
 pub enum CheckTarget {
     Commit(CommitHash),
     Range(String),
+}
+
+impl fmt::Display for CheckTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Commit(commit) => commit.fmt(f),
+            Self::Range(range) => range.fmt(f),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
@@ -331,6 +340,15 @@ mod tests {
 
         assert_matches!(commit, CheckTarget::Commit(_));
         assert_eq!(range, CheckTarget::Range("HEAD~3..HEAD".to_string()));
+    }
+
+    #[test]
+    fn check_target_displays_its_revision() {
+        let commit = CheckTarget::Commit(CommitHash::new("abc1234").unwrap());
+        let range = CheckTarget::Range("HEAD~3..HEAD".to_string());
+
+        assert_eq!(commit.to_string(), "abc1234");
+        assert_eq!(range.to_string(), "HEAD~3..HEAD");
     }
 
     #[test]
