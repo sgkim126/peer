@@ -1,4 +1,5 @@
 pub mod agent;
+pub mod context;
 pub mod provider;
 pub mod result;
 pub mod tools;

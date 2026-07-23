@@ -1,6 +1,7 @@
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
+use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 use crate::llm::result::CheckTarget;
 use crate::llm::tools::{
@@ -53,6 +54,7 @@ impl CheckDefinition for SecurityCheck {
         &self,
         extractor: &Extractor,
         model: &str,
+        review_context: &ReviewContext,
     ) -> Result<AgentRequest, ExtractError> {
         let diff = extractor.commit_diff(self.commit.as_ref()).await?;
         let files = extractor.commit_files(self.commit.as_ref()).await?;
@@ -61,7 +63,7 @@ impl CheckDefinition for SecurityCheck {
             "changed_files": files.files,
             "diff": diff.diff,
         });
-        Ok(AgentRequest {
+        let mut request = AgentRequest {
             model: model.to_string(),
             conversation: vec![
                 ConversationTurn::System(SYSTEM_PROMPT.to_string()),
@@ -78,6 +80,10 @@ impl CheckDefinition for SecurityCheck {
                 request_clarification(),
                 submit_check_result(),
             ],
-        })
+        };
+        if let Some(prompt) = review_context.to_prompt() {
+            request.conversation.push(ConversationTurn::User(prompt));
+        }
+        Ok(request)
     }
 }

@@ -14,6 +14,7 @@ use crate::console::Console;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
+use crate::llm::context::ReviewContext;
 use crate::llm::provider::{ProviderCreationError, ProviderRuntime};
 use crate::llm::result::CheckTarget;
 use runner::{CheckRunConfig, CheckRunError, Checker};
@@ -31,6 +32,7 @@ pub trait CheckDefinition {
         &self,
         extractor: &Extractor,
         model: &str,
+        review_context: &ReviewContext,
     ) -> Result<AgentRequest, ExtractError>;
 }
 
@@ -90,6 +92,7 @@ pub async fn handler(
     command: CheckCommand,
     config: &Config,
     project_root: PathBuf,
+    review_context: &ReviewContext,
 ) -> Result<crate::llm::result::CheckResult, CheckCommandError> {
     let extractor = Extractor::new(project_root, console);
 
@@ -129,7 +132,7 @@ pub async fn handler(
             console,
         },
     )
-    .run(&check)
+    .run(&check, review_context)
     .await?;
     Ok(result)
 }
@@ -177,13 +180,14 @@ impl CheckDefinition for Check {
         &self,
         extractor: &Extractor,
         model: &str,
+        review_context: &ReviewContext,
     ) -> Result<AgentRequest, ExtractError> {
         match self {
-            Self::Size(check) => check.agent_request(extractor, model).await,
-            Self::Intent(check) => check.agent_request(extractor, model).await,
-            Self::Quality(check) => check.agent_request(extractor, model).await,
-            Self::Security(check) => check.agent_request(extractor, model).await,
-            Self::Coherence(check) => check.agent_request(extractor, model).await,
+            Self::Size(check) => check.agent_request(extractor, model, review_context).await,
+            Self::Intent(check) => check.agent_request(extractor, model, review_context).await,
+            Self::Quality(check) => check.agent_request(extractor, model, review_context).await,
+            Self::Security(check) => check.agent_request(extractor, model, review_context).await,
+            Self::Coherence(check) => check.agent_request(extractor, model, review_context).await,
         }
     }
 }
