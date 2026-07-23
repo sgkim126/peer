@@ -57,12 +57,25 @@ pub fn render(result: &CheckResult) -> String {
 
 pub fn render_review_summary(
     summary: &ReviewSummary,
+    context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
 ) -> String {
     let mut output = format!(
-        "## Review summary\n\n- **Peer version:** {}\n- **Provider:** {}\n- **Model:** {}\n\n### Total token usage\n\n",
+        "## Review summary\n\n- **Peer version:** {}\n- **Provider:** {}\n- **Model:** {}",
         summary.peer_version, summary.provider, summary.model,
     );
+    if let Some(usage) = context_usage {
+        write!(
+            output,
+            "\n- **Context usage:** {} input tokens, {} output tokens, ${:.6} ({})",
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cost_usd,
+            escape_markdown(&usage.model),
+        )
+        .unwrap();
+    }
+    output.push_str("\n\n### Total token usage\n\n");
     if usage_by_model.is_empty() {
         output.push_str("None.");
     } else {

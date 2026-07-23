@@ -74,6 +74,7 @@ pub fn render(result: &CheckResult, use_color: bool) -> String {
 
 pub fn render_review_summary(
     summary: &ReviewSummary,
+    context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
     use_color: bool,
 ) -> String {
@@ -82,6 +83,17 @@ pub fn render_review_summary(
     writeln!(output, "- Peer version: {}", summary.peer_version).unwrap();
     writeln!(output, "- Provider: {}", summary.provider).unwrap();
     writeln!(output, "- Model: {}", summary.model).unwrap();
+    if let Some(usage) = context_usage {
+        writeln!(
+            output,
+            "- Context usage: {} input, {} output, ${:.6} ({})",
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cost_usd,
+            escape_terminal(&usage.model),
+        )
+        .unwrap();
+    }
     writeln!(output, "- Total token usage:").unwrap();
     if usage_by_model.is_empty() {
         write!(output, "  - none").unwrap();

@@ -40,6 +40,9 @@ async fn main() -> ExitCode {
         },
         Command::Review {
             target,
+            title,
+            body_file,
+            comments_file,
             format,
             repo,
         } => {
@@ -47,6 +50,27 @@ async fn main() -> ExitCode {
                 Ok(options) => options,
                 Err(error) => {
                     eprintln!("failed to configure render: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
+            if title.is_none() {
+                eprintln!("warning: review title was not provided.");
+            }
+            if body_file.is_none() {
+                eprintln!("warning: review body file was not provided.");
+            }
+            if comments_file.is_none() {
+                eprintln!("warning: review comments file was not provided.");
+            }
+            let review_context = match context::ReviewContext::load(
+                title,
+                body_file.as_deref(),
+                comments_file.as_deref(),
+            ) {
+                Ok(context) => context,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    console.debug(format_args!("{error:?}"));
                     return ExitCode::FAILURE;
                 }
             };
@@ -89,14 +113,30 @@ async fn main() -> ExitCode {
 
             let plan = review::plan_checks(&target);
             console.debug(format_args!("{plan:?}"));
+            let compression =
+                match context::compress_review_context(&review_context, &config, console).await {
+                    Ok(compression) => compression,
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        console.debug(format_args!("{error:?}"));
+                        return ExitCode::FAILURE;
+                    }
+                };
             let result = review::run(
                 plan,
                 console,
                 &config,
                 project_root,
-                &context::ReviewContextDigest::default(),
+                &compression.digest,
+                compression.usage,
             )
             .await;
+            if let Some(usage) = &result.context_usage {
+                console.verbose(format_args!(
+                    "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
+                    usage.model, usage.cost_usd, usage.input_tokens, usage.output_tokens,
+                ));
+            }
             for check in &result.checks {
                 console.verbose(format_args!(
                     "{} check for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
@@ -108,7 +148,9 @@ async fn main() -> ExitCode {
                     check.usage.output_tokens,
                 ));
             }
-            for (model, usage) in review::usage_by_model(&result.checks) {
+            for (model, usage) in
+                review::usage_by_model(&result.checks, result.context_usage.as_ref())
+            {
                 console.verbose(format_args!(
                     "{model} model total cost: ${:.6} (input {} tokens, output {} tokens)",
                     usage.cost_usd, usage.input_tokens, usage.output_tokens,

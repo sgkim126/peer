@@ -22,6 +22,15 @@ pub enum Command {
     Review {
         target: String,
 
+        #[arg(long)]
+        title: Option<String>,
+
+        #[arg(long)]
+        body_file: Option<PathBuf>,
+
+        #[arg(long)]
+        comments_file: Option<PathBuf>,
+
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
 
@@ -145,6 +154,9 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD~3..HEAD".into(),
+                title: None,
+                body_file: None,
+                comments_file: None,
                 format: OutputFormat::Terminal,
                 repo: None,
             }
@@ -159,6 +171,9 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "abc123".into(),
+                title: None,
+                body_file: None,
+                comments_file: None,
                 format: OutputFormat::Json,
                 repo: None,
             }
@@ -173,6 +188,9 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "main".into(),
+                title: None,
+                body_file: None,
+                comments_file: None,
                 format: OutputFormat::Markdown,
                 repo: None,
             }
@@ -202,8 +220,38 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
+                title: None,
+                body_file: None,
+                comments_file: None,
                 format: OutputFormat::Github,
                 repo: Some("owner/repository".into()),
+            }
+        );
+    }
+
+    #[test]
+    fn review_with_review_context() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "HEAD",
+            "--title",
+            "Add context compression",
+            "--body-file",
+            "body.md",
+            "--comments-file",
+            "comments.json",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD".into(),
+                title: Some("Add context compression".into()),
+                body_file: Some("body.md".into()),
+                comments_file: Some("comments.json".into()),
+                format: OutputFormat::Terminal,
+                repo: None,
             }
         );
     }

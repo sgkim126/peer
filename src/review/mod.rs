@@ -10,7 +10,7 @@ use crate::config::Config;
 use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::git::{CommitHash, GitError, run_git};
-use crate::llm::result::CheckResult;
+use crate::llm::result::{CheckResult, LlmUsage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {
@@ -29,6 +29,8 @@ pub struct ReviewPlan {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReviewResult {
     pub summary: ReviewSummary,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage: Option<LlmUsage>,
     pub checks: Vec<CheckResult>,
 
     #[serde(skip)]
@@ -49,8 +51,17 @@ pub struct ModelUsage {
     pub cost_usd: f64,
 }
 
-pub fn usage_by_model(checks: &[CheckResult]) -> BTreeMap<String, ModelUsage> {
+pub fn usage_by_model(
+    checks: &[CheckResult],
+    context_usage: Option<&LlmUsage>,
+) -> BTreeMap<String, ModelUsage> {
     let mut usage_by_model = BTreeMap::<String, ModelUsage>::new();
+    if let Some(usage) = context_usage {
+        let total = usage_by_model.entry(usage.model.clone()).or_default();
+        total.input_tokens += usage.input_tokens;
+        total.output_tokens += usage.output_tokens;
+        total.cost_usd += usage.cost_usd;
+    }
     for check in checks {
         let total = usage_by_model.entry(check.usage.model.clone()).or_default();
         total.input_tokens += check.usage.input_tokens;
@@ -228,6 +239,7 @@ pub async fn run(
     config: &Config,
     project_root: PathBuf,
     review_context: &ReviewContextDigest,
+    context_usage: Option<LlmUsage>,
 ) -> ReviewResult {
     let (provider, model) = config
         .resolve_provider(&config.llm.default_provider, None)
@@ -264,6 +276,7 @@ pub async fn run(
 
     ReviewResult {
         summary,
+        context_usage,
         checks,
         errors,
     }
