@@ -96,6 +96,23 @@ async fn main() -> ExitCode {
                 &llm::context::ReviewContext::default(),
             )
             .await;
+            for check in &result.checks {
+                console.verbose(format_args!(
+                    "{} check for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
+                    check.check,
+                    check.target,
+                    check.usage.model,
+                    check.usage.cost_usd,
+                    check.usage.input_tokens,
+                    check.usage.output_tokens,
+                ));
+            }
+            for (model, usage) in review::usage_by_model(&result.checks) {
+                console.verbose(format_args!(
+                    "{model} model total cost: ${:.6} (input {} tokens, output {} tokens)",
+                    usage.cost_usd, usage.input_tokens, usage.output_tokens,
+                ));
+            }
             for error in &result.errors {
                 eprintln!("error: {error}");
                 console.debug(format_args!("{error:?}"));

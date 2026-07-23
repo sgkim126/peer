@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -31,6 +32,24 @@ pub struct ReviewResult {
 
     #[serde(skip)]
     pub errors: Vec<ReviewCheckError>,
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Serialize)]
+pub struct ModelUsage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    pub cost_usd: f64,
+}
+
+pub fn usage_by_model(checks: &[CheckResult]) -> BTreeMap<String, ModelUsage> {
+    let mut usage_by_model = BTreeMap::<String, ModelUsage>::new();
+    for check in checks {
+        let total = usage_by_model.entry(check.usage.model.clone()).or_default();
+        total.input_tokens += check.usage.input_tokens;
+        total.output_tokens += check.usage.output_tokens;
+        total.cost_usd += check.usage.cost_usd;
+    }
+    usage_by_model
 }
 
 #[derive(Debug)]
