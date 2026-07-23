@@ -30,12 +30,12 @@ pub struct ReviewPlan {
 pub struct ReviewResult {
     pub checks: Vec<CheckResult>,
 
-    #[serde(skip, default)]
+    #[serde(skip)]
     pub errors: Vec<ReviewCheckError>,
 }
 
 #[derive(Debug)]
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct ReviewCheckError {
     pub check: ReviewCheck,
     pub error: CheckCommandError,

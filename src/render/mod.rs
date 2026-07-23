@@ -2,6 +2,7 @@ mod github;
 mod markdown;
 mod terminal;
 
+use std::collections::BTreeMap;
 use std::fmt;
 use std::io::IsTerminal;
 
@@ -120,6 +121,49 @@ pub fn render(input: &str, options: RenderOptions) -> Result<String, RenderError
             Ok(terminal::render(&result, use_color))
         }
         RenderFormat::Github { repo } => Ok(github::render(&result, &repo)),
+    }
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn render_review_result(
+    result: crate::review::ReviewResult,
+    options: RenderOptions,
+) -> Result<String, RenderError> {
+    let checks = result
+        .checks
+        .into_iter()
+        .map(sort_findings)
+        .collect::<Vec<_>>();
+
+    match options.format {
+        RenderFormat::Json => {
+            let mut checks_by_name = BTreeMap::<String, Vec<CheckResult>>::new();
+            for check in checks {
+                checks_by_name
+                    .entry(check.check.clone())
+                    .or_default()
+                    .push(check);
+            }
+            serde_json::to_string_pretty(&checks_by_name).map_err(RenderError::Serialization)
+        }
+        RenderFormat::Terminal => {
+            let use_color = std::io::stdout().is_terminal();
+            Ok(checks
+                .iter()
+                .map(|result| terminal::render(result, use_color))
+                .collect::<Vec<_>>()
+                .join("\n\n"))
+        }
+        RenderFormat::Markdown => Ok(checks
+            .iter()
+            .map(markdown::render)
+            .collect::<Vec<_>>()
+            .join("\n\n")),
+        RenderFormat::Github { repo } => Ok(checks
+            .iter()
+            .map(|result| github::render(result, &repo))
+            .collect::<Vec<_>>()
+            .join("\n\n")),
     }
 }
 
@@ -263,6 +307,41 @@ mod tests {
         let output = render(&input, options).unwrap();
 
         assert!(output.find("abc1234").unwrap() < output.find("def5678").unwrap());
+    }
+
+    #[test]
+    fn groups_review_results_by_check_name() {
+        let mut second = result();
+        second.target = CheckTarget::Commit(CommitHash::new("fedcba9").unwrap());
+        let review = crate::review::ReviewResult {
+            checks: vec![result(), second],
+            errors: Vec::new(),
+        };
+        let options = RenderOptions::from_cli(OutputFormat::Json, None).unwrap();
+
+        let output = render_review_result(review, options).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(value["security"].as_array().unwrap().len(), 2);
+        assert_eq!(value["security"][0]["check"], "security");
+        assert_eq!(value["security"][0]["findings"][0]["commit"], "abc1234");
+        assert_eq!(value["security"][1]["target"], "fedcba9");
+    }
+
+    #[test]
+    fn joins_each_review_check_in_human_readable_formats() {
+        let mut second = result();
+        second.check = "quality".into();
+        let review = crate::review::ReviewResult {
+            checks: vec![result(), second],
+            errors: Vec::new(),
+        };
+        let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
+
+        let output = render_review_result(review, options).unwrap();
+
+        assert!(output.contains("## Check: security"));
+        assert!(output.contains("## Check: quality"));
     }
 
     #[test]
