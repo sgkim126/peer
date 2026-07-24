@@ -79,6 +79,10 @@ fn init_succeeds_in_git_repo() {
 
     let config_path = tmp.path().join(".peer").join("config.toml");
     assert!(config_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(".peer").join(".gitignore")).unwrap(),
+        "cache/\n"
+    );
 }
 
 #[test]
