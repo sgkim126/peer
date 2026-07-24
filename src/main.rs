@@ -152,6 +152,7 @@ async fn main() -> ExitCode {
                 console,
                 &config,
                 project_root,
+                &cache,
                 &compression.digest,
                 compression.usage,
             )
@@ -301,6 +302,7 @@ async fn main() -> ExitCode {
                         command,
                         &config,
                         project_root,
+                        &cache,
                         &compression.digest,
                         compression.usage,
                     )
