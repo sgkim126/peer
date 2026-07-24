@@ -1,7 +1,7 @@
+use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
-use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 use crate::llm::result::CheckTarget;
 use crate::llm::tools::{
@@ -54,7 +54,7 @@ impl CheckDefinition for SecurityCheck {
         &self,
         extractor: &Extractor,
         model: &str,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<AgentRequest, ExtractError> {
         let diff = extractor.commit_diff(self.commit.as_ref()).await?;
         let files = extractor.commit_files(self.commit.as_ref()).await?;
@@ -72,14 +72,8 @@ impl CheckDefinition for SecurityCheck {
                     serde_json::to_string_pretty(&input).expect("security check input serializes")
                 )),
             ],
-            tools: vec![
-                get_file_content(),
-                get_file_diff(),
-                list_tree(),
-                grep(),
-                request_clarification(),
-                submit_check_result(),
-            ],
+            tools: vec![get_file_content(), get_file_diff(), list_tree(), grep()],
+            terminal_tools: vec![request_clarification(), submit_check_result()],
         };
         if let Some(prompt) = review_context.to_prompt() {
             request.conversation.push(ConversationTurn::User(prompt));

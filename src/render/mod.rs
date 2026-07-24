@@ -129,12 +129,13 @@ pub fn render_review_result(
     options: RenderOptions,
 ) -> Result<String, RenderError> {
     let summary = result.summary;
+    let context_usage = result.context_usage;
     let checks = result
         .checks
         .into_iter()
         .map(sort_findings)
         .collect::<Vec<_>>();
-    let usage_by_model = crate::review::usage_by_model(&checks);
+    let usage_by_model = crate::review::usage_by_model(&checks, context_usage.as_ref());
 
     match options.format {
         RenderFormat::Json => {
@@ -148,11 +149,14 @@ pub fn render_review_result(
             #[derive(serde::Serialize)]
             struct JsonOutput {
                 summary: crate::review::ReviewSummary,
+                #[serde(skip_serializing_if = "Option::is_none")]
+                context_usage: Option<crate::llm::result::LlmUsage>,
                 #[serde(flatten)]
                 checks_by_name: BTreeMap<String, Vec<CheckResult>>,
             }
             serde_json::to_string_pretty(&JsonOutput {
                 summary,
+                context_usage,
                 checks_by_name,
             })
             .map_err(RenderError::Serialization)
@@ -165,7 +169,12 @@ pub fn render_review_result(
                 .collect::<Vec<_>>()
                 .join("\n\n");
             Ok(join_review_sections([
-                terminal::render_review_summary(&summary, &usage_by_model, use_color),
+                terminal::render_review_summary(
+                    &summary,
+                    context_usage.as_ref(),
+                    &usage_by_model,
+                    use_color,
+                ),
                 checks,
             ]))
         }
@@ -176,7 +185,7 @@ pub fn render_review_result(
                 .collect::<Vec<_>>()
                 .join("\n\n");
             Ok(join_review_sections([
-                markdown::render_review_summary(&summary, &usage_by_model),
+                markdown::render_review_summary(&summary, context_usage.as_ref(), &usage_by_model),
                 checks,
             ]))
         }
@@ -187,7 +196,7 @@ pub fn render_review_result(
                 .collect::<Vec<_>>()
                 .join("\n\n");
             Ok(join_review_sections([
-                github::render_review_summary(&summary, &usage_by_model),
+                github::render_review_summary(&summary, context_usage.as_ref(), &usage_by_model),
                 checks,
             ]))
         }
@@ -281,7 +290,7 @@ impl std::error::Error for RenderOptionsError {}
 mod tests {
     use super::*;
     use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, CheckUsage, FileLocation, Finding, Severity};
+    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
 
     fn result() -> CheckResult {
         CheckResult {
@@ -312,7 +321,8 @@ mod tests {
             iterations: 2,
             is_exhausted: false,
             exhaustion_reason: None,
-            usage: CheckUsage {
+            context_usage: None,
+            usage: LlmUsage {
                 input_tokens: 100,
                 output_tokens: 20,
                 cost_usd: 0.001,
@@ -325,6 +335,15 @@ mod tests {
         crate::review::ReviewSummary {
             peer_version: "0.1.0".to_string(),
             provider: "test-provider".to_string(),
+            model: "test-model".to_string(),
+        }
+    }
+
+    fn review_context_usage() -> LlmUsage {
+        LlmUsage {
+            input_tokens: 40,
+            output_tokens: 10,
+            cost_usd: 0.0004,
             model: "test-model".to_string(),
         }
     }
@@ -358,6 +377,7 @@ mod tests {
         second.target = CheckTarget::Commit(CommitHash::new("fedcba9").unwrap());
         let review = crate::review::ReviewResult {
             summary: review_summary(),
+            context_usage: None,
             checks: vec![result(), second],
             errors: Vec::new(),
         };
@@ -376,6 +396,64 @@ mod tests {
         assert_eq!(value["security"][0]["check"], "security");
         assert_eq!(value["security"][0]["findings"][0]["commit"], "abc1234");
         assert_eq!(value["security"][1]["target"], "fedcba9");
+    }
+
+    #[test]
+    fn renders_review_context_usage_once_and_includes_it_in_totals() {
+        for (format, repo, expected_context_usage, expected_total_usage) in [
+            (
+                OutputFormat::Terminal,
+                None,
+                "- Context usage: 40 input, 10 output, $0.000400 (test-model)",
+                "  - test-model: 240 input, 50 output, $0.002400",
+            ),
+            (
+                OutputFormat::Markdown,
+                None,
+                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-model)",
+                "- **test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
+            ),
+            (
+                OutputFormat::Github,
+                Some("owner/repo".to_string()),
+                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-model)",
+                "- **test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
+            ),
+        ] {
+            let mut second = result();
+            second.check = "quality".into();
+            let review = crate::review::ReviewResult {
+                summary: review_summary(),
+                context_usage: Some(review_context_usage()),
+                checks: vec![result(), second],
+                errors: Vec::new(),
+            };
+            let options = RenderOptions::from_cli(format, repo).unwrap();
+
+            let output = render_review_result(review, options).unwrap();
+
+            assert_eq!(output.matches(expected_context_usage).count(), 1);
+            assert!(output.contains(expected_total_usage));
+        }
+    }
+
+    #[test]
+    fn includes_review_context_usage_in_json_output() {
+        let review = crate::review::ReviewResult {
+            summary: review_summary(),
+            context_usage: Some(review_context_usage()),
+            checks: vec![result()],
+            errors: Vec::new(),
+        };
+        let options = RenderOptions::from_cli(OutputFormat::Json, None).unwrap();
+
+        let output = render_review_result(review, options).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+
+        assert_eq!(value["context_usage"]["input_tokens"], 40);
+        assert_eq!(value["context_usage"]["output_tokens"], 10);
+        assert_eq!(value["context_usage"]["model"], "test-model");
+        assert!(value["security"][0].get("context_usage").is_none());
     }
 
     #[test]
@@ -404,6 +482,7 @@ mod tests {
         ] {
             let review = crate::review::ReviewResult {
                 summary: review_summary(),
+                context_usage: None,
                 checks: vec![result(), second.clone()],
                 errors: Vec::new(),
             };

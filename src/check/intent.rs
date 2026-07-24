@@ -1,7 +1,7 @@
+use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
-use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 use crate::llm::result::CheckTarget;
 use crate::llm::tools::{
@@ -51,7 +51,7 @@ impl CheckDefinition for IntentCheck {
         &self,
         extractor: &Extractor,
         model: &str,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<AgentRequest, ExtractError> {
         let message = extractor.commit_message(self.commit.as_ref()).await?;
         let diff = extractor.commit_diff(self.commit.as_ref()).await?;
@@ -69,12 +69,8 @@ impl CheckDefinition for IntentCheck {
                     serde_json::to_string_pretty(&input).expect("intent check input serializes")
                 )),
             ],
-            tools: vec![
-                get_changed_files(),
-                get_file_content(),
-                request_clarification(),
-                submit_check_result(),
-            ],
+            tools: vec![get_changed_files(), get_file_content()],
+            terminal_tools: vec![request_clarification(), submit_check_result()],
         };
         if let Some(prompt) = review_context.to_prompt() {
             request.conversation.push(ConversationTurn::User(prompt));

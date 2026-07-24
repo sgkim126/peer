@@ -1,7 +1,7 @@
+use crate::context::ReviewContextDigest;
 use crate::extract::{CommitList, ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::agent::AgentRequest;
-use crate::llm::context::ReviewContext;
 use crate::llm::provider::ConversationTurn;
 use crate::llm::result::CheckTarget;
 use crate::llm::tools::{
@@ -51,7 +51,7 @@ impl CheckDefinition for CoherenceCheck {
         &self,
         extractor: &Extractor,
         model: &str,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<AgentRequest, ExtractError> {
         let mut entries = Vec::with_capacity(self.commits.commits.len());
         for (index, commit) in self.commits.commits.iter().enumerate() {
@@ -73,12 +73,8 @@ impl CheckDefinition for CoherenceCheck {
                     entries.join("\n\n")
                 )),
             ],
-            tools: vec![
-                get_commit_diff(),
-                get_changed_files(),
-                request_clarification(),
-                submit_check_result(),
-            ],
+            tools: vec![get_commit_diff(), get_changed_files()],
+            terminal_tools: vec![request_clarification(), submit_check_result()],
         };
         if let Some(prompt) = review_context.to_prompt() {
             request.conversation.push(ConversationTurn::User(prompt));

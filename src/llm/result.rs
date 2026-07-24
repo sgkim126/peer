@@ -48,7 +48,7 @@ impl fmt::Display for CheckTarget {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct CheckUsage {
+pub struct LlmUsage {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub cost_usd: f64,
@@ -62,7 +62,7 @@ pub struct CheckOutput {
     pub findings: Vec<Finding>,
 }
 
-impl CheckUsage {
+impl LlmUsage {
     pub fn from_raw_usage(
         usage: RawUsage,
         model: impl Into<String>,
@@ -94,7 +94,9 @@ pub struct CheckResult {
     pub iterations: u32,
     pub is_exhausted: bool,
     pub exhaustion_reason: Option<String>,
-    pub usage: CheckUsage,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_usage: Option<LlmUsage>,
+    pub usage: LlmUsage,
 }
 
 #[cfg_attr(not(test), expect(dead_code))]
@@ -372,7 +374,7 @@ mod tests {
             input_tokens,
             output_tokens,
         };
-        let check = CheckUsage::from_raw_usage(usage, model, 2.0, 6.0);
+        let check = LlmUsage::from_raw_usage(usage, model, 2.0, 6.0);
 
         assert_eq!(check.input_tokens, input_tokens);
         assert_eq!(check.output_tokens, output_tokens);
@@ -381,5 +383,34 @@ mod tests {
         let expected_cost =
             (input_tokens as f64 / MILLION) * 2.0 + (output_tokens as f64 / MILLION) * 6.0;
         assert!((check.cost_usd - expected_cost).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn check_result_allows_missing_context_usage() {
+        let result: CheckResult = serde_json::from_value(serde_json::json!({
+            "check": "security",
+            "target": "abc1234",
+            "ordered_commits": ["abc1234"],
+            "summary": "Checked.",
+            "findings": [],
+            "iterations": 1,
+            "is_exhausted": false,
+            "exhaustion_reason": null,
+            "usage": {
+                "input_tokens": 100,
+                "output_tokens": 20,
+                "cost_usd": 0.001,
+                "model": "test-model"
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(result.context_usage, None);
+        assert!(
+            serde_json::to_value(result)
+                .unwrap()
+                .get("context_usage")
+                .is_none()
+        );
     }
 }

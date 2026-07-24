@@ -1,12 +1,12 @@
 use std::fmt;
 
 use crate::console::Console;
+use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::agent::{Agent, AgentOutcome};
-use crate::llm::context::ReviewContext;
 use crate::llm::provider::{LlmCallError, ProviderRuntime};
-use crate::llm::result::{CheckResult, CheckUsage};
-use crate::llm::tools::ExtractToolExecutor;
+use crate::llm::result::{CheckOutput, CheckResult, LlmUsage};
+use crate::llm::tools::{ExtractToolExecutor, request_clarification, submit_check_result};
 
 use super::CheckDefinition;
 
@@ -15,6 +15,7 @@ pub struct CheckRunConfig {
     pub max_iterations: u32,
     pub input_per_1m_usd: f64,
     pub output_per_1m_usd: f64,
+    pub context_usage: Option<LlmUsage>,
     pub console: Console,
 }
 
@@ -57,7 +58,7 @@ impl Checker {
     pub async fn run<C>(
         self,
         check: &C,
-        review_context: &ReviewContext,
+        review_context: &ReviewContextDigest,
     ) -> Result<CheckResult, CheckRunError>
     where
         C: CheckDefinition,
@@ -84,8 +85,25 @@ impl Checker {
             self.config.console,
         );
         match agent.run_loop(request, self.config.max_iterations).await {
-            AgentOutcome::Completed(done) => {
-                if !done.output.findings.iter().all(|finding| {
+            AgentOutcome::Terminal(done) if done.call.name == submit_check_result().name => {
+                let output: CheckOutput = match serde_json::from_value(done.call.arguments) {
+                    Ok(output) => output,
+                    Err(error) => {
+                        let reason = format!("invalid submit_check_result arguments: {error}");
+                        return Ok(build_result(
+                            check,
+                            target,
+                            format!("Check did not complete: {reason}"),
+                            Vec::new(),
+                            done.iterations,
+                            done.usage,
+                            true,
+                            Some(reason),
+                            &self.config,
+                        ));
+                    }
+                };
+                if !output.findings.iter().all(|finding| {
                     // Expected commits are full hashes produced while resolving the check
                     // target, but a finding may report an abbreviated commit hash.
                     check
@@ -100,8 +118,8 @@ impl Checker {
                 Ok(build_result(
                     check,
                     target,
-                    done.output.summary,
-                    done.output.findings,
+                    output.summary,
+                    output.findings,
                     done.iterations,
                     done.usage,
                     false,
@@ -109,25 +127,56 @@ impl Checker {
                     &self.config,
                 ))
             }
-            AgentOutcome::ClarificationRequested(request) => Ok(build_result(
-                check,
-                target,
-                format!(
-                    "Checker asks:\n{}",
-                    request
-                        .questions
-                        .iter()
-                        .map(|question| format!("- {question}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                ),
-                Vec::new(),
-                request.iterations,
-                request.usage,
-                true,
-                Some("clarification required".to_string()),
-                &self.config,
-            )),
+            AgentOutcome::Terminal(done) if done.call.name == request_clarification().name => {
+                let questions = match parse_clarification_questions(done.call.arguments) {
+                    Ok(questions) => questions,
+                    Err(reason) => {
+                        return Ok(build_result(
+                            check,
+                            target,
+                            format!("Check did not complete: {reason}"),
+                            Vec::new(),
+                            done.iterations,
+                            done.usage,
+                            true,
+                            Some(reason),
+                            &self.config,
+                        ));
+                    }
+                };
+                Ok(build_result(
+                    check,
+                    target,
+                    format!(
+                        "Checker asks:\n{}",
+                        questions
+                            .iter()
+                            .map(|question| format!("- {question}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ),
+                    Vec::new(),
+                    done.iterations,
+                    done.usage,
+                    true,
+                    Some("clarification required".to_string()),
+                    &self.config,
+                ))
+            }
+            AgentOutcome::Terminal(done) => {
+                let reason = format!("unexpected terminal tool: {}", done.call.name);
+                Ok(build_result(
+                    check,
+                    target,
+                    format!("Check did not complete: {reason}"),
+                    Vec::new(),
+                    done.iterations,
+                    done.usage,
+                    true,
+                    Some(reason),
+                    &self.config,
+                ))
+            }
             AgentOutcome::Error(failure) => Ok(build_result(
                 check,
                 target,
@@ -141,6 +190,22 @@ impl Checker {
             )),
         }
     }
+}
+
+fn parse_clarification_questions(arguments: serde_json::Value) -> Result<Vec<String>, String> {
+    #[derive(serde::Deserialize)]
+    struct ClarificationArguments {
+        questions: Vec<String>,
+    }
+
+    let arguments: ClarificationArguments = serde_json::from_value(arguments)
+        .map_err(|error| format!("invalid request_clarification arguments: {error}"))?;
+    if arguments.questions.is_empty() {
+        return Err(
+            "invalid request_clarification arguments: questions must not be empty".to_string(),
+        );
+    }
+    Ok(arguments.questions)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -167,11 +232,37 @@ where
         iterations,
         is_exhausted,
         exhaustion_reason,
-        usage: CheckUsage::from_raw_usage(
+        context_usage: config.context_usage.clone(),
+        usage: LlmUsage::from_raw_usage(
             usage,
             &config.model,
             config.input_per_1m_usd,
             config.output_per_1m_usd,
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_non_empty_clarification_questions() {
+        assert_eq!(
+            parse_clarification_questions(json!({
+                "questions": ["Which deployment policy applies?"]
+            }))
+            .unwrap(),
+            ["Which deployment policy applies?"]
+        );
+    }
+
+    #[test]
+    fn rejects_empty_clarification_questions() {
+        assert_eq!(
+            parse_clarification_questions(json!({ "questions": [] })).unwrap_err(),
+            "invalid request_clarification arguments: questions must not be empty"
+        );
     }
 }

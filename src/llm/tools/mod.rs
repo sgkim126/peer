@@ -2,7 +2,9 @@ mod executor;
 mod extract;
 mod request_clarification;
 mod submit_check_result;
+mod submit_review_context_digest;
 
+pub use executor::NoToolExecutor;
 #[cfg_attr(not(test), expect(unused_imports))]
 pub use executor::ToolExecutionError;
 pub use executor::{ToolExecutionResult, ToolExecutor};
@@ -13,3 +15,4 @@ pub use extract::{
 };
 pub use request_clarification::request_clarification;
 pub use submit_check_result::submit_check_result;
+pub use submit_review_context_digest::submit_review_context_digest;
