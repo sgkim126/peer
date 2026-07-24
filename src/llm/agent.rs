@@ -40,6 +40,7 @@ pub struct AgentFailure {
     pub error: LlmCallError,
     pub usage: RawUsage,
     pub iterations: u32,
+    pub exhausted: bool,
 }
 
 #[derive(Debug)]
@@ -97,15 +98,15 @@ where
                 is_last_request,
             ) {
                 Ok(http_request) => http_request,
-                Err(error) => return error_outcome(error, usage, iteration),
+                Err(error) => return error_outcome(error, usage, iteration, false),
             };
             let response = match self.transport.send(http_request).await {
                 Ok(response) => response,
-                Err(error) => return error_outcome(error, usage, iteration),
+                Err(error) => return error_outcome(error, usage, iteration, false),
             };
             let result = match self.provider.parse_response(response) {
                 Ok(result) => result,
-                Err(error) => return error_outcome(error, usage, iteration),
+                Err(error) => return error_outcome(error, usage, iteration, false),
             };
             usage += result.usage;
 
@@ -148,6 +149,7 @@ where
                         ),
                         usage,
                         iteration,
+                        false,
                     );
                 }
             }
@@ -162,6 +164,7 @@ where
                     ),
                     usage,
                     iteration,
+                    true,
                 );
             }
 
@@ -182,6 +185,7 @@ where
             ),
             usage,
             max_iterations,
+            true,
         )
     }
 }
@@ -200,11 +204,17 @@ fn permanent_error(message: String, source: AgentError) -> LlmCallError {
     }
 }
 
-fn error_outcome(error: LlmCallError, usage: RawUsage, iterations: u32) -> AgentOutcome {
+fn error_outcome(
+    error: LlmCallError,
+    usage: RawUsage,
+    iterations: u32,
+    exhausted: bool,
+) -> AgentOutcome {
     AgentOutcome::Error(AgentFailure {
         error,
         usage,
         iterations,
+        exhausted,
     })
 }
 

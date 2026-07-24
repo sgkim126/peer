@@ -5,7 +5,7 @@ use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::agent::{Agent, AgentOutcome};
 use crate::llm::provider::{LlmCallError, ProviderRuntime};
-use crate::llm::result::{CheckOutput, CheckResult, LlmUsage};
+use crate::llm::result::{CheckError, CheckOutput, CheckResult, LlmUsage};
 use crate::llm::tools::{ExtractToolExecutor, request_clarification, submit_check_result};
 
 use super::CheckDefinition;
@@ -97,8 +97,7 @@ impl Checker {
                             Vec::new(),
                             done.iterations,
                             done.usage,
-                            true,
-                            Some(reason),
+                            Some(CheckError::InvalidOutput { reason }),
                             &self.config,
                         ));
                     }
@@ -122,7 +121,6 @@ impl Checker {
                     output.findings,
                     done.iterations,
                     done.usage,
-                    false,
                     None,
                     &self.config,
                 ))
@@ -138,8 +136,7 @@ impl Checker {
                             Vec::new(),
                             done.iterations,
                             done.usage,
-                            true,
-                            Some(reason),
+                            Some(CheckError::InvalidOutput { reason }),
                             &self.config,
                         ));
                     }
@@ -158,8 +155,7 @@ impl Checker {
                     Vec::new(),
                     done.iterations,
                     done.usage,
-                    true,
-                    Some("clarification required".to_string()),
+                    Some(CheckError::ClarificationRequired { questions }),
                     &self.config,
                 ))
             }
@@ -172,8 +168,9 @@ impl Checker {
                     Vec::new(),
                     done.iterations,
                     done.usage,
-                    true,
-                    Some(reason),
+                    Some(CheckError::UnexpectedTerminal {
+                        tool: done.call.name,
+                    }),
                     &self.config,
                 ))
             }
@@ -184,8 +181,15 @@ impl Checker {
                 Vec::new(),
                 failure.iterations,
                 failure.usage,
-                true,
-                Some(failure.error.to_string()),
+                Some(if failure.exhausted {
+                    CheckError::Exhausted {
+                        reason: failure.error.to_string(),
+                    }
+                } else {
+                    CheckError::Agent {
+                        reason: failure.error.to_string(),
+                    }
+                }),
                 &self.config,
             )),
         }
@@ -216,8 +220,7 @@ fn build_result<C>(
     findings: Vec<crate::llm::result::Finding>,
     iterations: u32,
     usage: crate::llm::provider::RawUsage,
-    is_exhausted: bool,
-    exhaustion_reason: Option<String>,
+    error: Option<CheckError>,
     config: &CheckRunConfig,
 ) -> CheckResult
 where
@@ -230,8 +233,7 @@ where
         summary,
         findings,
         iterations,
-        is_exhausted,
-        exhaustion_reason,
+        error,
         context_usage: config.context_usage.clone(),
         usage: LlmUsage::from_raw_usage(
             usage,

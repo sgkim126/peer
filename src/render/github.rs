@@ -24,20 +24,10 @@ pub fn render(result: &CheckResult, repo: &str) -> String {
             writeln!(body, "- {}", render_finding(finding, repo)).unwrap();
         }
     }
-    if result.is_exhausted {
+    if let Some(error) = &result.error {
         writeln!(body).unwrap();
         writeln!(body, "> [!WARNING]").unwrap();
-        writeln!(
-            body,
-            "> {}",
-            escape_github_markdown(
-                result
-                    .exhaustion_reason
-                    .as_deref()
-                    .unwrap_or("check did not complete")
-            )
-        )
-        .unwrap();
+        writeln!(body, "> {}", escape_github_markdown(&error.to_string())).unwrap();
     }
     writeln!(body).unwrap();
     writeln!(body, "### Metadata").unwrap();
@@ -117,7 +107,7 @@ fn render_finding(finding: &Finding, repo: &str) -> String {
 }
 
 fn status(result: &CheckResult) -> &'static str {
-    if result.is_exhausted {
+    if result.error.is_some() {
         return "failed";
     }
     match result.findings.iter().map(|finding| finding.severity).max() {
@@ -256,8 +246,7 @@ mod tests {
                 },
             ],
             iterations: 2,
-            is_exhausted: false,
-            exhaustion_reason: None,
+            error: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 100,

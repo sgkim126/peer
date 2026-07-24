@@ -322,8 +322,7 @@ mod tests {
                 },
             ],
             iterations: 2,
-            is_exhausted: false,
-            exhaustion_reason: None,
+            error: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 100,

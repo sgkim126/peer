@@ -29,20 +29,10 @@ pub fn render(result: &CheckResult) -> String {
             writeln!(output, "- {}", render_finding(finding)).unwrap();
         }
     }
-    if result.is_exhausted {
+    if let Some(error) = &result.error {
         writeln!(output).unwrap();
         writeln!(output, "> [!WARNING]").unwrap();
-        writeln!(
-            output,
-            "> {}",
-            escape_markdown(
-                result
-                    .exhaustion_reason
-                    .as_deref()
-                    .unwrap_or("check did not complete")
-            )
-        )
-        .unwrap();
+        writeln!(output, "> {}", escape_markdown(&error.to_string())).unwrap();
     }
     writeln!(output).unwrap();
     writeln!(output, "### Metadata").unwrap();
@@ -104,7 +94,7 @@ fn render_finding(finding: &Finding) -> String {
 }
 
 fn status(result: &CheckResult) -> &'static str {
-    if result.is_exhausted {
+    if result.error.is_some() {
         return "failed";
     }
     match result.findings.iter().map(|finding| finding.severity).max() {
@@ -187,8 +177,7 @@ mod tests {
                 },
             ],
             iterations: 2,
-            is_exhausted: false,
-            exhaustion_reason: None,
+            error: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 100,
@@ -211,8 +200,9 @@ mod tests {
     fn failed_results_render_the_failure_and_usage() {
         let mut result = result();
         result.findings.clear();
-        result.is_exhausted = true;
-        result.exhaustion_reason = Some("transient LLM call failure: request timed out".into());
+        result.error = Some(crate::llm::result::CheckError::Agent {
+            reason: "transient LLM call failure: request timed out".into(),
+        });
         let output = render(&result);
 
         assert!(output.contains("- **Status:** failed"));

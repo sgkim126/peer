@@ -42,18 +42,13 @@ pub fn render(result: &CheckResult, use_color: bool) -> String {
             writeln!(output, "- {}", render_finding(finding, use_color)).unwrap();
         }
     }
-    if result.is_exhausted {
+    if let Some(error) = &result.error {
         writeln!(output).unwrap();
         writeln!(
             output,
             "{} {}",
             styled("Warning:", Style::new().yellow().bold(), use_color),
-            escape_terminal(
-                result
-                    .exhaustion_reason
-                    .as_deref()
-                    .unwrap_or("unknown reason")
-            )
+            escape_terminal(&error.to_string())
         )
         .unwrap();
     }
@@ -178,7 +173,7 @@ fn styled(value: impl fmt::Display, style: Style, use_color: bool) -> String {
 }
 
 fn status(result: &CheckResult) -> &'static str {
-    if result.is_exhausted {
+    if result.error.is_some() {
         return "failed";
     }
     match result.findings.iter().map(|finding| finding.severity).max() {
@@ -251,8 +246,7 @@ mod tests {
                 },
             ],
             iterations: 2,
-            is_exhausted: false,
-            exhaustion_reason: None,
+            error: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 100,
