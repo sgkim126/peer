@@ -7,6 +7,7 @@ use std::{
 use serde::Deserialize;
 
 use crate::error::PeerError;
+use crate::llm::provider::ProviderKind;
 
 const SUPPORTED_VERSIONS: [u32; 1] = [1];
 
@@ -90,13 +91,17 @@ impl Config {
     }
 
     /// Finds the named provider and selected model, returning references to both.
-    /// Uses the provider's default model when `model_name` is absent.
+    /// Uses the configured default provider when `provider` is absent and the
+    /// selected provider's default model when `model_name` is absent.
     /// Returns `InvalidConfig` if either is absent.
     pub fn resolve_provider(
         &self,
-        provider_name: &str,
+        provider: Option<ProviderKind>,
         model_name: Option<&str>,
     ) -> Result<(&ProviderConfig, &ModelConfig), PeerError> {
+        let provider_name = provider
+            .map(ProviderKind::as_str)
+            .unwrap_or(&self.llm.default_provider);
         let provider = self
             .providers
             .iter()
@@ -443,7 +448,7 @@ models = [
         let model_name = "mistral-large-2512";
         let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         let (provider, model) = config
-            .resolve_provider(provider_name, Some(model_name))
+            .resolve_provider(Some(ProviderKind::Mistral), Some(model_name))
             .unwrap();
         assert_eq!(provider.name, provider_name);
         assert_eq!(model.name, model_name);
@@ -451,9 +456,12 @@ models = [
 
     #[test]
     fn resolve_provider_fails_when_provider_missing() {
-        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        config
+            .providers
+            .retain(|provider| provider.name != "openai");
         assert_matches!(
-            config.resolve_provider("nonexistent", None),
+            config.resolve_provider(Some(ProviderKind::OpenAi), None),
             Err(PeerError::InvalidConfig { source: None, .. })
         );
     }
@@ -462,7 +470,7 @@ models = [
     fn resolve_provider_fails_when_model_missing() {
         let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
         assert_matches!(
-            config.resolve_provider("mistral", Some("no-such-model")),
+            config.resolve_provider(Some(ProviderKind::Mistral), Some("no-such-model")),
             Err(PeerError::InvalidConfig { source: None, .. })
         );
     }

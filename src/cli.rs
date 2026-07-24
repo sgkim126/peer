@@ -2,6 +2,7 @@ use std::{num::NonZeroU8, path::PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::llm::provider::ProviderKind;
 use crate::review::ReviewCheckKind;
 
 #[derive(Parser, Debug)]
@@ -23,6 +24,12 @@ pub enum Command {
 
     Review {
         target: String,
+
+        #[arg(long)]
+        provider: Option<ProviderKind>,
+
+        #[arg(long)]
+        model: Option<String>,
 
         #[arg(
             long = "skip-check",
@@ -62,6 +69,12 @@ pub enum Command {
     },
 
     Check {
+        #[arg(long, global = true)]
+        provider: Option<ProviderKind>,
+
+        #[arg(long, global = true)]
+        model: Option<String>,
+
         #[arg(long)]
         title: Option<String>,
 
@@ -172,6 +185,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD~3..HEAD".into(),
+                provider: None,
+                model: None,
                 skip_checks: Vec::new(),
                 only_checks: Vec::new(),
                 title: None,
@@ -191,6 +206,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "abc123".into(),
+                provider: None,
+                model: None,
                 skip_checks: Vec::new(),
                 only_checks: Vec::new(),
                 title: None,
@@ -210,6 +227,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "main".into(),
+                provider: None,
+                model: None,
                 skip_checks: Vec::new(),
                 only_checks: Vec::new(),
                 title: None,
@@ -244,6 +263,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
+                provider: None,
+                model: None,
                 skip_checks: Vec::new(),
                 only_checks: Vec::new(),
                 title: None,
@@ -273,6 +294,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
+                provider: None,
+                model: None,
                 skip_checks: Vec::new(),
                 only_checks: Vec::new(),
                 title: Some("Add context compression".into()),
@@ -282,6 +305,42 @@ mod tests {
                 repo: None,
             }
         );
+    }
+
+    #[test]
+    fn review_with_provider_and_model_overrides() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "HEAD",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-5.6-terra",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD".into(),
+                provider: Some(ProviderKind::OpenAi),
+                model: Some("gpt-5.6-terra".into()),
+                skip_checks: Vec::new(),
+                only_checks: Vec::new(),
+                title: None,
+                body_file: None,
+                comments_file: None,
+                format: OutputFormat::Terminal,
+                repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn review_rejects_an_unsupported_provider() {
+        let result = Cli::try_parse_from(["peer", "review", "HEAD", "--provider", "unknown"]);
+
+        assert!(result.is_err());
     }
 
     #[test]
@@ -298,6 +357,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD~2..HEAD".into(),
+                provider: None,
+                model: None,
                 skip_checks: Vec::new(),
                 only_checks: vec![ReviewCheckKind::Intent, ReviewCheckKind::Coherence],
                 title: None,
@@ -317,6 +378,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
+                provider: None,
+                model: None,
                 skip_checks: vec![ReviewCheckKind::Quality, ReviewCheckKind::Security],
                 only_checks: Vec::new(),
                 title: None,
@@ -540,6 +603,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -557,6 +622,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -574,6 +641,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -591,6 +660,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -608,6 +679,8 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -636,10 +709,40 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
+                provider: None,
+                model: None,
                 title: Some("Add review context".into()),
                 body_file: Some(PathBuf::from("body.md")),
                 comments_file: Some(PathBuf::from("comments.json")),
                 command: CheckCommand::Quality {
+                    revision: "HEAD".into(),
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn check_with_provider_and_model_overrides() {
+        let cli = parse(&[
+            "peer",
+            "check",
+            "security",
+            "HEAD",
+            "--provider",
+            "openai",
+            "--model",
+            "gpt-5.6-terra",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Check {
+                provider: Some(ProviderKind::OpenAi),
+                model: Some("gpt-5.6-terra".into()),
+                title: None,
+                body_file: None,
+                comments_file: None,
+                command: CheckCommand::Security {
                     revision: "HEAD".into(),
                 },
             }

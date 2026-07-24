@@ -310,7 +310,7 @@ pub async fn run(
     context_usage: Option<LlmUsage>,
 ) -> ReviewResult {
     let (provider, model) = config
-        .resolve_provider(&config.llm.default_provider, None)
+        .resolve_provider(None, None)
         .expect("validated config must resolve its default provider and model");
     let summary = ReviewSummary {
         peer_version: env!("CARGO_PKG_VERSION").to_string(),

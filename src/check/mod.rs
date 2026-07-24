@@ -114,8 +114,7 @@ pub async fn handler(
             Check::Coherence(CoherenceCheck::try_new(&range, &extractor).await?)
         }
     };
-    let (provider_config, model_config) =
-        config.resolve_provider(&config.llm.default_provider, None)?;
+    let (provider_config, model_config) = config.resolve_provider(None, None)?;
     let runtime = ProviderRuntime::try_new(
         &provider_config.name,
         &provider_config.api_key_env,
