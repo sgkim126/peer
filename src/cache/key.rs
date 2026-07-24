@@ -5,7 +5,6 @@ use super::error::CacheKeyError;
 const BINARY_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Debug, Clone, PartialEq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct CacheKey {
     pub namespace: String,
     pub provider: String,
@@ -14,7 +13,6 @@ pub struct CacheKey {
 }
 
 impl CacheKey {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_params<T>(
         namespace: impl Into<String>,
         provider: impl Into<String>,
@@ -36,7 +34,6 @@ impl CacheKey {
         })
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn version() -> String {
         cache_version(BINARY_VERSION)
     }

@@ -29,7 +29,6 @@ impl std::error::Error for CacheKeyError {
 }
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum CacheReadError {
     Read {
         path: PathBuf,
@@ -64,7 +63,6 @@ impl std::error::Error for CacheReadError {
 }
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum CacheWriteError {
     Serialize {
         source: serde_json::Error,

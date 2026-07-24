@@ -15,6 +15,7 @@ mod secret;
 
 use clap::Parser;
 
+use crate::cache::CacheStore;
 use crate::cli::{Cli, Command};
 use crate::config::{Config, discover};
 use crate::console::Console;
@@ -134,8 +135,11 @@ async fn main() -> ExitCode {
                 }
             };
             console.debug(format_args!("{plan:?}"));
+            let cache = CacheStore::new(project_root.join(".peer/cache"), console);
             let compression =
-                match context::compress_review_context(&review_context, &config, console).await {
+                match context::compress_review_context(&review_context, &config, &cache, console)
+                    .await
+                {
                     Ok(compression) => compression,
                     Err(error) => {
                         eprintln!("error: {error}");
@@ -276,17 +280,22 @@ async fn main() -> ExitCode {
                         console.debug(format_args!("{error:?}"));
                         return ExitCode::FAILURE;
                     }
-                    let compression =
-                        match context::compress_review_context(&review_context, &config, console)
-                            .await
-                        {
-                            Ok(compression) => compression,
-                            Err(error) => {
-                                eprintln!("error: {error}");
-                                console.debug(format_args!("{error:?}"));
-                                return ExitCode::FAILURE;
-                            }
-                        };
+                    let cache = CacheStore::new(project_root.join(".peer/cache"), console);
+                    let compression = match context::compress_review_context(
+                        &review_context,
+                        &config,
+                        &cache,
+                        console,
+                    )
+                    .await
+                    {
+                        Ok(compression) => compression,
+                        Err(error) => {
+                            eprintln!("error: {error}");
+                            console.debug(format_args!("{error:?}"));
+                            return ExitCode::FAILURE;
+                        }
+                    };
                     check::handler(
                         console,
                         command,

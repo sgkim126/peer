@@ -32,7 +32,6 @@ pub struct CacheStore {
 }
 
 impl CacheStore {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn new(root: impl Into<PathBuf>, console: Console) -> Self {
         Self {
             root: root.into(),
@@ -50,7 +49,6 @@ impl CacheStore {
             .join(format!("{}.json", key.params_hash))
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn read_json<T>(&self, key: &CacheKey) -> Result<Option<T>, CacheReadError>
     where
         T: DeserializeOwned,
@@ -82,7 +80,6 @@ impl CacheStore {
         Ok(Some(value))
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn write_json<T>(&self, key: &CacheKey, value: &T) -> Result<(), CacheWriteError>
     where
         T: Serialize,
