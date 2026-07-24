@@ -15,8 +15,10 @@ mod secret;
 use clap::Parser;
 
 use crate::cli::{Cli, Command};
-use crate::config::discover;
+use crate::config::{Config, discover};
 use crate::console::Console;
+use crate::error::PeerError;
+use crate::llm::provider::ProviderKind;
 
 use std::io::Read;
 use std::process::ExitCode;
@@ -40,6 +42,8 @@ async fn main() -> ExitCode {
         },
         Command::Review {
             target,
+            provider,
+            model,
             skip_checks,
             only_checks,
             title,
@@ -84,7 +88,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let (config, project_root) = match discover(&cwd) {
+            let (mut config, project_root) = match discover(&cwd) {
                 Ok(discovered) => discovered,
                 Err(error) => {
                     eprintln!("{error}");
@@ -92,6 +96,11 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            if let Err(error) = apply_llm_overrides(&mut config, provider, model) {
+                eprintln!("error: {error}");
+                console.debug(format_args!("{error:?}"));
+                return ExitCode::FAILURE;
+            }
             let target = match review::resolve_target(&target, &project_root, console).await {
                 Ok(target) => target,
                 Err(error) => {
@@ -224,6 +233,8 @@ async fn main() -> ExitCode {
             }
         }
         Command::Check {
+            provider,
+            model,
             title,
             body_file,
             comments_file,
@@ -258,7 +269,12 @@ async fn main() -> ExitCode {
                 }
             };
             let result = match discover(&cwd) {
-                Ok((config, project_root)) => {
+                Ok((mut config, project_root)) => {
+                    if let Err(error) = apply_llm_overrides(&mut config, provider, model) {
+                        eprintln!("error: {error}");
+                        console.debug(format_args!("{error:?}"));
+                        return ExitCode::FAILURE;
+                    }
                     let compression =
                         match context::compress_review_context(&review_context, &config, console)
                             .await
@@ -337,5 +353,109 @@ async fn main() -> ExitCode {
                 }
             }
         }
+    }
+}
+
+fn apply_llm_overrides(
+    config: &mut Config,
+    provider: Option<ProviderKind>,
+    model: Option<String>,
+) -> Result<(), PeerError> {
+    let (provider_name, model_name) = {
+        let (provider, model_config) = config.resolve_provider(provider, model.as_deref())?;
+        (provider.name.clone(), model_config.name.clone())
+    };
+
+    config.llm.default_provider = provider_name.clone();
+    if model.is_some() {
+        let provider = config
+            .providers
+            .iter_mut()
+            .find(|provider| provider.name == provider_name)
+            .ok_or_else(|| {
+                PeerError::invalid_config(format!("provider '{provider_name}' not found in config"))
+            })?;
+        provider.default_model = model_name;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::DEFAULT_CONFIG_TOML;
+
+    #[test]
+    fn provider_override_uses_the_selected_providers_default_model() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+
+        apply_llm_overrides(&mut config, Some(ProviderKind::OpenAi), None).unwrap();
+
+        let (provider, model) = config.resolve_provider(None, None).unwrap();
+        assert_eq!(provider.name, "openai");
+        assert_eq!(model.name, "gpt-5.6-luna");
+    }
+
+    #[test]
+    fn model_override_replaces_the_selected_providers_default_model() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+
+        apply_llm_overrides(
+            &mut config,
+            Some(ProviderKind::OpenAi),
+            Some("gpt-5.6-terra".into()),
+        )
+        .unwrap();
+
+        let (provider, model) = config.resolve_provider(None, None).unwrap();
+        assert_eq!(provider.name, "openai");
+        assert_eq!(model.name, "gpt-5.6-terra");
+    }
+
+    #[test]
+    fn rejects_an_unconfigured_provider_without_mutating_config() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        config
+            .providers
+            .retain(|provider| provider.name != "openai");
+        let original_provider = config.llm.default_provider.clone();
+
+        let error = apply_llm_overrides(&mut config, Some(ProviderKind::OpenAi), None).unwrap_err();
+
+        assert_eq!(error.to_string(), "provider 'openai' not found in config");
+        assert_eq!(config.llm.default_provider, original_provider);
+    }
+
+    #[test]
+    fn rejects_an_unconfigured_model_without_mutating_config() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        let original_model = config
+            .providers
+            .iter()
+            .find(|provider| provider.name == "openai")
+            .unwrap()
+            .default_model
+            .clone();
+
+        let error = apply_llm_overrides(
+            &mut config,
+            Some(ProviderKind::OpenAi),
+            Some("unknown".into()),
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "model 'unknown' not found in provider 'openai'"
+        );
+        assert_eq!(
+            config
+                .providers
+                .iter()
+                .find(|provider| provider.name == "openai")
+                .unwrap()
+                .default_model,
+            original_model
+        );
     }
 }

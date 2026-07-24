@@ -117,7 +117,7 @@ pub async fn compress_review_context(
     }
 
     let (provider_config, model_config) = config
-        .resolve_provider(&config.llm.default_provider, None)
+        .resolve_provider(None, None)
         .map_err(ContextCompressionError::Config)?;
     let runtime = ProviderRuntime::try_new(
         &provider_config.name,

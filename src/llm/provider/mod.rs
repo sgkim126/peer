@@ -32,6 +32,30 @@ pub struct ProviderRuntime {
     transport: ProviderHttpClient,
 }
 
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq, Eq)]
+#[value(rename_all = "lower")]
+pub enum ProviderKind {
+    Anthropic,
+    Gemini,
+    Mistral,
+    OpenAi,
+}
+
+impl ProviderKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Anthropic => "anthropic",
+            Self::Gemini => "gemini",
+            Self::Mistral => "mistral",
+            Self::OpenAi => "openai",
+        }
+    }
+
+    fn from_name(name: &str) -> Option<Self> {
+        clap::ValueEnum::from_str(name, false).ok()
+    }
+}
+
 impl ProviderRuntime {
     pub fn try_new(
         name: &str,
@@ -39,17 +63,22 @@ impl ProviderRuntime {
         base_url: Option<&str>,
         console: crate::console::Console,
     ) -> Result<Self, ProviderCreationError> {
-        let provider = match name {
-            "anthropic" => {
+        let provider_kind =
+            ProviderKind::from_name(name).ok_or_else(|| ProviderCreationError::Unsupported {
+                name: name.to_string(),
+            })?;
+        let provider = match provider_kind {
+            ProviderKind::Anthropic => {
                 AnthropicProvider::from_env(api_key_env, base_url).map(Provider::Anthropic)?
             }
-            "gemini" => GeminiProvider::from_env(api_key_env, base_url).map(Provider::Gemini)?,
-            "mistral" => MistralProvider::from_env(api_key_env, base_url).map(Provider::Mistral)?,
-            "openai" => OpenAiProvider::from_env(api_key_env, base_url).map(Provider::OpenAi)?,
-            _ => {
-                return Err(ProviderCreationError::Unsupported {
-                    name: name.to_string(),
-                });
+            ProviderKind::Gemini => {
+                GeminiProvider::from_env(api_key_env, base_url).map(Provider::Gemini)?
+            }
+            ProviderKind::Mistral => {
+                MistralProvider::from_env(api_key_env, base_url).map(Provider::Mistral)?
+            }
+            ProviderKind::OpenAi => {
+                OpenAiProvider::from_env(api_key_env, base_url).map(Provider::OpenAi)?
             }
         };
 
