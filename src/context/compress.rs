@@ -1,5 +1,6 @@
 use std::fmt;
 
+use crate::cache::{CacheKey, CacheStore};
 use crate::config::Config;
 use crate::console::Console;
 use crate::error::PeerError;
@@ -14,6 +15,7 @@ use crate::llm::tools::{NoToolExecutor, submit_review_context_digest};
 use super::{DigestValidationError, ReviewContext, ReviewContextDigest};
 
 const CONTEXT_COMPRESSION_MAX_ITERATIONS: u32 = 1;
+const CONTEXT_CACHE_NAMESPACE: &str = "review-context-digest";
 
 const SYSTEM_PROMPT: &str = r#"Compress the supplied review title, body, and comment threads into a faithful review-context digest for downstream code-review checks.
 
@@ -107,6 +109,7 @@ where
 pub async fn compress_review_context(
     context: &ReviewContext,
     config: &Config,
+    cache: &CacheStore,
     console: Console,
 ) -> Result<ContextCompression, ContextCompressionError> {
     if context.is_empty() {
@@ -119,6 +122,41 @@ pub async fn compress_review_context(
     let (provider_config, model_config) = config
         .resolve_provider(None, None)
         .map_err(ContextCompressionError::Config)?;
+    let cache_key = match CacheKey::from_params(
+        CONTEXT_CACHE_NAMESPACE,
+        &provider_config.name,
+        &model_config.name,
+        context,
+    ) {
+        Ok(key) => Some(key),
+        Err(error) => {
+            console.debug(format_args!(
+                "cannot build review context cache key: {error:?}"
+            ));
+            None
+        }
+    };
+    if let Some(key) = &cache_key {
+        match cache.read_json::<ReviewContextDigest>(key) {
+            Ok(Some(digest)) => match digest.validate(context) {
+                Ok(()) => {
+                    return Ok(ContextCompression {
+                        digest,
+                        usage: None,
+                    });
+                }
+                Err(error) => console.debug(format_args!(
+                    "ignoring invalid cached review context digest: {error:?}"
+                )),
+            },
+            Ok(None) => {}
+            Err(error) => {
+                console.debug(format_args!(
+                    "ignoring review context cache read error: {error:?}"
+                ));
+            }
+        }
+    }
     let runtime = ProviderRuntime::try_new(
         &provider_config.name,
         &provider_config.api_key_env,
@@ -131,8 +169,12 @@ pub async fn compress_review_context(
         ReviewContextCompressor::new(provider, transport, &model_config.name, console)
             .compress(context)
             .await?;
+    compression
+        .digest
+        .validate(context)
+        .map_err(|source| ContextCompressionError::InvalidDigest { source })?;
 
-    Ok(ContextCompression {
+    let result = ContextCompression {
         digest: compression.digest,
         usage: compression.usage.map(|usage| {
             LlmUsage::from_raw_usage(
@@ -142,7 +184,15 @@ pub async fn compress_review_context(
                 model_config.output_per_1m_usd,
             )
         }),
-    })
+    };
+    if let Some(key) = &cache_key
+        && let Err(error) = cache.write_json(key, &result.digest)
+    {
+        console.debug(format_args!(
+            "ignoring review context cache write error: {error:?}"
+        ));
+    }
+    Ok(result)
 }
 
 fn compression_request(model: &str, context: &ReviewContext) -> crate::llm::agent::AgentRequest {
@@ -333,13 +383,61 @@ mod tests {
     #[tokio::test]
     async fn configured_compression_skips_empty_context_before_provider_creation() {
         let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let cache = CacheStore::new(directory.path(), Console::default());
 
-        let result =
-            compress_review_context(&ReviewContext::default(), &config, Console::default())
-                .await
-                .unwrap();
+        let result = compress_review_context(
+            &ReviewContext::default(),
+            &config,
+            &cache,
+            Console::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.digest, ReviewContextDigest::default());
+        assert_eq!(result.usage, None);
+    }
+
+    #[tokio::test]
+    async fn configured_compression_uses_cache_before_provider_creation() {
+        let mut config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+        let (provider_name, model_name) = {
+            let (provider, model) = config.resolve_provider(None, None).unwrap();
+            (provider.name.clone(), model.name.clone())
+        };
+        config
+            .providers
+            .iter_mut()
+            .find(|provider| provider.name == provider_name)
+            .unwrap()
+            .api_key_env = "PEER_TEST_MISSING_CACHE_API_KEY".to_string();
+        let directory = tempfile::tempdir().unwrap();
+        let cache = CacheStore::new(directory.path(), Console::default());
+        let context = context();
+        let key = CacheKey::from_params(
+            CONTEXT_CACHE_NAMESPACE,
+            &provider_name,
+            &model_name,
+            &context,
+        )
+        .unwrap();
+        let digest = ReviewContextDigest {
+            overview: "Preserve review decisions.".to_string(),
+            items: vec![crate::context::ReviewContextItem {
+                kind: crate::context::ReviewContextItemKind::Requirement,
+                text: "Keep decisions and open questions.".to_string(),
+                sources: vec!["body".to_string()],
+            }],
+            missing_context: Vec::new(),
+        };
+        cache.write_json(&key, &digest).unwrap();
+
+        let result = compress_review_context(&context, &config, &cache, Console::default())
+            .await
+            .unwrap();
+
+        assert_eq!(result.digest, digest);
         assert_eq!(result.usage, None);
     }
 

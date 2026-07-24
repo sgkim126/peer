@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::cache::CacheStore;
 use crate::check::{self, CheckCommandError};
 use crate::cli::CheckCommand;
 use crate::config::Config;
@@ -306,6 +307,7 @@ pub async fn run(
     console: Console,
     config: &Config,
     project_root: PathBuf,
+    cache: &CacheStore,
     review_context: &ReviewContextDigest,
     context_usage: Option<LlmUsage>,
 ) -> ReviewResult {
@@ -329,6 +331,7 @@ pub async fn run(
             command,
             config,
             project_root.clone(),
+            cache,
             review_context,
             None,
         )

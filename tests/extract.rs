@@ -188,6 +188,8 @@ fn commit_list_returns_oldest_to_newest() {
         json!({
             "command": "commit-list",
             "range": range,
+            "from": hash1,
+            "to": hash3,
             "commits": [hash2, hash3]
         })
     );

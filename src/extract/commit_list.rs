@@ -7,6 +7,8 @@ use super::{ExtractError, Extractor};
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CommitList {
     pub range: String,
+    pub from: CommitHash,
+    pub to: CommitHash,
     pub commits: Vec<CommitHash>,
 }
 
@@ -22,11 +24,12 @@ impl Extractor {
             return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
         }
 
-        CommitHash::resolve(from, &self.project_root, self.console).await?;
-        CommitHash::resolve(to, &self.project_root, self.console).await?;
+        let from = CommitHash::resolve(from, &self.project_root, self.console).await?;
+        let to = CommitHash::resolve(to, &self.project_root, self.console).await?;
+        let resolved_range = format!("{from}..{to}");
 
         let output = run_git(
-            &["rev-list", "--reverse", range],
+            &["rev-list", "--reverse", &resolved_range],
             &self.project_root,
             self.console,
         )
@@ -40,6 +43,8 @@ impl Extractor {
 
         Ok(CommitList {
             range: range.to_string(),
+            from,
+            to,
             commits,
         })
     }
@@ -125,6 +130,22 @@ mod tests {
             .unwrap();
 
         assert_eq!(result.range, range);
+    }
+
+    #[tokio::test]
+    async fn commit_list_round_trips_through_json() {
+        let repo = Repo::new().await;
+        let hash1 = repo.commit("a.txt", "first").await;
+        repo.commit("b.txt", "second").await;
+
+        let result = Extractor::new(repo.path.clone(), Console::default())
+            .commit_list(&format!("{hash1}..HEAD"))
+            .await
+            .unwrap();
+        let serialized = serde_json::to_string(&result).unwrap();
+        let deserialized: CommitList = serde_json::from_str(&serialized).unwrap();
+
+        assert_eq!(deserialized, result);
     }
 
     #[tokio::test]

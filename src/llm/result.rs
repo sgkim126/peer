@@ -35,14 +35,14 @@ pub struct Finding {
 #[serde(untagged)]
 pub enum CheckTarget {
     Commit(CommitHash),
-    Range(String),
+    Range { from: CommitHash, to: CommitHash },
 }
 
 impl fmt::Display for CheckTarget {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Commit(commit) => commit.fmt(f),
-            Self::Range(range) => range.fmt(f),
+            Self::Range { from, to } => write!(f, "{from}..{to}"),
         }
     }
 }
@@ -327,30 +327,46 @@ mod tests {
     }
 
     #[test]
-    fn check_target_serializes_as_a_string() {
+    fn check_target_serializes_resolved_range_endpoints() {
         let commit = CheckTarget::Commit(CommitHash::new("abc1234").unwrap());
-        let range = CheckTarget::Range("HEAD~3..HEAD".to_string());
+        let range = CheckTarget::Range {
+            from: CommitHash::new("abc1234").unwrap(),
+            to: CommitHash::new("def5678").unwrap(),
+        };
 
         assert_eq!(serde_json::to_value(commit).unwrap(), "abc1234");
-        assert_eq!(serde_json::to_value(range).unwrap(), "HEAD~3..HEAD");
+        assert_eq!(
+            serde_json::to_value(range).unwrap(),
+            serde_json::json!({"from": "abc1234", "to": "def5678"})
+        );
     }
 
     #[test]
     fn check_target_deserializes_commit_and_range() {
         let commit: CheckTarget = serde_json::from_str("\"abc1234\"").unwrap();
-        let range: CheckTarget = serde_json::from_str("\"HEAD~3..HEAD\"").unwrap();
+        let range: CheckTarget =
+            serde_json::from_str(r#"{"from":"abc1234","to":"def5678"}"#).unwrap();
 
         assert_matches!(commit, CheckTarget::Commit(_));
-        assert_eq!(range, CheckTarget::Range("HEAD~3..HEAD".to_string()));
+        assert_eq!(
+            range,
+            CheckTarget::Range {
+                from: CommitHash::new("abc1234").unwrap(),
+                to: CommitHash::new("def5678").unwrap(),
+            }
+        );
     }
 
     #[test]
     fn check_target_displays_its_revision() {
         let commit = CheckTarget::Commit(CommitHash::new("abc1234").unwrap());
-        let range = CheckTarget::Range("HEAD~3..HEAD".to_string());
+        let range = CheckTarget::Range {
+            from: CommitHash::new("abc1234").unwrap(),
+            to: CommitHash::new("def5678").unwrap(),
+        };
 
         assert_eq!(commit.to_string(), "abc1234");
-        assert_eq!(range.to_string(), "HEAD~3..HEAD");
+        assert_eq!(range.to_string(), "abc1234..def5678");
     }
 
     #[test]
