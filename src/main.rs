@@ -40,6 +40,8 @@ async fn main() -> ExitCode {
         },
         Command::Review {
             target,
+            skip_checks,
+            only_checks,
             title,
             body_file,
             comments_file,
@@ -111,7 +113,16 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            let plan = review::plan_checks(&target);
+            let plan = match review::plan_checks(&target)
+                .with_only_check(&only_checks)
+                .and_then(|plan| plan.excluding_check(&skip_checks))
+            {
+                Ok(plan) => plan,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    return ExitCode::FAILURE;
+                }
+            };
             console.debug(format_args!("{plan:?}"));
             let compression =
                 match context::compress_review_context(&review_context, &config, console).await {

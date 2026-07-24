@@ -23,8 +23,64 @@ pub enum ReviewTarget {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewPlan {
-    pub checks: Vec<ReviewCheck>,
+    checks: Vec<ReviewCheck>,
 }
+
+#[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq)]
+pub enum ReviewCheckKind {
+    Size,
+    Intent,
+    Quality,
+    Security,
+    Coherence,
+}
+
+impl ReviewPlan {
+    pub fn with_only_check(
+        mut self,
+        selected: &[ReviewCheckKind],
+    ) -> Result<Self, ReviewPlanError> {
+        if !selected.is_empty() {
+            self.checks.retain(|check| selected.contains(&check.kind()));
+        }
+        self.ensure_not_empty()
+    }
+
+    pub fn excluding_check(
+        mut self,
+        excluded: &[ReviewCheckKind],
+    ) -> Result<Self, ReviewPlanError> {
+        if !excluded.is_empty() {
+            self.checks
+                .retain(|check| !excluded.contains(&check.kind()));
+        }
+        self.ensure_not_empty()
+    }
+
+    fn ensure_not_empty(self) -> Result<Self, ReviewPlanError> {
+        if self.checks.is_empty() {
+            return Err(ReviewPlanError::NoChecksRemaining);
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ReviewPlanError {
+    NoChecksRemaining,
+}
+
+impl fmt::Display for ReviewPlanError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoChecksRemaining => {
+                f.write_str("no checks remain after applying review check filters")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ReviewPlanError {}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ReviewResult {
@@ -84,6 +140,18 @@ pub enum ReviewCheck {
     Quality { revision: CommitHash },
     Security { revision: CommitHash },
     Coherence { range: String },
+}
+
+impl ReviewCheck {
+    fn kind(&self) -> ReviewCheckKind {
+        match self {
+            Self::Size { .. } => ReviewCheckKind::Size,
+            Self::Intent { .. } => ReviewCheckKind::Intent,
+            Self::Quality { .. } => ReviewCheckKind::Quality,
+            Self::Security { .. } => ReviewCheckKind::Security,
+            Self::Coherence { .. } => ReviewCheckKind::Coherence,
+        }
+    }
 }
 
 impl From<ReviewCheck> for CheckCommand {
@@ -446,5 +514,88 @@ mod tests {
                 range: "main..HEAD".into()
             })
         );
+    }
+
+    #[test]
+    fn filters_plan_to_selected_check_kinds() {
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let plan = plan_checks(&ReviewTarget::Range {
+            revision: "main..HEAD".into(),
+            commits: vec![first, second],
+        })
+        .with_only_check(&[ReviewCheckKind::Intent, ReviewCheckKind::Coherence])
+        .unwrap();
+
+        assert_eq!(plan.checks.len(), 3);
+        assert_eq!(
+            plan.checks
+                .iter()
+                .map(ReviewCheck::kind)
+                .collect::<Vec<_>>(),
+            [
+                ReviewCheckKind::Intent,
+                ReviewCheckKind::Intent,
+                ReviewCheckKind::Coherence,
+            ]
+        );
+    }
+
+    #[test]
+    fn removes_skipped_check_kinds_from_plan() {
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let plan = plan_checks(&ReviewTarget::Range {
+            revision: "main..HEAD".into(),
+            commits: vec![first, second],
+        })
+        .excluding_check(&[ReviewCheckKind::Quality, ReviewCheckKind::Coherence])
+        .unwrap();
+
+        assert_eq!(plan.checks.len(), 6);
+        for check in plan.checks {
+            assert_matches!(
+                check.kind(),
+                ReviewCheckKind::Size | ReviewCheckKind::Intent | ReviewCheckKind::Security
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_plan_when_skip_checks_remove_every_applicable_check() {
+        let commit = CommitHash::new("abc1234").unwrap();
+        let result = plan_checks(&ReviewTarget::Commit(commit)).excluding_check(&[
+            ReviewCheckKind::Size,
+            ReviewCheckKind::Intent,
+            ReviewCheckKind::Quality,
+            ReviewCheckKind::Security,
+            ReviewCheckKind::Coherence,
+        ]);
+
+        assert_eq!(result.unwrap_err(), ReviewPlanError::NoChecksRemaining);
+    }
+
+    #[test]
+    fn rejects_plan_when_only_checks_are_not_applicable() {
+        let commit = CommitHash::new("abc1234").unwrap();
+        let result = plan_checks(&ReviewTarget::Commit(commit))
+            .with_only_check(&[ReviewCheckKind::Coherence]);
+
+        assert_eq!(result.unwrap_err(), ReviewPlanError::NoChecksRemaining);
+    }
+
+    #[test]
+    fn accepts_plan_when_skip_checks_leave_an_applicable_check() {
+        let commit = CommitHash::new("abc1234").unwrap();
+        let plan = plan_checks(&ReviewTarget::Commit(commit))
+            .excluding_check(&[
+                ReviewCheckKind::Size,
+                ReviewCheckKind::Intent,
+                ReviewCheckKind::Quality,
+            ])
+            .unwrap();
+
+        assert_eq!(plan.checks.len(), 1);
+        assert_eq!(plan.checks[0].kind(), ReviewCheckKind::Security);
     }
 }
