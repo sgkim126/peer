@@ -2,6 +2,8 @@ use std::{num::NonZeroU8, path::PathBuf};
 
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::review::ReviewCheckKind;
+
 #[derive(Parser, Debug)]
 #[command(name = "peer", about = "LLM-based code review CLI")]
 pub struct Cli {
@@ -21,6 +23,22 @@ pub enum Command {
 
     Review {
         target: String,
+
+        #[arg(
+            long = "skip-check",
+            value_enum,
+            value_delimiter = ',',
+            conflicts_with = "only_checks"
+        )]
+        skip_checks: Vec<ReviewCheckKind>,
+
+        #[arg(
+            long = "only-check",
+            value_enum,
+            value_delimiter = ',',
+            conflicts_with = "skip_checks"
+        )]
+        only_checks: Vec<ReviewCheckKind>,
 
         #[arg(long)]
         title: Option<String>,
@@ -154,6 +172,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD~3..HEAD".into(),
+                skip_checks: Vec::new(),
+                only_checks: Vec::new(),
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -171,6 +191,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "abc123".into(),
+                skip_checks: Vec::new(),
+                only_checks: Vec::new(),
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -188,6 +210,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "main".into(),
+                skip_checks: Vec::new(),
+                only_checks: Vec::new(),
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -220,6 +244,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
+                skip_checks: Vec::new(),
+                only_checks: Vec::new(),
                 title: None,
                 body_file: None,
                 comments_file: None,
@@ -247,6 +273,8 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
+                skip_checks: Vec::new(),
+                only_checks: Vec::new(),
                 title: Some("Add context compression".into()),
                 body_file: Some("body.md".into()),
                 comments_file: Some("comments.json".into()),
@@ -254,6 +282,72 @@ mod tests {
                 repo: None,
             }
         );
+    }
+
+    #[test]
+    fn review_with_only_checks() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "HEAD~2..HEAD",
+            "--only-check",
+            "intent,coherence",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD~2..HEAD".into(),
+                skip_checks: Vec::new(),
+                only_checks: vec![ReviewCheckKind::Intent, ReviewCheckKind::Coherence],
+                title: None,
+                body_file: None,
+                comments_file: None,
+                format: OutputFormat::Terminal,
+                repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn review_with_skipped_checks() {
+        let cli = parse(&["peer", "review", "HEAD", "--skip-check", "quality,security"]);
+
+        assert_eq!(
+            cli.command,
+            Command::Review {
+                target: "HEAD".into(),
+                skip_checks: vec![ReviewCheckKind::Quality, ReviewCheckKind::Security],
+                only_checks: Vec::new(),
+                title: None,
+                body_file: None,
+                comments_file: None,
+                format: OutputFormat::Terminal,
+                repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn review_rejects_only_and_skip_checks_together() {
+        let result = Cli::try_parse_from([
+            "peer",
+            "review",
+            "HEAD",
+            "--only-check",
+            "intent",
+            "--skip-check",
+            "security",
+        ]);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn review_rejects_only_check_without_a_value() {
+        let result = Cli::try_parse_from(["peer", "review", "HEAD", "--only-check"]);
+
+        assert!(result.is_err());
     }
 
     #[test]
