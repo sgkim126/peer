@@ -2,6 +2,8 @@ use serde::Serialize;
 
 use super::error::CacheKeyError;
 
+const BINARY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 #[derive(Debug, Clone, PartialEq)]
 #[cfg_attr(not(test), expect(dead_code))]
 pub struct CacheKey {
@@ -33,6 +35,15 @@ impl CacheKey {
             params_hash: blake3::hash(&bytes).to_hex().to_string(),
         })
     }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn version() -> String {
+        cache_version(BINARY_VERSION)
+    }
+}
+
+fn cache_version(version: &str) -> String {
+    version.split('.').take(2).collect::<Vec<_>>().join(".")
 }
 
 #[cfg(test)]
@@ -58,5 +69,11 @@ mod tests {
             CacheKey::from_params("other-check", "provider_a", "other-model", &"params").unwrap();
 
         assert_eq!(first.params_hash, second.params_hash);
+    }
+
+    #[test]
+    fn patch_version_does_not_change_cache_version() {
+        assert_eq!(cache_version("1.2.3"), "1.2");
+        assert_eq!(cache_version("1.2.99"), "1.2");
     }
 }
