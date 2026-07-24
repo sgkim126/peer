@@ -21,7 +21,7 @@ pub fn render(result: &CheckResult, use_color: bool) -> String {
         output,
         "{} {}",
         label("Target:", use_color),
-        escape_terminal(display_target(&result.target))
+        escape_terminal(&display_target(&result.target))
     )
     .unwrap();
     writeln!(
@@ -188,10 +188,10 @@ fn status(result: &CheckResult) -> &'static str {
     }
 }
 
-fn display_target(target: &CheckTarget) -> &str {
+fn display_target(target: &CheckTarget) -> String {
     match target {
-        CheckTarget::Commit(commit) => commit.as_ref(),
-        CheckTarget::Range(range) => range,
+        CheckTarget::Commit(commit) => commit.to_string(),
+        CheckTarget::Range { from, to } => format!("{from}..{to}"),
     }
 }
 
@@ -224,7 +224,10 @@ mod tests {
     fn result() -> CheckResult {
         CheckResult {
             check: "security".to_string(),
-            target: CheckTarget::Range("HEAD~2..HEAD".to_string()),
+            target: CheckTarget::Range {
+                from: CommitHash::new("abc1234").unwrap(),
+                to: CommitHash::new("def5678").unwrap(),
+            },
             ordered_commits: vec![
                 CommitHash::new("abc1234").unwrap(),
                 CommitHash::new("def5678").unwrap(),

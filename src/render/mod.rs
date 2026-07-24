@@ -295,7 +295,10 @@ mod tests {
     fn result() -> CheckResult {
         CheckResult {
             check: "security".to_string(),
-            target: CheckTarget::Range("HEAD~2..HEAD".to_string()),
+            target: CheckTarget::Range {
+                from: CommitHash::new("abc1234").unwrap(),
+                to: CommitHash::new("def5678").unwrap(),
+            },
             ordered_commits: vec![
                 CommitHash::new("abc1234").unwrap(),
                 CommitHash::new("def5678").unwrap(),

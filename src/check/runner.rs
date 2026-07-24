@@ -70,7 +70,7 @@ impl Checker {
         let target = check.target();
         let target_description = match &target {
             crate::llm::result::CheckTarget::Commit(commit) => commit.to_string(),
-            crate::llm::result::CheckTarget::Range(range) => range.clone(),
+            crate::llm::result::CheckTarget::Range { from, to } => format!("{from}..{to}"),
         };
         self.config.console.debug(format_args!(
             "check {} for {}",

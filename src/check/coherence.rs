@@ -40,7 +40,10 @@ impl CheckDefinition for CoherenceCheck {
     }
 
     fn target(&self) -> CheckTarget {
-        CheckTarget::Range(self.commits.range.clone())
+        CheckTarget::Range {
+            from: self.commits.from.clone(),
+            to: self.commits.to.clone(),
+        }
     }
 
     fn expected_commits(&self) -> &[CommitHash] {

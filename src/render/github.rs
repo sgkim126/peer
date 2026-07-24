@@ -52,7 +52,7 @@ pub fn render(result: &CheckResult, repo: &str) -> String {
         "<details>\n<summary>Check: {} - Status: {} - Target: {}</summary>\n\n{}\n</details>",
         escape_github_html(&result.check),
         status(result),
-        escape_github_html(display_target(&result.target)),
+        escape_github_html(&display_target(&result.target)),
         body.trim_end()
     )
 }
@@ -127,10 +127,10 @@ fn status(result: &CheckResult) -> &'static str {
     }
 }
 
-fn display_target(target: &CheckTarget) -> &str {
+fn display_target(target: &CheckTarget) -> String {
     match target {
-        CheckTarget::Commit(commit) => commit.as_ref(),
-        CheckTarget::Range(range) => range,
+        CheckTarget::Commit(commit) => commit.to_string(),
+        CheckTarget::Range { from, to } => format!("{from}..{to}"),
     }
 }
 
@@ -172,7 +172,7 @@ fn target(target: &CheckTarget, repo: &str) -> String {
             let commit = commit.as_ref();
             format!("[`{commit}`]({})", commit_url(repo, commit))
         }
-        CheckTarget::Range(range) => escape_github_markdown(range),
+        CheckTarget::Range { from, to } => escape_github_markdown(&format!("{from}..{to}")),
     }
 }
 
@@ -229,7 +229,10 @@ mod tests {
     fn result() -> CheckResult {
         CheckResult {
             check: "security".to_string(),
-            target: CheckTarget::Range("HEAD~2..HEAD".to_string()),
+            target: CheckTarget::Range {
+                from: CommitHash::new("abc1234").unwrap(),
+                to: CommitHash::new("def5678").unwrap(),
+            },
             ordered_commits: vec![
                 CommitHash::new("abc1234").unwrap(),
                 CommitHash::new("def5678").unwrap(),
