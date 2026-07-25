@@ -62,7 +62,7 @@ permissions:
   pull-requests: write
 
 env:
-  PEER_VERSION: "0.10.0"
+  PEER_VERSION: "0.11.0"
 
 jobs:
   review:
@@ -137,14 +137,17 @@ jobs:
             const skipChecks = process.env.REVIEW_SKIP_CHECKS;
             const onlyChecks = process.env.REVIEW_ONLY_CHECKS;
             const triggeredBy = context.actor;
+            const checkMetadata = [
+              ...(onlyChecks ? [`checks run (--only-check): ${onlyChecks}`] : []),
+              ...(skipChecks ? [`checks skipped (--skip-check): ${skipChecks}`] : []),
+            ];
             const metadata = [
               `peer version: ${peerVersion}`,
               `provider: ${provider}`,
               model
                 ? `model: ${model}`
                 : 'model: provider default',
-              ...(onlyChecks ? [`checks run (--only-check): ${onlyChecks}`] : []),
-              ...(skipChecks ? [`checks skipped (--skip-check): ${skipChecks}`] : []),
+              ...checkMetadata,
             ].join('\n');
             const commentMetadata = [
               metadata,
@@ -162,6 +165,7 @@ jobs:
             core.setOutput('comment-id', String(comment.id));
             core.setOutput('comment-url', comment.html_url);
             core.setOutput('metadata', metadata);
+            core.setOutput('check-metadata', checkMetadata.join('\n'));
 
       - name: Checkout pull request
         uses: actions/checkout@v7
@@ -259,7 +263,6 @@ jobs:
           comments-file: ${{ steps.context.outputs.comments-file }}
           debug: "true"
           verbose: "true"
-          include-usage: "true"
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -270,7 +273,7 @@ jobs:
         if: always() && steps.placeholder.outputs.comment-id != ''
         uses: actions/github-script@v9
         env:
-          REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
+          REVIEW_METADATA: ${{ steps.placeholder.outputs.check-metadata }}
         with:
           script: |
             const fs = require('fs');
@@ -279,7 +282,7 @@ jobs:
               metadata,
               `Triggered by @${context.actor}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
-            ].join('\n');
+            ].filter(Boolean).join('\n');
             const stdoutPath = '${{ steps.peer.outputs.stdout-path }}';
             const exitCode = '${{ steps.peer.outputs.exit-code }}';
             let output = '';
