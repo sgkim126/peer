@@ -22,7 +22,7 @@ pub use self::commit_files::CommitFiles;
 pub use self::commit_list::CommitList;
 pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
-pub use self::file_content::FileContent;
+pub use self::file_content::{FileContent, FileContentRange};
 pub use self::file_diff::FileDiff;
 pub use self::grep::GrepResult;
 pub use self::list_tree::TreeListing;
@@ -82,7 +82,7 @@ pub async fn handler(
             ExtractData::CommitMessage(extractor.commit_message(revision).await?)
         }
         ExtractCommand::FileContent { revision, path } => {
-            ExtractData::FileContent(extractor.file_content(revision, path).await?)
+            ExtractData::FileContent(extractor.file_content(revision, path, None).await?)
         }
         ExtractCommand::FileDiff {
             from_revision,
