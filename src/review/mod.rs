@@ -26,6 +26,7 @@ pub enum ReviewTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewPlan {
     checks: Vec<ReviewCheck>,
+    ordered_commits: Vec<CommitHash>,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq)]
@@ -89,6 +90,7 @@ pub struct ReviewResult {
     pub summary: ReviewSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_usage: Option<LlmUsage>,
+    pub ordered_commits: Vec<CommitHash>,
     pub checks: Vec<CheckResult>,
 
     #[serde(skip)]
@@ -276,8 +278,11 @@ pub async fn validate_target(
 
 pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
     let mut checks = Vec::new();
-    match target {
-        ReviewTarget::Commit(commit) => append_commit_checks(&mut checks, commit),
+    let ordered_commits = match target {
+        ReviewTarget::Commit(commit) => {
+            append_commit_checks(&mut checks, commit);
+            vec![commit.clone()]
+        }
         ReviewTarget::Range { from, to, commits } => {
             for commit in commits {
                 append_commit_checks(&mut checks, commit);
@@ -286,9 +291,13 @@ pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
                 from: from.clone(),
                 to: to.clone(),
             });
+            commits.clone()
         }
+    };
+    ReviewPlan {
+        checks,
+        ordered_commits,
     }
-    ReviewPlan { checks }
 }
 
 fn append_commit_checks(checks: &mut Vec<ReviewCheck>, commit: &CommitHash) {
@@ -352,6 +361,7 @@ pub async fn run(
     ReviewResult {
         summary,
         context_usage,
+        ordered_commits: plan.ordered_commits,
         checks,
         errors,
     }

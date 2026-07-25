@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::cli::OutputFormat;
 use crate::git::CommitHash;
 use crate::llm::result::{CheckError, CheckResult, CheckTarget, Finding, LlmUsage};
-use crate::review::ReviewSummary;
+use crate::review::{ReviewCheck, ReviewCheckError, ReviewResult, ReviewSummary};
 
 #[cfg_attr(not(test), expect(dead_code))]
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -85,6 +85,30 @@ impl From<CheckResult> for RenderDocument {
     }
 }
 
+impl From<ReviewResult> for RenderDocument {
+    fn from(review: ReviewResult) -> Self {
+        let ReviewResult {
+            summary,
+            context_usage,
+            ordered_commits,
+            checks,
+            errors,
+        } = review;
+        let mut checks = checks
+            .into_iter()
+            .map(RenderCheck::from)
+            .chain(errors.into_iter().map(RenderCheck::from))
+            .collect::<Vec<_>>();
+        checks.sort_by_key(|check| render_check_order(check, &ordered_commits));
+        Self {
+            summary: Some(summary),
+            context_usage,
+            ordered_commits,
+            checks,
+        }
+    }
+}
+
 impl From<CheckResult> for RenderCheck {
     fn from(result: CheckResult) -> Self {
         let CheckResult {
@@ -133,6 +157,47 @@ impl From<CheckResult> for RenderCheck {
             outcome,
         }
     }
+}
+
+impl From<ReviewCheckError> for RenderCheck {
+    fn from(failure: ReviewCheckError) -> Self {
+        let (check, target) = match failure.check {
+            ReviewCheck::Size { revision } => ("size", CheckTarget::Commit(revision)),
+            ReviewCheck::Intent { revision } => ("intent", CheckTarget::Commit(revision)),
+            ReviewCheck::Quality { revision } => ("quality", CheckTarget::Commit(revision)),
+            ReviewCheck::Security { revision } => ("security", CheckTarget::Commit(revision)),
+            ReviewCheck::Coherence { from, to } => ("coherence", CheckTarget::Range { from, to }),
+        };
+        Self {
+            check: check.to_string(),
+            target,
+            outcome: RenderCheckOutcome::Failed {
+                failure: RenderCheckFailure::Execution {
+                    reason: failure.error.to_string(),
+                },
+            },
+        }
+    }
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn render_check_order(check: &RenderCheck, ordered_commits: &[CommitHash]) -> (usize, usize) {
+    let check_order = match check.check.as_str() {
+        "size" => 0,
+        "intent" => 1,
+        "quality" => 2,
+        "security" => 3,
+        "coherence" => 4,
+        _ => usize::MAX,
+    };
+    let commit_order = match &check.target {
+        CheckTarget::Commit(target) => ordered_commits
+            .iter()
+            .position(|commit| commit.matches(target))
+            .unwrap_or(usize::MAX),
+        CheckTarget::Range { .. } => usize::MAX,
+    };
+    (check_order, commit_order)
 }
 
 fn escape_markdown(value: &str) -> String {
@@ -478,6 +543,13 @@ mod tests {
         }
     }
 
+    fn review_ordered_commits() -> Vec<CommitHash> {
+        vec![
+            CommitHash::new("abc1234").unwrap(),
+            CommitHash::new("def5678").unwrap(),
+        ]
+    }
+
     #[test]
     fn orders_findings_with_abbreviated_commit_hashes() {
         let mut result = result();
@@ -508,6 +580,7 @@ mod tests {
         let review = crate::review::ReviewResult {
             summary: review_summary(),
             context_usage: None,
+            ordered_commits: review_ordered_commits(),
             checks: vec![result(), second],
             errors: Vec::new(),
         };
@@ -555,6 +628,7 @@ mod tests {
             let review = crate::review::ReviewResult {
                 summary: review_summary(),
                 context_usage: Some(review_context_usage()),
+                ordered_commits: review_ordered_commits(),
                 checks: vec![result(), second],
                 errors: Vec::new(),
             };
@@ -572,6 +646,7 @@ mod tests {
         let review = crate::review::ReviewResult {
             summary: review_summary(),
             context_usage: Some(review_context_usage()),
+            ordered_commits: review_ordered_commits(),
             checks: vec![result()],
             errors: Vec::new(),
         };
@@ -613,6 +688,7 @@ mod tests {
             let review = crate::review::ReviewResult {
                 summary: review_summary(),
                 context_usage: None,
+                ordered_commits: review_ordered_commits(),
                 checks: vec![result(), second.clone()],
                 errors: Vec::new(),
             };
@@ -697,6 +773,55 @@ mod tests {
             RenderCheckOutcome::Failed {
                 failure: RenderCheckFailure::Check { .. }
             }
+        );
+    }
+
+    #[test]
+    fn review_checks_are_combined_and_sorted_by_check_then_commit() {
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let mut security_second = result();
+        security_second.target = CheckTarget::Commit(second.clone());
+        let mut intent_second = result();
+        intent_second.check = "intent".into();
+        intent_second.target = CheckTarget::Commit(second.clone());
+        let mut security_first = result();
+        security_first.target = CheckTarget::Commit(first.clone());
+        let review = crate::review::ReviewResult {
+            summary: review_summary(),
+            context_usage: None,
+            ordered_commits: vec![first.clone(), second],
+            checks: vec![security_second, intent_second, security_first],
+            errors: vec![crate::review::ReviewCheckError {
+                check: ReviewCheck::Quality {
+                    revision: first.clone(),
+                },
+                error: crate::check::CheckCommandError::Config(
+                    crate::error::PeerError::invalid_config("missing api key"),
+                ),
+            }],
+        };
+
+        let document = RenderDocument::from(review);
+
+        assert_eq!(
+            document
+                .checks
+                .iter()
+                .map(|check| (check.check.as_str(), check.target.to_string()))
+                .collect::<Vec<_>>(),
+            [
+                ("intent", "def5678".to_string()),
+                ("quality", "abc1234".to_string()),
+                ("security", "abc1234".to_string()),
+                ("security", "def5678".to_string()),
+            ]
+        );
+        assert_matches!(
+            &document.checks[1].outcome,
+            RenderCheckOutcome::Failed {
+                failure: RenderCheckFailure::Execution { reason }
+            } if reason == "missing api key"
         );
     }
 
