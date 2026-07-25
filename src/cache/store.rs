@@ -127,7 +127,6 @@ impl CacheStore {
         Ok(())
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn prune(&self, all: bool) -> Result<usize, CachePruneError> {
         let current = (!all)
             .then(|| {

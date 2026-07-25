@@ -83,7 +83,6 @@ pub enum CacheWriteError {
 }
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum CachePruneError {
     InvalidVersion {
         version: String,

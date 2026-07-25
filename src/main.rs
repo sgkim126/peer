@@ -17,7 +17,7 @@ use clap::Parser;
 
 use crate::cache::CacheStore;
 use crate::cli::{Cli, Command};
-use crate::config::{Config, discover};
+use crate::config::{Config, discover, discover_peer_root};
 use crate::console::Console;
 use crate::error::PeerError;
 use crate::llm::provider::ProviderKind;
@@ -42,6 +42,40 @@ async fn main() -> ExitCode {
                 ExitCode::FAILURE
             }
         },
+        Command::Prune { all } => {
+            let cwd = match std::env::current_dir() {
+                Ok(cwd) => cwd,
+                Err(error) => {
+                    eprintln!("cannot determine current directory.");
+                    console.debug(format_args!("{error:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let project_root = match discover_peer_root(&cwd) {
+                Ok(project_root) => project_root,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            let cache = CacheStore::new(project_root.join(".peer/cache"), console);
+            match cache.prune(all) {
+                Ok(removed) => {
+                    if all {
+                        println!("pruned {removed} cache entries");
+                    } else {
+                        println!("pruned {removed} old cache version directories");
+                    }
+                    ExitCode::SUCCESS
+                }
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    ExitCode::FAILURE
+                }
+            }
+        }
         Command::Review {
             target,
             provider,

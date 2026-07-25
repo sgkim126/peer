@@ -22,6 +22,13 @@ pub struct Cli {
 pub enum Command {
     Init,
 
+    /// Remove cached values.
+    Prune {
+        /// Remove all cached values, including values for the current version.
+        #[arg(long)]
+        all: bool,
+    },
+
     Review {
         target: String,
 
@@ -175,6 +182,20 @@ mod tests {
         assert_eq!(cli.command, Command::Init);
         assert!(!cli.verbose);
         assert!(!cli.debug);
+    }
+
+    #[test]
+    fn prune() {
+        let cli = parse(&["peer", "prune"]);
+
+        assert_eq!(cli.command, Command::Prune { all: false });
+    }
+
+    #[test]
+    fn prune_all() {
+        let cli = parse(&["peer", "prune", "--all"]);
+
+        assert_eq!(cli.command, Command::Prune { all: true });
     }
 
     #[test]
