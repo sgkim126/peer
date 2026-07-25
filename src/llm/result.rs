@@ -120,6 +120,12 @@ pub struct CheckResult {
     pub usage: LlmUsage,
 }
 
+impl CheckResult {
+    pub fn is_success(&self) -> bool {
+        self.error.is_none()
+    }
+}
+
 #[cfg_attr(not(test), expect(dead_code))]
 pub async fn validate_per_commit_targets(
     findings: &[Finding],
@@ -424,7 +430,7 @@ mod tests {
 
     #[test]
     fn check_result_allows_missing_context_usage() {
-        let result: CheckResult = serde_json::from_value(serde_json::json!({
+        let mut result: CheckResult = serde_json::from_value(serde_json::json!({
             "check": "security",
             "target": "abc1234",
             "ordered_commits": ["abc1234"],
@@ -442,6 +448,11 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.context_usage, None);
+        assert!(result.is_success());
+        result.error = Some(CheckError::Exhausted {
+            reason: "iteration limit reached".to_string(),
+        });
+        assert!(!result.is_success());
         assert!(
             serde_json::to_value(result)
                 .unwrap()

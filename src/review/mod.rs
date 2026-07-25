@@ -97,6 +97,12 @@ pub struct ReviewResult {
     pub errors: Vec<ReviewCheckError>,
 }
 
+impl ReviewResult {
+    pub fn is_success(&self) -> bool {
+        self.errors.is_empty() && self.checks.iter().all(CheckResult::is_success)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewSummary {
     pub peer_version: String,
@@ -415,6 +421,7 @@ impl From<GitError> for ReviewTargetError {
 mod tests {
     use super::*;
 
+    use crate::llm::result::{CheckError, CheckTarget};
     use std::assert_matches;
     use std::path::PathBuf;
 
@@ -460,6 +467,47 @@ mod tests {
                 .await
                 .unwrap()
         }
+    }
+
+    fn review_result(check_error: Option<CheckError>) -> ReviewResult {
+        let commit = CommitHash::new("abc1234").unwrap();
+        ReviewResult {
+            summary: ReviewSummary {
+                peer_version: "test".to_string(),
+                provider: "test".to_string(),
+                model: "test".to_string(),
+            },
+            context_usage: None,
+            ordered_commits: vec![commit.clone()],
+            checks: vec![CheckResult {
+                check: "quality".to_string(),
+                target: CheckTarget::Commit(commit.clone()),
+                ordered_commits: vec![commit],
+                summary: "Checked.".to_string(),
+                findings: Vec::new(),
+                iterations: 1,
+                error: check_error,
+                context_usage: None,
+                usage: LlmUsage {
+                    input_tokens: 0,
+                    output_tokens: 0,
+                    cost_usd: 0.0,
+                    model: "test".to_string(),
+                },
+            }],
+            errors: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn review_succeeds_only_when_all_checks_succeed() {
+        assert!(review_result(None).is_success());
+        assert!(
+            !review_result(Some(CheckError::Agent {
+                reason: "provider failed".to_string(),
+            }))
+            .is_success()
+        );
     }
 
     #[tokio::test]

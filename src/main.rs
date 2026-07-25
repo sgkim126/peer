@@ -186,15 +186,15 @@ async fn main() -> ExitCode {
                 eprintln!("error: {error}");
                 console.debug(format_args!("{error:?}"));
             }
-            let has_errors = !result.errors.is_empty();
+            let is_success = result.is_success();
 
             match render::render(result.into(), options) {
                 Ok(output) => {
                     println!("{output}");
-                    if has_errors {
-                        ExitCode::FAILURE
-                    } else {
+                    if is_success {
                         ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
                     }
                 }
                 Err(error) => {
@@ -312,6 +312,7 @@ async fn main() -> ExitCode {
             };
             match result {
                 Ok(result) => {
+                    let is_success = result.is_success();
                     if let Some(usage) = &result.context_usage {
                         console.verbose(format_args!(
                             "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
@@ -331,7 +332,11 @@ async fn main() -> ExitCode {
                         serde_json::to_string_pretty(&document)
                             .expect("render document serializes")
                     );
-                    ExitCode::SUCCESS
+                    if is_success {
+                        ExitCode::SUCCESS
+                    } else {
+                        ExitCode::FAILURE
+                    }
                 }
                 Err(error) => {
                     eprintln!("error: {error}");
