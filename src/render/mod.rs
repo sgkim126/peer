@@ -6,8 +6,134 @@ use std::collections::BTreeMap;
 use std::fmt;
 use std::io::IsTerminal;
 
+use serde::{Deserialize, Serialize};
+
 use crate::cli::OutputFormat;
-use crate::llm::result::CheckResult;
+use crate::git::CommitHash;
+use crate::llm::result::{CheckError, CheckResult, CheckTarget, Finding, LlmUsage};
+use crate::review::ReviewSummary;
+
+#[cfg_attr(not(test), expect(dead_code))]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct RenderDocument {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<ReviewSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_usage: Option<LlmUsage>,
+    pub ordered_commits: Vec<CommitHash>,
+    pub checks: Vec<RenderCheck>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct RenderCheck {
+    pub check: String,
+    pub target: CheckTarget,
+    pub outcome: RenderCheckOutcome,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum RenderCheckOutcome {
+    Clean {
+        summary: String,
+        iterations: u32,
+        usage: LlmUsage,
+    },
+    Issues {
+        summary: String,
+        findings: Vec<Finding>,
+        iterations: u32,
+        usage: LlmUsage,
+    },
+    Exhausted {
+        summary: String,
+        findings: Vec<Finding>,
+        reason: String,
+        iterations: u32,
+        usage: LlmUsage,
+    },
+    Failed {
+        failure: RenderCheckFailure,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum RenderCheckFailure {
+    Check {
+        summary: String,
+        findings: Vec<Finding>,
+        error: CheckError,
+        iterations: u32,
+        usage: LlmUsage,
+    },
+    Execution {
+        reason: String,
+    },
+}
+
+impl From<CheckResult> for RenderDocument {
+    fn from(mut result: CheckResult) -> Self {
+        let context_usage = result.context_usage.take();
+        let ordered_commits = std::mem::take(&mut result.ordered_commits);
+        Self {
+            summary: None,
+            context_usage,
+            ordered_commits,
+            checks: vec![result.into()],
+        }
+    }
+}
+
+impl From<CheckResult> for RenderCheck {
+    fn from(result: CheckResult) -> Self {
+        let CheckResult {
+            check,
+            target,
+            ordered_commits: _,
+            summary,
+            findings,
+            iterations,
+            error,
+            context_usage: _,
+            usage,
+        } = result;
+        let outcome = match error {
+            None if findings.is_empty() => RenderCheckOutcome::Clean {
+                summary,
+                iterations,
+                usage,
+            },
+            None => RenderCheckOutcome::Issues {
+                summary,
+                findings,
+                iterations,
+                usage,
+            },
+            Some(CheckError::Exhausted { reason }) => RenderCheckOutcome::Exhausted {
+                summary,
+                findings,
+                reason,
+                iterations,
+                usage,
+            },
+            Some(error) => RenderCheckOutcome::Failed {
+                failure: RenderCheckFailure::Check {
+                    summary,
+                    findings,
+                    error,
+                    iterations,
+                    usage,
+                },
+            },
+        };
+        Self {
+            check,
+            target,
+            outcome,
+        }
+    }
+}
 
 fn escape_markdown(value: &str) -> String {
     let value = single_line(value);
@@ -288,6 +414,8 @@ impl std::error::Error for RenderOptionsError {}
 
 #[cfg(test)]
 mod tests {
+    use std::assert_matches;
+
     use super::*;
     use crate::git::CommitHash;
     use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
@@ -504,6 +632,72 @@ mod tests {
             );
             assert!(output.find("Total token usage").unwrap() < output.find("security").unwrap());
         }
+    }
+
+    #[test]
+    fn check_document_moves_shared_metadata_to_the_envelope() {
+        let mut check = result();
+        check.context_usage = Some(review_context_usage());
+        let ordered_commits = check.ordered_commits.clone();
+
+        let document = RenderDocument::from(check);
+
+        assert!(document.summary.is_none());
+        assert_eq!(document.context_usage, Some(review_context_usage()));
+        assert_eq!(document.ordered_commits, ordered_commits);
+        assert_eq!(document.checks.len(), 1);
+        assert_matches!(
+            &document.checks[0].outcome,
+            RenderCheckOutcome::Issues { .. }
+        );
+    }
+
+    #[test]
+    fn render_documents_round_trip_through_json() {
+        let document = RenderDocument::from(result());
+
+        let encoded = serde_json::to_string(&document).unwrap();
+        let decoded: RenderDocument = serde_json::from_str(&encoded).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded, document);
+        assert!(value.get("summary").is_none());
+        assert!(value.get("context_usage").is_none());
+    }
+
+    #[test]
+    fn check_results_convert_to_exclusive_outcomes() {
+        let mut clean = result();
+        clean.findings.clear();
+        assert_matches!(
+            &RenderDocument::from(clean).checks[0].outcome,
+            RenderCheckOutcome::Clean { .. }
+        );
+
+        assert_matches!(
+            &RenderDocument::from(result()).checks[0].outcome,
+            RenderCheckOutcome::Issues { .. }
+        );
+
+        let mut exhausted = result();
+        exhausted.error = Some(CheckError::Exhausted {
+            reason: "iteration limit reached".into(),
+        });
+        assert_matches!(
+            &RenderDocument::from(exhausted).checks[0].outcome,
+            RenderCheckOutcome::Exhausted { .. }
+        );
+
+        let mut failed = result();
+        failed.error = Some(CheckError::ClarificationRequired {
+            questions: vec!["Which policy applies?".into()],
+        });
+        assert_matches!(
+            &RenderDocument::from(failed).checks[0].outcome,
+            RenderCheckOutcome::Failed {
+                failure: RenderCheckFailure::Check { .. }
+            }
+        );
     }
 
     #[test]
