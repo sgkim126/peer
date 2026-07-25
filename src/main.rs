@@ -188,7 +188,7 @@ async fn main() -> ExitCode {
             }
             let has_errors = !result.errors.is_empty();
 
-            match render::render_review_result(result, options) {
+            match render::render(result.into(), options) {
                 Ok(output) => {
                     println!("{output}");
                     if has_errors {
@@ -325,9 +325,11 @@ async fn main() -> ExitCode {
                         result.usage.input_tokens,
                         result.usage.output_tokens,
                     ));
+                    let document = render::RenderDocument::from(result);
                     println!(
                         "{}",
-                        serde_json::to_string_pretty(&result).expect("check result serializes")
+                        serde_json::to_string_pretty(&document)
+                            .expect("render document serializes")
                     );
                     ExitCode::SUCCESS
                 }
@@ -353,7 +355,15 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            match render::render(&input, options) {
+            let document = match serde_json::from_str::<render::RenderDocument>(&input) {
+                Ok(document) => document,
+                Err(error) => {
+                    eprintln!("failed to parse render document: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            match render::render(document, options) {
                 Ok(output) => {
                     println!("{output}");
                     ExitCode::SUCCESS

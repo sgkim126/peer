@@ -1,12 +1,15 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::llm::result::{CheckResult, CheckTarget, Finding, LlmUsage, Severity};
+use crate::llm::result::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
-use super::escape_markdown;
+use super::{RenderCheck, RenderCheckErrorRef, escape_markdown};
 
-pub fn render(result: &CheckResult) -> String {
+#[cfg(test)]
+use crate::llm::result::CheckResult;
+
+pub fn render(result: &RenderCheck) -> String {
     let mut output = String::new();
     writeln!(output, "## Check: {}", escape_markdown(&result.check)).unwrap();
     writeln!(output).unwrap();
@@ -16,33 +19,46 @@ pub fn render(result: &CheckResult) -> String {
         escape_markdown(&display_target(&result.target))
     )
     .unwrap();
-    writeln!(output, "- **Status:** {}", status(result)).unwrap();
+    writeln!(output, "- **Status:** {}", result.status()).unwrap();
     writeln!(output).unwrap();
-    writeln!(output, "{}", escape_markdown(&result.summary)).unwrap();
-    writeln!(output).unwrap();
+    if let Some(summary) = result.summary() {
+        writeln!(output, "{}", escape_markdown(summary)).unwrap();
+        writeln!(output).unwrap();
+    }
     writeln!(output, "### Findings").unwrap();
     writeln!(output).unwrap();
-    if result.findings.is_empty() {
+    if result.findings().is_empty() {
         writeln!(output, "None.").unwrap();
     } else {
-        for finding in &result.findings {
+        for finding in result.findings() {
             writeln!(output, "- {}", render_finding(finding)).unwrap();
         }
     }
-    if let Some(error) = &result.error {
+    if let Some(error) = result.error() {
         writeln!(output).unwrap();
         writeln!(output, "> [!WARNING]").unwrap();
-        writeln!(output, "> {}", escape_markdown(&error.to_string())).unwrap();
+        writeln!(output, "> {}", escape_markdown(&display_error(error))).unwrap();
     }
-    writeln!(output).unwrap();
-    writeln!(output, "### Metadata").unwrap();
-    writeln!(output).unwrap();
-    writeln!(output, "- **Iterations:** {}", result.iterations).unwrap();
-    if let Some(usage) = &result.context_usage {
-        write_usage_markdown(&mut output, "Context usage", usage);
+    let iterations = result.iterations();
+    let usage = result.usage();
+    if iterations.is_some() || usage.is_some() {
+        writeln!(output).unwrap();
+        writeln!(output, "### Metadata").unwrap();
+        writeln!(output).unwrap();
+        if let Some(iterations) = iterations {
+            writeln!(output, "- **Iterations:** {iterations}").unwrap();
+        }
+        if let Some(usage) = usage {
+            write_usage_markdown(&mut output, "Check usage", usage);
+        }
     }
-    write_usage_markdown(&mut output, "Check usage", &result.usage);
     output.trim_end().to_string()
+}
+
+pub fn render_context_usage(usage: &LlmUsage) -> String {
+    let mut output = String::new();
+    write_usage_markdown(&mut output, "Context usage", usage);
+    output.trim().to_string()
 }
 
 pub fn render_review_summary(
@@ -93,14 +109,15 @@ fn render_finding(finding: &Finding) -> String {
     )
 }
 
-fn status(result: &CheckResult) -> &'static str {
-    if result.error.is_some() {
-        return "failed";
-    }
-    match result.findings.iter().map(|finding| finding.severity).max() {
-        Some(Severity::Critical | Severity::High) => "issue",
-        Some(Severity::Info | Severity::Low | Severity::Medium) => "warning",
-        None => "ok",
+fn display_error(error: RenderCheckErrorRef<'_>) -> String {
+    match error {
+        RenderCheckErrorRef::Exhausted(reason) | RenderCheckErrorRef::Execution(reason) => {
+            reason.to_string()
+        }
+        RenderCheckErrorRef::Check(CheckError::ClarificationRequired { questions }) => {
+            questions.join("; ")
+        }
+        RenderCheckErrorRef::Check(error) => error.to_string(),
     }
 }
 
@@ -193,7 +210,7 @@ mod tests {
         let mut result = result();
         result.findings = vec![result.findings.pop().unwrap()];
         result.findings[0].severity = Severity::Info;
-        assert!(render(&result).contains("- **Status:** warning"));
+        assert!(render(&result.into()).contains("- **Status:** issues"));
     }
 
     #[test]
@@ -203,7 +220,7 @@ mod tests {
         result.error = Some(crate::llm::result::CheckError::Agent {
             reason: "transient LLM call failure: request timed out".into(),
         });
-        let output = render(&result);
+        let output = render(&result.into());
 
         assert!(output.contains("- **Status:** failed"));
         assert!(output.contains("> transient LLM call failure: request timed out"));
@@ -212,7 +229,7 @@ mod tests {
 
     #[test]
     fn includes_usage() {
-        let output = render(&result());
+        let output = render(&result().into());
 
         assert!(output.contains("### Check usage"));
         assert!(output.contains("- **Cost:** $0.001000"));
@@ -228,10 +245,9 @@ mod tests {
             model: "contextmodel".to_string(),
         });
 
-        let output = render(&result);
+        let output = render_context_usage(result.context_usage.as_ref().unwrap());
 
         assert!(output.contains("### Context usage"));
-        assert!(output.contains("### Check usage"));
         assert!(output.contains("- **Model:** contextmodel"));
     }
 
@@ -246,7 +262,7 @@ mod tests {
             line: None,
         });
 
-        let output = render(&result);
+        let output = render(&result.into());
 
         assert!(output.contains("## Check: check \\<unsafe\\>"));
         assert!(output.contains("Summary \\# injected heading \\[link\\]\\(url\\) \\~struck\\~"));

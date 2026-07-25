@@ -3,12 +3,15 @@ use std::fmt::{self, Write};
 
 use owo_colors::Style;
 
-use crate::llm::result::{CheckResult, CheckTarget, Finding, LlmUsage, Severity};
+use crate::llm::result::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
-use super::escape_terminal;
+use super::{RenderCheck, RenderCheckErrorRef, escape_terminal};
 
-pub fn render(result: &CheckResult, use_color: bool) -> String {
+#[cfg(test)]
+use crate::llm::result::CheckResult;
+
+pub fn render(result: &RenderCheck, use_color: bool) -> String {
     let mut output = String::new();
     writeln!(
         output,
@@ -28,43 +31,46 @@ pub fn render(result: &CheckResult, use_color: bool) -> String {
         output,
         "{} {}",
         label("Status:", use_color),
-        styled(status(result), status_style(status(result)), use_color)
+        styled(result.status(), status_style(result.status()), use_color)
     )
     .unwrap();
     writeln!(output).unwrap();
-    writeln!(output, "{}", escape_terminal(&result.summary)).unwrap();
-    writeln!(output).unwrap();
+    if let Some(summary) = result.summary() {
+        writeln!(output, "{}", escape_terminal(summary)).unwrap();
+        writeln!(output).unwrap();
+    }
     writeln!(output, "{}", label("Findings:", use_color)).unwrap();
-    if result.findings.is_empty() {
+    if result.findings().is_empty() {
         writeln!(output, "- none").unwrap();
     } else {
-        for finding in &result.findings {
+        for finding in result.findings() {
             writeln!(output, "- {}", render_finding(finding, use_color)).unwrap();
         }
     }
-    if let Some(error) = &result.error {
+    if let Some(error) = result.error() {
         writeln!(output).unwrap();
         writeln!(
             output,
             "{} {}",
             styled("Warning:", Style::new().yellow().bold(), use_color),
-            escape_terminal(&error.to_string())
+            escape_terminal(&display_error(error))
         )
         .unwrap();
     }
-    writeln!(output).unwrap();
-    writeln!(
-        output,
-        "{} {}",
-        label("Iterations:", use_color),
-        result.iterations
-    )
-    .unwrap();
-    if let Some(usage) = &result.context_usage {
-        write_usage(&mut output, "Context usage", usage);
+    if let Some(iterations) = result.iterations() {
+        writeln!(output).unwrap();
+        writeln!(output, "{} {}", label("Iterations:", use_color), iterations).unwrap();
     }
-    write_usage(&mut output, "Check usage", &result.usage);
+    if let Some(usage) = result.usage() {
+        write_usage(&mut output, "Check usage", usage);
+    }
     output
+}
+
+pub fn render_context_usage(usage: &LlmUsage) -> String {
+    let mut output = String::new();
+    write_usage(&mut output, "Context usage", usage);
+    output.trim().to_string()
 }
 
 pub fn render_review_summary(
@@ -148,9 +154,9 @@ fn bold(value: &str, use_color: bool) -> String {
 
 fn status_style(status: &str) -> Style {
     match status {
-        "ok" => Style::new().green().bold(),
-        "warning" => Style::new().yellow().bold(),
-        "issue" | "failed" => Style::new().red().bold(),
+        "clean" => Style::new().green().bold(),
+        "exhausted" => Style::new().yellow().bold(),
+        "issues" | "failed" => Style::new().red().bold(),
         _ => Style::new().bold(),
     }
 }
@@ -172,14 +178,15 @@ fn styled(value: impl fmt::Display, style: Style, use_color: bool) -> String {
     }
 }
 
-fn status(result: &CheckResult) -> &'static str {
-    if result.error.is_some() {
-        return "failed";
-    }
-    match result.findings.iter().map(|finding| finding.severity).max() {
-        Some(Severity::Critical | Severity::High) => "issue",
-        Some(Severity::Info | Severity::Low | Severity::Medium) => "warning",
-        None => "ok",
+fn display_error(error: RenderCheckErrorRef<'_>) -> String {
+    match error {
+        RenderCheckErrorRef::Exhausted(reason) | RenderCheckErrorRef::Execution(reason) => {
+            reason.to_string()
+        }
+        RenderCheckErrorRef::Check(CheckError::ClarificationRequired { questions }) => {
+            questions.join("; ")
+        }
+        RenderCheckErrorRef::Check(error) => error.to_string(),
     }
 }
 
@@ -259,7 +266,7 @@ mod tests {
 
     #[test]
     fn has_no_ansi_codes_without_tty() {
-        let output = render(&result(), false);
+        let output = render(&result().into(), false);
 
         assert!(output.contains("Check usage: 100 input, 20 output, $0.001000 (test-model)"));
         assert!(!output.contains("\u{1b}["));
@@ -275,10 +282,9 @@ mod tests {
             model: "context-model".to_string(),
         });
 
-        let output = render(&result, false);
+        let output = render_context_usage(result.context_usage.as_ref().unwrap());
 
         assert!(output.contains("Context usage: 40 input, 10 output, $0.000400 (context-model)"));
-        assert!(output.contains("Check usage: 100 input, 20 output"));
     }
 
     #[test]
@@ -288,7 +294,7 @@ mod tests {
         result.summary = "Summary\nforged output\u{7}".to_string();
         result.findings[0].message = "message\u{1b}[31m\nnext line".to_string();
 
-        let output = render(&result, true);
+        let output = render(&result.into(), true);
 
         assert!(output.contains(r"security\u{1b}[2J"));
         assert!(output.contains(r"Summary forged output\u{7}"));
@@ -304,8 +310,23 @@ mod tests {
         let mut result = result();
         result.summary = "변경 사항을 확인했습니다.".to_string();
 
-        let output = render(&result, false);
+        let output = render(&result.into(), false);
 
         assert!(output.contains("변경 사항을 확인했습니다."));
+    }
+
+    #[test]
+    fn colors_current_status_names() {
+        for (status, style) in [
+            ("clean", Style::new().green().bold()),
+            ("issues", Style::new().red().bold()),
+            ("exhausted", Style::new().yellow().bold()),
+            ("failed", Style::new().red().bold()),
+        ] {
+            assert_eq!(
+                status_style(status).style(status).to_string(),
+                style.style(status).to_string()
+            );
+        }
     }
 }
