@@ -1,14 +1,15 @@
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::console::Console;
 
-use super::error::{CacheReadError, CacheWriteError};
-use super::key::CacheKey;
+use super::error::{CachePruneError, CacheReadError, CacheWriteError};
+use super::key::{CacheKey, CacheVersion};
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -126,6 +127,149 @@ impl CacheStore {
             .debug(format_args!("cache write: {}", path.display()));
         Ok(())
     }
+
+    pub fn prune(&self, all: bool) -> Result<usize, CachePruneError> {
+        let started = Instant::now();
+        self.console
+            .verbose(format_args!("prune started root={:?} all={all}", self.root));
+        let current = (!all)
+            .then(|| {
+                let version = CacheKey::version();
+                CacheVersion::parse(&version).ok_or_else(|| {
+                    self.console.debug(format_args!(
+                        "cannot prune: invalid cache version {version}"
+                    ));
+                    CachePruneError::InvalidVersion { version }
+                })
+            })
+            .transpose()?;
+        let Some(entries) = self.entries()? else {
+            self.console.verbose(format_args!(
+                "prune completed removed=0 skipped=0 failed=0 duration_ms={}",
+                started.elapsed().as_millis()
+            ));
+            return Ok(0);
+        };
+        let mut removed = 0;
+        let mut skipped = 0;
+        for entry in entries {
+            let entry = entry.map_err(|source| {
+                self.console.debug(format_args!(
+                    "cannot read entry in {:?}: {source:?}",
+                    self.root
+                ));
+                CachePruneError::ReadDir {
+                    path: self.root.clone(),
+                    source,
+                }
+            })?;
+            let path = entry.path();
+            let file_type = entry.file_type().map_err(|source| {
+                self.console.debug(format_args!(
+                    "cannot inspect cache entry {path:?}: {source:?}"
+                ));
+                CachePruneError::InspectEntry {
+                    path: path.clone(),
+                    source,
+                }
+            })?;
+            let should_prune = all
+                || (file_type.is_dir()
+                    && entry
+                        .file_name()
+                        .to_str()
+                        .and_then(CacheVersion::parse)
+                        .zip(current)
+                        .is_some_and(|(version, current)| version < current));
+            if !should_prune {
+                skipped += 1;
+                self.console.debug(format_args!(
+                    "cache entry skipped path={path:?} reason=not-prunable"
+                ));
+                continue;
+            }
+
+            self.console.debug(format_args!(
+                "cache entry selected for pruning path={path:?} reason={}",
+                if all { "all" } else { "outdated-version" }
+            ));
+            let result = if file_type.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            match result {
+                Ok(()) => {
+                    removed += 1;
+                    self.console
+                        .debug(format_args!("cache entry removed path={path:?}"));
+                }
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                    skipped += 1;
+                    self.console.debug(format_args!(
+                        "cache entry skipped path={path:?} reason=already-missing"
+                    ));
+                }
+                Err(source) => {
+                    self.console.debug(format_args!(
+                        "cache entry removal failed path={path:?} error={source:?}"
+                    ));
+                    return Err(CachePruneError::Remove { path, source });
+                }
+            }
+        }
+        self.console.verbose(format_args!(
+            "prune completed removed={removed} skipped={skipped} failed=0 duration_ms={}",
+            started.elapsed().as_millis()
+        ));
+        Ok(removed)
+    }
+
+    fn entries(&self) -> Result<Option<std::fs::ReadDir>, CachePruneError> {
+        self.console
+            .debug(format_args!("inspecting cache root path={:?}", self.root));
+        let metadata = match std::fs::symlink_metadata(&self.root) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                self.console.debug(format_args!(
+                    "cache root skipped path={:?} reason=missing",
+                    self.root
+                ));
+                return Ok(None);
+            }
+            Err(source) => {
+                self.console.debug(format_args!(
+                    "cannot inspect cache root {:?}: {source:?}",
+                    self.root
+                ));
+                return Err(CachePruneError::Inspect {
+                    path: self.root.clone(),
+                    source,
+                });
+            }
+        };
+        if !metadata.file_type().is_dir() {
+            self.console.debug(format_args!(
+                "cache root rejected path={:?} reason=not-directory-or-symlink",
+                self.root
+            ));
+            return Err(CachePruneError::UnsafeRoot {
+                path: self.root.clone(),
+            });
+        }
+        self.console
+            .debug(format_args!("reading cache entries root={:?}", self.root));
+        std::fs::read_dir(&self.root).map(Some).map_err(|source| {
+            self.console.debug(format_args!(
+                "cannot read cache directory {:?}: {source:?}",
+                self.root
+            ));
+            CachePruneError::ReadDir {
+                path: self.root.clone(),
+                source,
+            }
+        })
+    }
 }
 
 #[cfg(test)]
@@ -210,5 +354,80 @@ mod tests {
             store.read_json::<Value>(&key),
             Err(CacheReadError::Deserialize { .. })
         );
+    }
+
+    #[test]
+    fn prune_removes_cache_entries_but_keeps_the_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("cache");
+        std::fs::create_dir_all(root.join("0.1/provider")).unwrap();
+        std::fs::write(root.join("0.1/provider/value.json"), "{}").unwrap();
+        std::fs::write(root.join("loose.tmp"), "temporary").unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        assert_eq!(store.prune(true).unwrap(), 2);
+        assert!(root.is_dir());
+        assert_eq!(std::fs::read_dir(root).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn prune_succeeds_when_the_cache_root_is_missing() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = CacheStore::new(directory.path().join("missing"), Console::default());
+
+        assert_eq!(store.prune(true).unwrap(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_rejects_a_symbolic_link_cache_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target");
+        let root = directory.path().join("cache");
+        std::fs::create_dir(&target).unwrap();
+        symlink(&target, &root).unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        assert_matches!(store.prune(true), Err(CachePruneError::UnsafeRoot { .. }));
+        assert!(target.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_removes_a_symbolic_link_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("cache");
+        let target = directory.path().join("target");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("preserved"), "value").unwrap();
+        symlink(&target, root.join("linked")).unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        assert_eq!(store.prune(true).unwrap(), 1);
+        assert!(target.join("preserved").is_file());
+    }
+
+    #[test]
+    fn prune_without_all_removes_only_outdated_version_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("cache");
+        let current = CacheKey::version();
+        for name in ["0.0", current.as_str(), "999999.0", "invalid"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        std::fs::write(root.join("loose.tmp"), "temporary").unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        assert_eq!(store.prune(false).unwrap(), 1);
+        assert!(!root.join("0.0").exists());
+        assert!(root.join(current).is_dir());
+        assert!(root.join("999999.0").is_dir());
+        assert!(root.join("invalid").is_dir());
+        assert!(root.join("loose.tmp").is_file());
     }
 }
