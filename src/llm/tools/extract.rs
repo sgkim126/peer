@@ -2,10 +2,10 @@
 
 use std::{num::NonZeroU8, path::Path};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer, de};
 use serde_json::json;
 
-use crate::extract::{ExtractData, Extractor, FileContent};
+use crate::extract::{ExtractData, Extractor, FileContent, FileContentRange};
 use crate::llm::provider::{ToolCall, ToolSpec};
 
 use super::executor::{ToolExecutionError, ToolExecutionResult, ToolExecutor};
@@ -94,6 +94,16 @@ pub fn get_file_content() -> ToolSpec {
                 "path": {
                     "type": "string",
                     "description": "Repository-root-relative path."
+                },
+                "start_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional first line to return. Provide only together with end_line."
+                },
+                "end_line": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional last line to return. Provide only together with start_line."
                 }
             },
             "required": ["revision", "path"]
@@ -219,7 +229,11 @@ impl ToolExecutor for ExtractToolExecutor {
                 let arguments: FileContentArguments = parse_arguments(&call)?;
                 let result = self
                     .extractor
-                    .file_content(&arguments.revision, Path::new(&arguments.path))
+                    .file_content(
+                        &arguments.revision,
+                        Path::new(&arguments.path),
+                        arguments.line_range.0,
+                    )
                     .await?;
                 ExtractData::FileContent(result)
             }
@@ -284,6 +298,37 @@ struct RangeArguments {
 struct FileContentArguments {
     revision: String,
     path: String,
+    #[serde(flatten)]
+    line_range: OptionalFileContentRange,
+}
+
+struct OptionalFileContentRange(Option<FileContentRange>);
+
+impl<'de> Deserialize<'de> for OptionalFileContentRange {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct RawOptionalFileContentRange {
+            start_line: Option<u32>,
+            end_line: Option<u32>,
+        }
+
+        let raw = RawOptionalFileContentRange::deserialize(deserializer)?;
+        let range = match (raw.start_line, raw.end_line) {
+            (None, None) => None,
+            (Some(start_line), Some(end_line)) => {
+                Some(FileContentRange::new(start_line, end_line).map_err(de::Error::custom)?)
+            }
+            _ => {
+                return Err(de::Error::custom(
+                    "start_line and end_line must be provided together",
+                ));
+            }
+        };
+        Ok(Self(range))
+    }
 }
 
 #[derive(Deserialize)]
@@ -330,8 +375,13 @@ impl TryFrom<ExtractData> for serde_json::Value {
             ExtractData::CommitDiff(result) => Ok(serde_json::Value::String(result.diff)),
             ExtractData::CommitFiles(result) => Ok(serde_json::to_value(result.files)?),
             ExtractData::CommitList(result) => Ok(serde_json::to_value(result.commits)?),
-            ExtractData::FileContent(FileContent::Text { content, .. }) => {
-                Ok(json!({ "type": "text", "content": content }))
+            ExtractData::FileContent(FileContent::Text { content, range, .. }) => {
+                let mut result = json!({ "type": "text", "content": content });
+                if let Some(range) = range {
+                    result["start_line"] = json!(range.start_line());
+                    result["end_line"] = json!(range.end_line());
+                }
+                Ok(result)
             }
             ExtractData::FileContent(FileContent::Binary { size, .. }) => {
                 Ok(json!({ "type": "binary", "size": size }))
@@ -388,6 +438,14 @@ mod tests {
             json!(["revision", "path"])
         );
         assert_eq!(
+            get_file_content().parameters["properties"]["start_line"]["minimum"],
+            1
+        );
+        assert_eq!(
+            get_file_content().parameters["properties"]["end_line"]["minimum"],
+            1
+        );
+        assert_eq!(
             get_file_diff().parameters["required"],
             json!(["from_revision", "to_revision", "path"])
         );
@@ -404,6 +462,37 @@ mod tests {
             grep().parameters["properties"]["context_lines"]["maximum"],
             10
         );
+    }
+
+    #[test]
+    fn file_content_line_range_must_be_complete_and_valid() {
+        let valid: FileContentArguments = serde_json::from_value(json!({
+            "revision": "HEAD",
+            "path": "src/main.rs",
+            "start_line": 10,
+            "end_line": 20
+        }))
+        .unwrap();
+        assert_eq!(
+            valid.line_range.0,
+            Some(FileContentRange::new(10, 20).unwrap())
+        );
+
+        for arguments in [
+            json!({
+                "revision": "HEAD",
+                "path": "src/main.rs",
+                "start_line": 10
+            }),
+            json!({
+                "revision": "HEAD",
+                "path": "src/main.rs",
+                "start_line": 20,
+                "end_line": 10
+            }),
+        ] {
+            assert!(serde_json::from_value::<FileContentArguments>(arguments).is_err());
+        }
     }
 
     #[test]
