@@ -43,6 +43,24 @@ fn cache_version(version: &str) -> String {
     version.split('.').take(2).collect::<Vec<_>>().join(".")
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub struct CacheVersion {
+    major: u64,
+    minor: u64,
+}
+
+impl CacheVersion {
+    pub fn parse(value: &str) -> Option<Self> {
+        let mut parts = value.split('.');
+        let major = parts.next()?.parse().ok()?;
+        let minor = parts.next()?.parse().ok()?;
+        if parts.next().is_some() {
+            return None;
+        }
+        Some(Self { major, minor })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -72,5 +90,30 @@ mod tests {
     fn patch_version_does_not_change_cache_version() {
         assert_eq!(cache_version("1.2.3"), "1.2");
         assert_eq!(cache_version("1.2.99"), "1.2");
+    }
+
+    #[test]
+    fn parses_and_orders_cache_versions_numerically() {
+        let one_nine = CacheVersion::parse("1.9").unwrap();
+        let one_ten = CacheVersion::parse("1.10").unwrap();
+
+        assert!(one_nine < one_ten);
+        assert_eq!(CacheVersion::parse("1.10"), Some(one_ten));
+    }
+
+    #[test]
+    fn rejects_invalid_cache_versions() {
+        for value in [
+            "",
+            "1",
+            "1.",
+            ".1",
+            "1.2.3",
+            "v1.2",
+            "1.x",
+            "18446744073709551616.0",
+        ] {
+            assert_eq!(CacheVersion::parse(value), None, "{value}");
+        }
     }
 }

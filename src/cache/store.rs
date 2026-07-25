@@ -8,7 +8,7 @@ use serde::de::DeserializeOwned;
 use crate::console::Console;
 
 use super::error::{CachePruneError, CacheReadError, CacheWriteError};
-use super::key::CacheKey;
+use super::key::{CacheKey, CacheVersion};
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -128,7 +128,13 @@ impl CacheStore {
     }
 
     #[cfg_attr(not(test), expect(dead_code))]
-    pub fn prune(&self) -> Result<usize, CachePruneError> {
+    pub fn prune(&self, all: bool) -> Result<usize, CachePruneError> {
+        let current = (!all)
+            .then(|| {
+                let version = CacheKey::version();
+                CacheVersion::parse(&version).ok_or(CachePruneError::InvalidVersion { version })
+            })
+            .transpose()?;
         let Some(entries) = self.entries()? else {
             return Ok(0);
         };
@@ -145,6 +151,18 @@ impl CacheStore {
                     path: path.clone(),
                     source,
                 })?;
+            let should_prune = all
+                || (file_type.is_dir()
+                    && entry
+                        .file_name()
+                        .to_str()
+                        .and_then(CacheVersion::parse)
+                        .zip(current)
+                        .is_some_and(|(version, current)| version < current));
+            if !should_prune {
+                continue;
+            }
+
             let result = if file_type.is_dir() {
                 std::fs::remove_dir_all(&path)
             } else {
@@ -277,7 +295,7 @@ mod tests {
         std::fs::write(root.join("loose.tmp"), "temporary").unwrap();
         let store = CacheStore::new(&root, Console::default());
 
-        assert_eq!(store.prune().unwrap(), 2);
+        assert_eq!(store.prune(true).unwrap(), 2);
         assert!(root.is_dir());
         assert_eq!(std::fs::read_dir(root).unwrap().count(), 0);
     }
@@ -287,7 +305,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let store = CacheStore::new(directory.path().join("missing"), Console::default());
 
-        assert_eq!(store.prune().unwrap(), 0);
+        assert_eq!(store.prune(true).unwrap(), 0);
     }
 
     #[cfg(unix)]
@@ -302,7 +320,7 @@ mod tests {
         symlink(&target, &root).unwrap();
         let store = CacheStore::new(&root, Console::default());
 
-        assert_matches!(store.prune(), Err(CachePruneError::UnsafeRoot { .. }));
+        assert_matches!(store.prune(true), Err(CachePruneError::UnsafeRoot { .. }));
         assert!(target.is_dir());
     }
 
@@ -320,7 +338,26 @@ mod tests {
         symlink(&target, root.join("linked")).unwrap();
         let store = CacheStore::new(&root, Console::default());
 
-        assert_eq!(store.prune().unwrap(), 1);
+        assert_eq!(store.prune(true).unwrap(), 1);
         assert!(target.join("preserved").is_file());
+    }
+
+    #[test]
+    fn prune_without_all_removes_only_outdated_version_directories() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("cache");
+        let current = CacheKey::version();
+        for name in ["0.0", current.as_str(), "999999.0", "invalid"] {
+            std::fs::create_dir_all(root.join(name)).unwrap();
+        }
+        std::fs::write(root.join("loose.tmp"), "temporary").unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        assert_eq!(store.prune(false).unwrap(), 1);
+        assert!(!root.join("0.0").exists());
+        assert!(root.join(current).is_dir());
+        assert!(root.join("999999.0").is_dir());
+        assert!(root.join("invalid").is_dir());
+        assert!(root.join("loose.tmp").is_file());
     }
 }

@@ -85,6 +85,9 @@ pub enum CacheWriteError {
 #[derive(Debug)]
 #[cfg_attr(not(test), expect(dead_code))]
 pub enum CachePruneError {
+    InvalidVersion {
+        version: String,
+    },
     Inspect {
         path: PathBuf,
         source: std::io::Error,
@@ -148,6 +151,9 @@ impl std::error::Error for CacheWriteError {
 impl fmt::Display for CachePruneError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::InvalidVersion { version } => {
+                write!(f, "invalid current cache version: {version}")
+            }
             Self::Inspect { path, source } => {
                 write!(
                     f,
@@ -190,6 +196,7 @@ impl fmt::Display for CachePruneError {
 impl std::error::Error for CachePruneError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::InvalidVersion { .. } => None,
             Self::Inspect { source, .. } => Some(source),
             Self::UnsafeRoot { .. } => None,
             Self::ReadDir { source, .. } => Some(source),
