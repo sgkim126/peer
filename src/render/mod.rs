@@ -77,6 +77,17 @@ enum RenderCheckErrorRef<'a> {
     Execution(&'a str),
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct ReviewCounts {
+    info: usize,
+    low: usize,
+    medium: usize,
+    high: usize,
+    critical: usize,
+    exhausted: usize,
+    failed: usize,
+}
+
 impl RenderCheck {
     fn status(&self) -> &'static str {
         match self.outcome {
@@ -392,6 +403,7 @@ impl RenderOptions {
 }
 
 pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
+    let counts = review_counts(&document);
     match options.format {
         RenderFormat::Json => {
             serde_json::to_string_pretty(&document).map_err(RenderError::Serialization)
@@ -409,6 +421,7 @@ pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String
                     summary,
                     document.context_usage.as_ref(),
                     &usage_by_model(&document),
+                    &counts,
                     use_color,
                 )
             });
@@ -434,6 +447,7 @@ pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String
                     summary,
                     document.context_usage.as_ref(),
                     &usage_by_model(&document),
+                    &counts,
                 )
             });
             let context = document
@@ -458,6 +472,7 @@ pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String
                     summary,
                     document.context_usage.as_ref(),
                     &usage_by_model(&document),
+                    &counts,
                 )
             });
             let context = document
@@ -471,6 +486,28 @@ pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String
             ))
         }
     }
+}
+
+fn review_counts(document: &RenderDocument) -> ReviewCounts {
+    let mut counts = ReviewCounts::default();
+    for check in &document.checks {
+        for finding in check.findings() {
+            match finding.severity {
+                crate::llm::result::Severity::Info => counts.info += 1,
+                crate::llm::result::Severity::Low => counts.low += 1,
+                crate::llm::result::Severity::Medium => counts.medium += 1,
+                crate::llm::result::Severity::High => counts.high += 1,
+                crate::llm::result::Severity::Critical => counts.critical += 1,
+            }
+        }
+        match check.outcome {
+            RenderCheckOutcome::Exhausted { .. } => counts.exhausted += 1,
+            RenderCheckOutcome::Failed { .. } => counts.failed += 1,
+            RenderCheckOutcome::Clean { .. } => {}
+            RenderCheckOutcome::Issues { .. } => {}
+        }
+    }
+    counts
 }
 
 fn usage_by_model(document: &RenderDocument) -> BTreeMap<String, crate::review::ModelUsage> {
@@ -837,6 +874,97 @@ mod tests {
 
         assert!(!markdown::render(&check).contains("### Metadata"));
         assert!(!github::render(&check, "owner/repo").contains("### Metadata"));
+    }
+
+    #[test]
+    fn counts_findings_and_incomplete_checks_for_review_summaries() {
+        let mut exhausted = result();
+        exhausted.findings[0].severity = Severity::Low;
+        exhausted.findings[1].severity = Severity::Medium;
+        exhausted.error = Some(CheckError::Exhausted {
+            reason: "iteration limit reached".into(),
+        });
+        let mut failed = result();
+        failed.findings.clear();
+        failed.error = Some(CheckError::ClarificationRequired {
+            questions: vec!["Which policy applies?".into()],
+        });
+        let mut critical = result();
+        critical.findings.truncate(1);
+        critical.findings[0].severity = Severity::Critical;
+        let document = RenderDocument {
+            summary: Some(review_summary()),
+            context_usage: None,
+            ordered_commits: review_ordered_commits(),
+            checks: vec![
+                result().into(),
+                exhausted.into(),
+                failed.into(),
+                critical.into(),
+            ],
+        };
+
+        assert_eq!(
+            review_counts(&document),
+            ReviewCounts {
+                info: 1,
+                low: 1,
+                medium: 1,
+                high: 1,
+                critical: 1,
+                exhausted: 1,
+                failed: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn renders_counts_in_human_readable_review_summaries() {
+        for (format, repo, expected) in [
+            (
+                OutputFormat::Terminal,
+                None,
+                [
+                    "- Info findings: 1",
+                    "- High findings: 1",
+                    "- Critical findings: 0",
+                    "- Failed checks: 0",
+                ],
+            ),
+            (
+                OutputFormat::Markdown,
+                None,
+                [
+                    "- **Info findings:** 1",
+                    "- **High findings:** 1",
+                    "- **Critical findings:** 0",
+                    "- **Failed checks:** 0",
+                ],
+            ),
+            (
+                OutputFormat::Github,
+                Some("owner/repo".to_string()),
+                [
+                    "- **Info findings:** 1",
+                    "- **High findings:** 1",
+                    "- **Critical findings:** 0",
+                    "- **Failed checks:** 0",
+                ],
+            ),
+        ] {
+            let document = RenderDocument {
+                summary: Some(review_summary()),
+                context_usage: None,
+                ordered_commits: review_ordered_commits(),
+                checks: vec![result().into()],
+            };
+
+            let output = render(document, RenderOptions::from_cli(format, repo).unwrap()).unwrap();
+
+            for line in expected {
+                assert!(output.contains(line));
+            }
+        }
     }
 
     #[test]

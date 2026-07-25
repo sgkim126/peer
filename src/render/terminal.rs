@@ -6,7 +6,7 @@ use owo_colors::Style;
 use crate::llm::result::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
-use super::{RenderCheck, RenderCheckErrorRef, escape_terminal};
+use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_terminal};
 
 #[cfg(test)]
 use crate::llm::result::CheckResult;
@@ -77,6 +77,7 @@ pub fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
+    counts: &ReviewCounts,
     use_color: bool,
 ) -> String {
     let mut output = String::new();
@@ -84,6 +85,13 @@ pub fn render_review_summary(
     writeln!(output, "- Peer version: {}", summary.peer_version).unwrap();
     writeln!(output, "- Provider: {}", summary.provider).unwrap();
     writeln!(output, "- Model: {}", summary.model).unwrap();
+    writeln!(output, "- Info findings: {}", counts.info).unwrap();
+    writeln!(output, "- Low findings: {}", counts.low).unwrap();
+    writeln!(output, "- Medium findings: {}", counts.medium).unwrap();
+    writeln!(output, "- High findings: {}", counts.high).unwrap();
+    writeln!(output, "- Critical findings: {}", counts.critical).unwrap();
+    writeln!(output, "- Exhausted checks: {}", counts.exhausted).unwrap();
+    writeln!(output, "- Failed checks: {}", counts.failed).unwrap();
     if let Some(usage) = context_usage {
         writeln!(
             output,

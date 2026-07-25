@@ -4,7 +4,7 @@ use std::fmt::Write;
 use crate::llm::result::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
-use super::{RenderCheck, RenderCheckErrorRef, escape_html, escape_markdown};
+use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_html, escape_markdown};
 
 #[cfg(test)]
 use crate::llm::result::CheckResult;
@@ -67,11 +67,24 @@ pub fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
+    counts: &ReviewCounts,
 ) -> String {
     let mut output = format!(
         "## Review summary\n\n- **Peer version:** {}\n- **Provider:** {}\n- **Model:** {}",
         summary.peer_version, summary.provider, summary.model,
     );
+    write!(
+        output,
+        "\n- **Info findings:** {}\n- **Low findings:** {}\n- **Medium findings:** {}\n- **High findings:** {}\n- **Critical findings:** {}\n- **Exhausted checks:** {}\n- **Failed checks:** {}",
+        counts.info,
+        counts.low,
+        counts.medium,
+        counts.high,
+        counts.critical,
+        counts.exhausted,
+        counts.failed,
+    )
+    .unwrap();
     if let Some(usage) = context_usage {
         write!(
             output,
