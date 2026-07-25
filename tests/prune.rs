@@ -75,3 +75,28 @@ fn prune_all_removes_every_cache_entry() {
     assert!(cache.is_dir());
     assert_eq!(std::fs::read_dir(cache).unwrap().count(), 0);
 }
+
+#[cfg(unix)]
+#[test]
+fn prune_does_not_follow_a_symbolic_link_peer_directory() {
+    use std::os::unix::fs::symlink;
+
+    let project = tempfile::tempdir().unwrap();
+    let linked = tempfile::tempdir().unwrap();
+    let linked_peer = linked.path().join(".peer");
+    let linked_cache = linked_peer.join("cache");
+    std::fs::create_dir_all(&linked_cache).unwrap();
+    std::fs::write(linked_peer.join("config.toml"), "not valid toml").unwrap();
+    std::fs::write(linked_cache.join("keep"), "cached").unwrap();
+    symlink(&linked_peer, project.path().join(".peer")).unwrap();
+
+    let output = run_prune(project.path(), true);
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .contains("is a symbolic link")
+    );
+    assert!(linked_cache.join("keep").is_file());
+}

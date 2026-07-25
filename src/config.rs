@@ -150,8 +150,32 @@ pub fn discover_peer_root(from: &Path) -> Result<PathBuf, PeerError> {
     }
 
     for dir in from.ancestors() {
-        let config_path = dir.join(".peer").join("config.toml");
-        match std::fs::metadata(&config_path) {
+        let peer_path = dir.join(".peer");
+        let peer_metadata = match std::fs::symlink_metadata(&peer_path) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(source) => {
+                return Err(PeerError::InvalidConfig {
+                    message: format!("cannot inspect {}", peer_path.display()),
+                    source: Some(Box::new(source)),
+                });
+            }
+        };
+        if !peer_metadata.file_type().is_dir() {
+            return Err(PeerError::invalid_config(format!(
+                "{} is not a directory or is a symbolic link",
+                peer_path.display()
+            )));
+        }
+
+        let config_path = peer_path.join("config.toml");
+        match std::fs::symlink_metadata(&config_path) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err(PeerError::invalid_config(format!(
+                    "{} is a symbolic link",
+                    config_path.display()
+                )));
+            }
             Ok(_) => return Ok(dir.to_path_buf()),
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => {
@@ -289,17 +313,36 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn discovers_config_through_a_symbolic_link_peer_directory() {
+    fn rejects_a_symbolic_link_peer_directory() {
         use std::os::unix::fs::symlink;
 
         let tmp = tempfile::tempdir().unwrap();
         let linked = init_dir(DEFAULT_CONFIG_TOML);
         symlink(linked.path().join(".peer"), tmp.path().join(".peer")).unwrap();
 
-        let (config, root) = discover(tmp.path()).unwrap();
+        let error = discover(tmp.path()).unwrap_err();
 
-        assert_eq!(config.version, 1);
-        assert_eq!(root, tmp.path());
+        assert!(error.to_string().contains("is a symbolic link"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_symbolic_link_config_file() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let peer = tmp.path().join(".peer");
+        fs::create_dir(&peer).unwrap();
+        let linked = init_dir(DEFAULT_CONFIG_TOML);
+        symlink(
+            linked.path().join(".peer/config.toml"),
+            peer.join("config.toml"),
+        )
+        .unwrap();
+
+        let error = discover(tmp.path()).unwrap_err();
+
+        assert!(error.to_string().contains("is a symbolic link"));
     }
 
     #[test]
