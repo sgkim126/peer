@@ -82,6 +82,30 @@ pub enum CacheWriteError {
     },
 }
 
+#[derive(Debug)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub enum CachePruneError {
+    Inspect {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    UnsafeRoot {
+        path: PathBuf,
+    },
+    ReadDir {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    InspectEntry {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+    Remove {
+        path: PathBuf,
+        source: std::io::Error,
+    },
+}
+
 impl From<serde_json::Error> for CacheWriteError {
     fn from(source: serde_json::Error) -> Self {
         Self::Serialize { source }
@@ -117,6 +141,60 @@ impl std::error::Error for CacheWriteError {
             Self::CreateDir { source, .. } => Some(source),
             Self::Write { source, .. } => Some(source),
             Self::Rename { source, .. } => Some(source),
+        }
+    }
+}
+
+impl fmt::Display for CachePruneError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Inspect { path, source } => {
+                write!(
+                    f,
+                    "failed to inspect cache root {}: {source}",
+                    path.display()
+                )
+            }
+            Self::UnsafeRoot { path } => {
+                write!(
+                    f,
+                    "cache root is not a directory or is a symbolic link: {}",
+                    path.display()
+                )
+            }
+            Self::ReadDir { path, source } => {
+                write!(
+                    f,
+                    "failed to read cache directory {}: {source}",
+                    path.display()
+                )
+            }
+            Self::InspectEntry { path, source } => {
+                write!(
+                    f,
+                    "failed to inspect cache entry {}: {source}",
+                    path.display()
+                )
+            }
+            Self::Remove { path, source } => {
+                write!(
+                    f,
+                    "failed to remove cache entry {}: {source}",
+                    path.display()
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for CachePruneError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Inspect { source, .. } => Some(source),
+            Self::UnsafeRoot { .. } => None,
+            Self::ReadDir { source, .. } => Some(source),
+            Self::InspectEntry { source, .. } => Some(source),
+            Self::Remove { source, .. } => Some(source),
         }
     }
 }

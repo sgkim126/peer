@@ -7,7 +7,7 @@ use serde::de::DeserializeOwned;
 
 use crate::console::Console;
 
-use super::error::{CacheReadError, CacheWriteError};
+use super::error::{CachePruneError, CacheReadError, CacheWriteError};
 use super::key::CacheKey;
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
@@ -126,6 +126,62 @@ impl CacheStore {
             .debug(format_args!("cache write: {}", path.display()));
         Ok(())
     }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn prune(&self) -> Result<usize, CachePruneError> {
+        let Some(entries) = self.entries()? else {
+            return Ok(0);
+        };
+        let mut removed = 0;
+        for entry in entries {
+            let entry = entry.map_err(|source| CachePruneError::ReadDir {
+                path: self.root.clone(),
+                source,
+            })?;
+            let path = entry.path();
+            let file_type = entry
+                .file_type()
+                .map_err(|source| CachePruneError::InspectEntry {
+                    path: path.clone(),
+                    source,
+                })?;
+            let result = if file_type.is_dir() {
+                std::fs::remove_dir_all(&path)
+            } else {
+                std::fs::remove_file(&path)
+            };
+            match result {
+                Ok(()) => removed += 1,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
+                Err(source) => return Err(CachePruneError::Remove { path, source }),
+            }
+        }
+        Ok(removed)
+    }
+
+    fn entries(&self) -> Result<Option<std::fs::ReadDir>, CachePruneError> {
+        let metadata = match std::fs::symlink_metadata(&self.root) {
+            Ok(metadata) => metadata,
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(CachePruneError::Inspect {
+                    path: self.root.clone(),
+                    source,
+                });
+            }
+        };
+        if !metadata.file_type().is_dir() {
+            return Err(CachePruneError::UnsafeRoot {
+                path: self.root.clone(),
+            });
+        }
+        std::fs::read_dir(&self.root)
+            .map(Some)
+            .map_err(|source| CachePruneError::ReadDir {
+                path: self.root.clone(),
+                source,
+            })
+    }
 }
 
 #[cfg(test)]
@@ -210,5 +266,61 @@ mod tests {
             store.read_json::<Value>(&key),
             Err(CacheReadError::Deserialize { .. })
         );
+    }
+
+    #[test]
+    fn prune_removes_cache_entries_but_keeps_the_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("cache");
+        std::fs::create_dir_all(root.join("0.1/provider")).unwrap();
+        std::fs::write(root.join("0.1/provider/value.json"), "{}").unwrap();
+        std::fs::write(root.join("loose.tmp"), "temporary").unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        assert_eq!(store.prune().unwrap(), 2);
+        assert!(root.is_dir());
+        assert_eq!(std::fs::read_dir(root).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn prune_succeeds_when_the_cache_root_is_missing() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = CacheStore::new(directory.path().join("missing"), Console::default());
+
+        assert_eq!(store.prune().unwrap(), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_rejects_a_symbolic_link_cache_root() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("target");
+        let root = directory.path().join("cache");
+        std::fs::create_dir(&target).unwrap();
+        symlink(&target, &root).unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        assert_matches!(store.prune(), Err(CachePruneError::UnsafeRoot { .. }));
+        assert!(target.is_dir());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prune_removes_a_symbolic_link_without_following_it() {
+        use std::os::unix::fs::symlink;
+
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path().join("cache");
+        let target = directory.path().join("target");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::create_dir(&target).unwrap();
+        std::fs::write(target.join("preserved"), "value").unwrap();
+        symlink(&target, root.join("linked")).unwrap();
+        let store = CacheStore::new(&root, Console::default());
+
+        assert_eq!(store.prune().unwrap(), 1);
+        assert!(target.join("preserved").is_file());
     }
 }
