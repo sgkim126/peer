@@ -1,71 +1,90 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::llm::result::{CheckResult, CheckTarget, Finding, LlmUsage, Severity};
+use crate::llm::result::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
-use super::{escape_html, escape_markdown};
+use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_html, escape_markdown};
 
-pub fn render(result: &CheckResult, repo: &str) -> String {
+#[cfg(test)]
+use crate::llm::result::CheckResult;
+
+pub fn render(result: &RenderCheck, repo: &str) -> String {
     let mut body = String::new();
     writeln!(body, "## Check: {}", escape_github_markdown(&result.check)).unwrap();
     writeln!(body).unwrap();
     writeln!(body, "- **Target:** {}", target(&result.target, repo)).unwrap();
-    writeln!(body, "- **Status:** {}", status(result)).unwrap();
+    writeln!(body, "- **Status:** {}", result.status()).unwrap();
     writeln!(body).unwrap();
-    writeln!(body, "{}", escape_github_markdown(&result.summary)).unwrap();
-    writeln!(body).unwrap();
+    if let Some(summary) = result.summary() {
+        writeln!(body, "{}", escape_github_markdown(summary)).unwrap();
+        writeln!(body).unwrap();
+    }
     writeln!(body, "### Findings").unwrap();
     writeln!(body).unwrap();
-    if result.findings.is_empty() {
+    if result.findings().is_empty() {
         writeln!(body, "None.").unwrap();
     } else {
-        for finding in &result.findings {
+        for finding in result.findings() {
             writeln!(body, "- {}", render_finding(finding, repo)).unwrap();
         }
     }
-    if result.is_exhausted {
+    if let Some(error) = result.error() {
         writeln!(body).unwrap();
         writeln!(body, "> [!WARNING]").unwrap();
-        writeln!(
-            body,
-            "> {}",
-            escape_github_markdown(
-                result
-                    .exhaustion_reason
-                    .as_deref()
-                    .unwrap_or("check did not complete")
-            )
-        )
-        .unwrap();
+        writeln!(body, "> {}", escape_github_markdown(&display_error(error))).unwrap();
     }
-    writeln!(body).unwrap();
-    writeln!(body, "### Metadata").unwrap();
-    writeln!(body).unwrap();
-    writeln!(body, "- **Iterations:** {}", result.iterations).unwrap();
-    if let Some(usage) = &result.context_usage {
-        write_usage_markdown(&mut body, "Context usage", usage);
+    let iterations = result.iterations();
+    let usage = result.usage();
+    if iterations.is_some() || usage.is_some() {
+        writeln!(body).unwrap();
+        writeln!(body, "### Metadata").unwrap();
+        writeln!(body).unwrap();
+        if let Some(iterations) = iterations {
+            writeln!(body, "- **Iterations:** {iterations}").unwrap();
+        }
+        if let Some(usage) = usage {
+            write_usage_markdown(&mut body, "Check usage", usage);
+        }
     }
-    write_usage_markdown(&mut body, "Check usage", &result.usage);
 
     format!(
         "<details>\n<summary>Check: {} - Status: {} - Target: {}</summary>\n\n{}\n</details>",
         escape_github_html(&result.check),
-        status(result),
+        result.status(),
         escape_github_html(&display_target(&result.target)),
         body.trim_end()
     )
+}
+
+pub fn render_context_usage(usage: &LlmUsage) -> String {
+    let mut output = String::new();
+    write_usage_markdown(&mut output, "Context usage", usage);
+    output.trim().to_string()
 }
 
 pub fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
+    counts: &ReviewCounts,
 ) -> String {
     let mut output = format!(
         "## Review summary\n\n- **Peer version:** {}\n- **Provider:** {}\n- **Model:** {}",
         summary.peer_version, summary.provider, summary.model,
     );
+    write!(
+        output,
+        "\n- **Info findings:** {}\n- **Low findings:** {}\n- **Medium findings:** {}\n- **High findings:** {}\n- **Critical findings:** {}\n- **Exhausted checks:** {}\n- **Failed checks:** {}",
+        counts.info,
+        counts.low,
+        counts.medium,
+        counts.high,
+        counts.critical,
+        counts.exhausted,
+        counts.failed,
+    )
+    .unwrap();
     if let Some(usage) = context_usage {
         write!(
             output,
@@ -116,14 +135,15 @@ fn render_finding(finding: &Finding, repo: &str) -> String {
     )
 }
 
-fn status(result: &CheckResult) -> &'static str {
-    if result.is_exhausted {
-        return "failed";
-    }
-    match result.findings.iter().map(|finding| finding.severity).max() {
-        Some(Severity::Critical | Severity::High) => "issue",
-        Some(Severity::Info | Severity::Low | Severity::Medium) => "warning",
-        None => "ok",
+fn display_error(error: RenderCheckErrorRef<'_>) -> String {
+    match error {
+        RenderCheckErrorRef::Exhausted(reason) | RenderCheckErrorRef::Execution(reason) => {
+            reason.to_string()
+        }
+        RenderCheckErrorRef::Check(CheckError::ClarificationRequired { questions }) => {
+            questions.join("; ")
+        }
+        RenderCheckErrorRef::Check(error) => error.to_string(),
     }
 }
 
@@ -256,8 +276,7 @@ mod tests {
                 },
             ],
             iterations: 2,
-            is_exhausted: false,
-            exhaustion_reason: None,
+            error: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 100,
@@ -270,7 +289,7 @@ mod tests {
 
     #[test]
     fn includes_commit_and_file_links() {
-        let output = render(&result(), "owner/repo");
+        let output = render(&result().into(), "owner/repo");
 
         assert!(output.contains("https://github.com/owner/repo/commit/abc1234"));
         assert!(output.contains("https://github.com/owner/repo/blob/abc1234/src/main.rs#L42"));
@@ -287,7 +306,7 @@ mod tests {
             line: Some(7),
         });
 
-        let output = render(&result, "owner/repo");
+        let output = render(&result.into(), "owner/repo");
 
         assert!(output.contains("<summary>Check: check &lt;/summary&gt;&lt;script&gt;"));
         assert!(output.contains("\\> quote \\- list"));
@@ -304,7 +323,7 @@ mod tests {
         result.summary = "Please notify @org/team".to_string();
         result.findings[0].message = "Assigned to @alice".to_string();
 
-        let output = render(&result, "owner/repo");
+        let output = render(&result.into(), "owner/repo");
 
         assert!(output.contains("`@`reviewers"));
         assert!(output.contains("`@`org/team"));
@@ -324,10 +343,9 @@ mod tests {
             model: "contextmodel".to_string(),
         });
 
-        let output = render(&result, "owner/repo");
+        let output = render_context_usage(result.context_usage.as_ref().unwrap());
 
         assert!(output.contains("### Context usage"));
-        assert!(output.contains("### Check usage"));
         assert!(output.contains("- **Model:** contextmodel"));
     }
 }

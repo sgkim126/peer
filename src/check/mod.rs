@@ -288,8 +288,7 @@ fn load_check_cache(
         summary: cached.summary,
         findings: cached.findings,
         iterations: cached.iterations,
-        is_exhausted: false,
-        exhaustion_reason: None,
+        error: None,
         context_usage,
         usage: LlmUsage {
             input_tokens: 0,
@@ -301,7 +300,7 @@ fn load_check_cache(
 }
 
 fn store_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult, console: Console) {
-    if result.is_exhausted {
+    if result.error.is_some() {
         console.debug(format_args!("not caching incomplete check result"));
         return;
     }
@@ -379,8 +378,7 @@ mod tests {
             summary: "cached result".to_string(),
             findings: Vec::new(),
             iterations: 1,
-            is_exhausted: false,
-            exhaustion_reason: None,
+            error: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 1,

@@ -17,7 +17,8 @@ use crate::llm::result::{CheckResult, LlmUsage};
 pub enum ReviewTarget {
     Commit(CommitHash),
     Range {
-        revision: String,
+        from: CommitHash,
+        to: CommitHash,
         commits: Vec<CommitHash>,
     },
 }
@@ -25,6 +26,7 @@ pub enum ReviewTarget {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReviewPlan {
     checks: Vec<ReviewCheck>,
+    ordered_commits: Vec<CommitHash>,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq)]
@@ -88,6 +90,7 @@ pub struct ReviewResult {
     pub summary: ReviewSummary,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_usage: Option<LlmUsage>,
+    pub ordered_commits: Vec<CommitHash>,
     pub checks: Vec<CheckResult>,
 
     #[serde(skip)]
@@ -140,7 +143,7 @@ pub enum ReviewCheck {
     Intent { revision: CommitHash },
     Quality { revision: CommitHash },
     Security { revision: CommitHash },
-    Coherence { range: String },
+    Coherence { from: CommitHash, to: CommitHash },
 }
 
 impl ReviewCheck {
@@ -170,7 +173,9 @@ impl From<ReviewCheck> for CheckCommand {
             ReviewCheck::Security { revision } => Self::Security {
                 revision: revision.to_string(),
             },
-            ReviewCheck::Coherence { range } => Self::Coherence { range },
+            ReviewCheck::Coherence { from, to } => Self::Coherence {
+                range: format!("{from}..{to}"),
+            },
         }
     }
 }
@@ -182,7 +187,7 @@ impl fmt::Display for ReviewCheck {
             Self::Intent { revision } => write!(f, "intent {revision}"),
             Self::Quality { revision } => write!(f, "quality {revision}"),
             Self::Security { revision } => write!(f, "security {revision}"),
-            Self::Coherence { range } => write!(f, "coherence {range}"),
+            Self::Coherence { from, to } => write!(f, "coherence {from}..{to}"),
         }
     }
 }
@@ -235,7 +240,7 @@ pub async fn resolve_target(
         return Err(ReviewTargetError::EmptyRange(target.to_string()));
     }
 
-    Ok(ReviewTarget::Range { revision, commits })
+    Ok(ReviewTarget::Range { from, to, commits })
 }
 
 pub async fn validate_target(
@@ -273,18 +278,26 @@ pub async fn validate_target(
 
 pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
     let mut checks = Vec::new();
-    match target {
-        ReviewTarget::Commit(commit) => append_commit_checks(&mut checks, commit),
-        ReviewTarget::Range { revision, commits } => {
+    let ordered_commits = match target {
+        ReviewTarget::Commit(commit) => {
+            append_commit_checks(&mut checks, commit);
+            vec![commit.clone()]
+        }
+        ReviewTarget::Range { from, to, commits } => {
             for commit in commits {
                 append_commit_checks(&mut checks, commit);
             }
             checks.push(ReviewCheck::Coherence {
-                range: revision.clone(),
+                from: from.clone(),
+                to: to.clone(),
             });
+            commits.clone()
         }
+    };
+    ReviewPlan {
+        checks,
+        ordered_commits,
     }
-    ReviewPlan { checks }
 }
 
 fn append_commit_checks(checks: &mut Vec<ReviewCheck>, commit: &CommitHash) {
@@ -348,6 +361,7 @@ pub async fn run(
     ReviewResult {
         summary,
         context_usage,
+        ordered_commits: plan.ordered_commits,
         checks,
         errors,
     }
@@ -461,7 +475,8 @@ mod tests {
                 .await
                 .unwrap(),
             ReviewTarget::Range {
-                revision: format!("{base}..{third}"),
+                from: base,
+                to: third.clone(),
                 commits: vec![second, third],
             }
         );
@@ -488,7 +503,8 @@ mod tests {
         let first = repo.commit("a.txt", "first").await;
         let second = repo.commit("b.txt", "second").await;
         let target = ReviewTarget::Range {
-            revision: format!("{first}..{second}"),
+            from: first.clone(),
+            to: second.clone(),
             commits: vec![first, second],
         };
 
@@ -506,15 +522,17 @@ mod tests {
         let first = CommitHash::new("abc1234").unwrap();
         let second = CommitHash::new("def5678").unwrap();
         let plan = plan_checks(&ReviewTarget::Range {
-            revision: "main..HEAD".into(),
-            commits: vec![first, second],
+            from: first.clone(),
+            to: second.clone(),
+            commits: vec![first.clone(), second.clone()],
         });
 
         assert_eq!(plan.checks.len(), 9);
         assert_eq!(
             plan.checks.last(),
             Some(&ReviewCheck::Coherence {
-                range: "main..HEAD".into()
+                from: first,
+                to: second,
             })
         );
     }
@@ -524,7 +542,8 @@ mod tests {
         let first = CommitHash::new("abc1234").unwrap();
         let second = CommitHash::new("def5678").unwrap();
         let plan = plan_checks(&ReviewTarget::Range {
-            revision: "main..HEAD".into(),
+            from: first.clone(),
+            to: second.clone(),
             commits: vec![first, second],
         })
         .with_only_check(&[ReviewCheckKind::Intent, ReviewCheckKind::Coherence])
@@ -549,7 +568,8 @@ mod tests {
         let first = CommitHash::new("abc1234").unwrap();
         let second = CommitHash::new("def5678").unwrap();
         let plan = plan_checks(&ReviewTarget::Range {
-            revision: "main..HEAD".into(),
+            from: first.clone(),
+            to: second.clone(),
             commits: vec![first, second],
         })
         .excluding_check(&[ReviewCheckKind::Quality, ReviewCheckKind::Coherence])

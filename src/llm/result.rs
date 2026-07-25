@@ -5,6 +5,28 @@ use crate::console::Console;
 use crate::git::CommitHash;
 use crate::llm::provider::RawUsage;
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum CheckError {
+    Exhausted { reason: String },
+    InvalidOutput { reason: String },
+    ClarificationRequired { questions: Vec<String> },
+    UnexpectedTerminal { tool: String },
+    Agent { reason: String },
+}
+
+impl fmt::Display for CheckError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Exhausted { reason } => f.write_str(reason),
+            Self::InvalidOutput { reason } => f.write_str(reason),
+            Self::Agent { reason } => f.write_str(reason),
+            Self::ClarificationRequired { .. } => f.write_str("clarification required"),
+            Self::UnexpectedTerminal { tool } => write!(f, "unexpected terminal tool: {tool}"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Severity {
@@ -92,8 +114,7 @@ pub struct CheckResult {
     pub summary: String,
     pub findings: Vec<Finding>,
     pub iterations: u32,
-    pub is_exhausted: bool,
-    pub exhaustion_reason: Option<String>,
+    pub error: Option<CheckError>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_usage: Option<LlmUsage>,
     pub usage: LlmUsage,
@@ -410,8 +431,7 @@ mod tests {
             "summary": "Checked.",
             "findings": [],
             "iterations": 1,
-            "is_exhausted": false,
-            "exhaustion_reason": null,
+            "error": null,
             "usage": {
                 "input_tokens": 100,
                 "output_tokens": 20,
