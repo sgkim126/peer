@@ -1,13 +1,13 @@
 use std::fmt;
 
-use crate::console::Console;
-use crate::llm::provider::{
-    ConversationTurn, LlmCallError, LlmProvider, LlmRequest, LlmResponse, LlmTransport, RawUsage,
-    ToolCall, ToolSpec,
-};
-use crate::llm::tools::{ToolExecutionResult, ToolExecutor};
-
 use serde_json::json;
+
+use crate::console::Console;
+
+use super::{
+    ConversationTurn, LlmCallError, LlmProvider, LlmRequest, LlmResponse, LlmTransport, RawUsage,
+    ToolCall, ToolExecutionResult, ToolExecutor, ToolSpec,
+};
 
 pub struct AgentRequest {
     pub model: String,
@@ -248,9 +248,10 @@ mod tests {
 
     use reqwest::StatusCode;
 
-    use crate::llm::provider::{LlmCallResult, Request, Response};
-    use crate::llm::test_support::MockProvider;
-    use crate::llm::tools::{ToolExecutionError, request_clarification, submit_check_result};
+    use super::super::{
+        LlmCallResult, MockProvider, Request, Response, ToolExecutionError, request_clarification,
+        submit_check_result,
+    };
 
     struct TestTransport {
         responses: Mutex<VecDeque<Result<Response, LlmCallError>>>,

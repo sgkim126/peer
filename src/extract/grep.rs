@@ -1,9 +1,11 @@
-use std::{num::NonZeroU8, path::Path};
+use std::num::NonZeroU8;
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{ExtractError, Extractor, validate_repository_relative_path};
 use crate::git::{CommitHash, GitError, run_git};
+
+use super::{ExtractError, Extractor, validate_repository_relative_path};
 
 const MAX_GREP_CONTEXT_LINES: u8 = 10;
 const MAX_GREP_RESULT_LINES: usize = 100;
@@ -95,11 +97,11 @@ fn parse_grep_output(output: &str) -> GrepResult {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::assert_matches;
 
-    use super::*;
     use crate::console::Console;
-    use crate::git::run_git;
 
     #[test]
     fn validates_arguments() {

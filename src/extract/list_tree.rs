@@ -2,8 +2,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{ExtractError, Extractor, validate_repository_relative_path};
 use crate::git::{CommitHash, run_git};
+
+use super::{ExtractError, Extractor, validate_repository_relative_path};
 
 const MAX_TREE_ENTRIES: usize = 200;
 
@@ -121,9 +122,9 @@ fn parse_tree_listing(
 
 #[cfg(test)]
 mod tests {
-    use std::assert_matches;
-
     use super::*;
+
+    use std::assert_matches;
 
     #[test]
     fn parses_entries_and_prefixes_paths() {

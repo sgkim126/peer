@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::cli::OutputFormat;
 use crate::git::CommitHash;
-use crate::llm::result::{CheckError, CheckResult, CheckTarget, Finding, LlmUsage};
+use crate::llm::{CheckError, CheckResult, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ReviewCheck, ReviewCheckError, ReviewResult, ReviewSummary};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -493,11 +493,11 @@ fn review_counts(document: &RenderDocument) -> ReviewCounts {
     for check in &document.checks {
         for finding in check.findings() {
             match finding.severity {
-                crate::llm::result::Severity::Info => counts.info += 1,
-                crate::llm::result::Severity::Low => counts.low += 1,
-                crate::llm::result::Severity::Medium => counts.medium += 1,
-                crate::llm::result::Severity::High => counts.high += 1,
-                crate::llm::result::Severity::Critical => counts.critical += 1,
+                Severity::Info => counts.info += 1,
+                Severity::Low => counts.low += 1,
+                Severity::Medium => counts.medium += 1,
+                Severity::High => counts.high += 1,
+                Severity::Critical => counts.critical += 1,
             }
         }
         match check.outcome {
@@ -598,11 +598,11 @@ impl std::error::Error for RenderOptionsError {}
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::assert_matches;
 
-    use super::*;
-    use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
+    use crate::llm::FileLocation;
 
     fn result() -> CheckResult {
         CheckResult {

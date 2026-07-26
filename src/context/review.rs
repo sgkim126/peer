@@ -186,6 +186,7 @@ pub struct ReviewCommentLocation {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::assert_matches;
 
     #[test]

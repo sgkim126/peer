@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::llm::provider::ToolSpec;
+use super::super::ToolSpec;
 
 pub fn submit_review_context_digest() -> ToolSpec {
     ToolSpec {

@@ -1,7 +1,8 @@
 use serde::{Deserialize, Serialize};
 
-use super::{ExtractError, Extractor};
 use crate::git::{CommitHash, run_git};
+
+use super::{ExtractError, Extractor};
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct CommitDiff {
@@ -35,6 +36,7 @@ impl Extractor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::assert_matches;
 
     use tempfile::TempDir;

@@ -26,8 +26,6 @@ pub use self::file_content::{FileContent, FileContentRange};
 pub use self::file_diff::FileDiff;
 pub use self::grep::GrepResult;
 pub use self::list_tree::TreeListing;
-#[expect(unused_imports)]
-pub use self::list_tree::{TreeEntry, TreeEntryKind};
 
 /// Provides the programmatic entry point to repository extraction.
 pub struct Extractor {

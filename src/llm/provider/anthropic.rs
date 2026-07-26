@@ -3,11 +3,12 @@ use std::fmt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
 
+use crate::secret::Secret;
+
 use super::{
     ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, LlmResponse, RawUsage,
     Request, Response, ToolCall, ToolSpec,
 };
-use crate::secret::Secret;
 
 const DEFAULT_BASE_URL: &str = "https://api.anthropic.com";
 const DEFAULT_MAX_TOKENS: u32 = 4096;
@@ -305,11 +306,11 @@ impl std::error::Error for AnthropicStatusError {}
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::assert_matches;
 
     use reqwest::StatusCode;
-
-    use super::*;
 
     fn provider() -> AnthropicProvider {
         AnthropicProvider::new(

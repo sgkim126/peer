@@ -3,7 +3,7 @@ use std::sync::Mutex;
 
 use reqwest::header::HeaderMap;
 
-use super::provider::{
+use super::{
     ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, Request, Response,
     ToolSpec,
 };
@@ -72,11 +72,12 @@ impl LlmProvider for MockProvider {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use reqwest::StatusCode;
     use serde_json::json;
 
-    use super::*;
-    use crate::llm::provider::{LlmResponse, RawUsage, ToolCall};
+    use super::super::{LlmResponse, RawUsage, ToolCall};
 
     fn tool_call_result(id: &str) -> LlmCallResult {
         LlmCallResult {

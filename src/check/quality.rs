@@ -1,11 +1,9 @@
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::agent::AgentRequest;
-use crate::llm::provider::ConversationTurn;
-use crate::llm::result::CheckTarget;
-use crate::llm::tools::{
-    get_file_content, get_file_diff, grep, list_tree, request_clarification, submit_check_result,
+use crate::llm::{
+    AgentRequest, CheckTarget, ConversationTurn, get_file_content, get_file_diff, grep, list_tree,
+    request_clarification, submit_check_result,
 };
 
 use super::CheckDefinition;

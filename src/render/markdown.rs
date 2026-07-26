@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::llm::result::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
+#[cfg(test)]
+use crate::llm::CheckResult;
+use crate::llm::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
 use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_markdown};
-
-#[cfg(test)]
-use crate::llm::result::CheckResult;
 
 pub fn render(result: &RenderCheck) -> String {
     let mut output = String::new();
@@ -174,8 +173,9 @@ fn write_usage_markdown(output: &mut String, heading: &str, usage: &LlmUsage) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
+    use crate::llm::FileLocation;
 
     fn result() -> CheckResult {
         CheckResult {
@@ -230,7 +230,7 @@ mod tests {
     fn failed_results_render_the_failure_and_usage() {
         let mut result = result();
         result.findings.clear();
-        result.error = Some(crate::llm::result::CheckError::Agent {
+        result.error = Some(CheckError::Agent {
             reason: "transient LLM call failure: request timed out".into(),
         });
         let output = render(&result.into());

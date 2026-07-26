@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize, Serializer, de};
 
 use crate::console::Console;
 
-use super::error::{GitError, InvalidCommitHashReason};
+use super::{GitError, InvalidCommitHashReason};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CommitHash(String);
@@ -82,6 +82,7 @@ impl<'de> Deserialize<'de> for CommitHash {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::assert_matches;
 
     async fn create_repo_with_commit() -> tempfile::TempDir {

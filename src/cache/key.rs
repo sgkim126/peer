@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use super::error::CacheKeyError;
+use super::CacheKeyError;
 
 const BINARY_VERSION: &str = env!("CARGO_PKG_VERSION");
 

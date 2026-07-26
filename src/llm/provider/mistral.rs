@@ -3,11 +3,12 @@ use std::fmt;
 use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderValue};
 use serde_json::json;
 
+use crate::secret::Secret;
+
 use super::{
     ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, LlmResponse, RawUsage,
     Request, Response, ToolCall, ToolSpec,
 };
-use crate::secret::Secret;
 
 const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";
 
@@ -303,11 +304,11 @@ impl std::error::Error for MistralStatusError {}
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::assert_matches;
 
     use reqwest::StatusCode;
-
-    use super::*;
 
     fn provider() -> MistralProvider {
         MistralProvider::new(

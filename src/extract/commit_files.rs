@@ -199,11 +199,10 @@ impl Extractor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::assert_matches;
 
     use tempfile::TempDir;
-
-    use crate::console::Console;
 
     #[test]
     fn parse_name_status_added() {

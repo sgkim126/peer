@@ -2,14 +2,12 @@ mod compress;
 mod digest;
 mod review;
 
-pub use compress::compress_review_context;
-#[expect(unused_imports)]
-pub use digest::{
-    DigestValidationError, MissingContext, ReviewContextDigest, ReviewContextItem,
-    ReviewContextItemKind,
-};
-#[expect(unused_imports)]
-pub use review::{
-    ReviewCommentLocation, ReviewCommentThread, ReviewContext, ReviewContextError,
-    ReviewThreadComment,
-};
+pub use self::compress::compress_review_context;
+use self::digest::DigestValidationError;
+pub use self::digest::ReviewContextDigest;
+pub use self::review::ReviewContext;
+
+#[cfg(test)]
+use self::digest::{ReviewContextItem, ReviewContextItemKind};
+#[cfg(test)]
+use self::review::{ReviewCommentThread, ReviewThreadComment};

@@ -1,13 +1,12 @@
-use std::{
-    collections::HashSet,
-    num::NonZeroU32,
-    path::{Path, PathBuf},
-};
+use std::collections::HashSet;
+use std::fs;
+use std::num::NonZeroU32;
+use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
 use crate::error::PeerError;
-use crate::llm::provider::ProviderKind;
+use crate::llm::ProviderKind;
 
 const SUPPORTED_VERSIONS: [u32; 1] = [1];
 
@@ -130,11 +129,10 @@ impl Config {
 pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
     let project_root = discover_peer_root(from)?;
     let config_path = project_root.join(".peer").join("config.toml");
-    let content =
-        std::fs::read_to_string(&config_path).map_err(|source| PeerError::InvalidConfig {
-            message: format!("cannot read {}", config_path.display()),
-            source: Some(Box::new(source)),
-        })?;
+    let content = fs::read_to_string(&config_path).map_err(|source| PeerError::InvalidConfig {
+        message: format!("cannot read {}", config_path.display()),
+        source: Some(Box::new(source)),
+    })?;
     let config = parse_and_validate(&content, &config_path)?;
     Ok((config, project_root))
 }
@@ -151,7 +149,7 @@ pub fn discover_peer_root(from: &Path) -> Result<PathBuf, PeerError> {
 
     for dir in from.ancestors() {
         let peer_path = dir.join(".peer");
-        let peer_metadata = match std::fs::symlink_metadata(&peer_path) {
+        let peer_metadata = match fs::symlink_metadata(&peer_path) {
             Ok(metadata) => metadata,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => continue,
             Err(source) => {
@@ -169,7 +167,7 @@ pub fn discover_peer_root(from: &Path) -> Result<PathBuf, PeerError> {
         }
 
         let config_path = peer_path.join("config.toml");
-        match std::fs::symlink_metadata(&config_path) {
+        match fs::symlink_metadata(&config_path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
                 return Err(PeerError::invalid_config(format!(
                     "{} is a symbolic link",
@@ -278,8 +276,9 @@ pub const DEFAULT_CONFIG_TOML: &str = include_str!(concat!(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::assert_matches;
-    use std::fs;
+
     use tempfile::TempDir;
 
     #[must_use]

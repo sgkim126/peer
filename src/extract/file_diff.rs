@@ -2,8 +2,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use super::{ExtractError, Extractor, validate_repository_relative_path};
 use crate::git::{CommitHash, run_git};
+
+use super::{ExtractError, Extractor, validate_repository_relative_path};
 
 const MAX_FILE_DIFF_BYTES: usize = 100 * 1024;
 
@@ -68,11 +69,11 @@ fn truncate_file_diff(diff: String) -> FileDiff {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::assert_matches;
 
-    use super::*;
     use crate::console::Console;
-    use crate::git::run_git;
 
     #[test]
     fn rejects_absolute_and_parent_paths() {

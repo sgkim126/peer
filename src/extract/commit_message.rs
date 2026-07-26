@@ -32,8 +32,10 @@ impl Extractor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::assert_matches;
     use std::path::Path;
+
     use tempfile::TempDir;
 
     use crate::console::Console;

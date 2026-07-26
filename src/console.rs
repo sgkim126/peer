@@ -33,6 +33,7 @@ impl Console {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use clap::Parser;
 
     fn console_from(args: &[&str]) -> Console {
