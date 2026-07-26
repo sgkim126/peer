@@ -15,6 +15,12 @@ pub enum LlmCallError {
     },
 }
 
+impl LlmCallError {
+    pub fn is_transient(&self) -> bool {
+        matches!(self, Self::Transient { .. })
+    }
+}
+
 impl fmt::Display for LlmCallError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -80,6 +86,7 @@ mod tests {
             error.to_string(),
             "LLM context length exceeded: maximum is 128k tokens"
         );
+        assert!(!error.is_transient());
     }
 
     #[test]
@@ -96,6 +103,7 @@ mod tests {
             error.to_string(),
             "transient LLM call failure: request timed out"
         );
+        assert!(error.is_transient());
     }
 
     #[test]
@@ -109,6 +117,7 @@ mod tests {
             error.to_string(),
             "permanent LLM call failure: invalid API key"
         );
+        assert!(!error.is_transient());
     }
 
     #[test]

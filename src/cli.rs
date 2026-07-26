@@ -64,6 +64,10 @@ pub enum Command {
         #[arg(long)]
         comments_file: Option<PathBuf>,
 
+        /// Start resumable checks from the beginning.
+        #[arg(long)]
+        no_resume: bool,
+
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
 
@@ -91,6 +95,10 @@ pub enum Command {
 
         #[arg(long)]
         comments_file: Option<PathBuf>,
+
+        /// Start a resumable check from the beginning.
+        #[arg(long)]
+        no_resume: bool,
 
         #[command(subcommand)]
         command: CheckCommand,
@@ -214,6 +222,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 format: OutputFormat::Terminal,
                 repo: None,
             }
@@ -235,6 +244,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 format: OutputFormat::Json,
                 repo: None,
             }
@@ -256,6 +266,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 format: OutputFormat::Markdown,
                 repo: None,
             }
@@ -292,6 +303,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 format: OutputFormat::Github,
                 repo: Some("owner/repository".into()),
             }
@@ -323,6 +335,7 @@ mod tests {
                 title: Some("Add context compression".into()),
                 body_file: Some("body.md".into()),
                 comments_file: Some("comments.json".into()),
+                no_resume: false,
                 format: OutputFormat::Terminal,
                 repo: None,
             }
@@ -352,6 +365,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 format: OutputFormat::Terminal,
                 repo: None,
             }
@@ -386,6 +400,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 format: OutputFormat::Terminal,
                 repo: None,
             }
@@ -407,8 +422,22 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 format: OutputFormat::Terminal,
                 repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn review_without_resuming() {
+        let cli = parse(&["peer", "review", "HEAD", "--no-resume"]);
+
+        assert_matches!(
+            cli.command,
+            Command::Review {
+                no_resume: true,
+                ..
             }
         );
     }
@@ -630,6 +659,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 command: CheckCommand::Size {
                     revision: "abc123".into(),
                 },
@@ -649,6 +679,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 command: CheckCommand::Intent {
                     revision: "abc123".into(),
                 },
@@ -668,6 +699,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 command: CheckCommand::Quality {
                     revision: "abc123".into(),
                 },
@@ -687,6 +719,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 command: CheckCommand::Security {
                     revision: "abc123".into(),
                 },
@@ -706,6 +739,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 command: CheckCommand::Coherence {
                     range: "HEAD~3..HEAD".into(),
                 },
@@ -736,6 +770,7 @@ mod tests {
                 title: Some("Add review context".into()),
                 body_file: Some(PathBuf::from("body.md")),
                 comments_file: Some(PathBuf::from("comments.json")),
+                no_resume: false,
                 command: CheckCommand::Quality {
                     revision: "HEAD".into(),
                 },
@@ -764,9 +799,23 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                no_resume: false,
                 command: CheckCommand::Security {
                     revision: "HEAD".into(),
                 },
+            }
+        );
+    }
+
+    #[test]
+    fn check_without_resuming() {
+        let cli = parse(&["peer", "check", "--no-resume", "quality", "HEAD"]);
+
+        assert_matches!(
+            cli.command,
+            Command::Check {
+                no_resume: true,
+                ..
             }
         );
     }

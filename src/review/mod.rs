@@ -110,6 +110,11 @@ pub struct ReviewSummary {
     pub model: String,
 }
 
+pub struct ReviewOptions {
+    pub context_usage: Option<LlmUsage>,
+    pub resume: bool,
+}
+
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
 pub struct ModelUsage {
     pub input_tokens: u64,
@@ -328,8 +333,12 @@ pub async fn run(
     project_root: PathBuf,
     cache: &CacheStore,
     review_context: &ReviewContextDigest,
-    context_usage: Option<LlmUsage>,
+    options: ReviewOptions,
 ) -> ReviewResult {
+    let ReviewOptions {
+        context_usage,
+        resume,
+    } = options;
     let (provider, model) = config
         .resolve_provider(None, None)
         .expect("validated config must resolve its default provider and model");
@@ -352,7 +361,10 @@ pub async fn run(
             project_root.clone(),
             cache,
             review_context,
-            None,
+            check::CheckOptions {
+                context_usage: None,
+                resume,
+            },
         )
         .await
         {

@@ -239,6 +239,9 @@ Review findings are also nondeterministic and can be incomplete, so they do not 
 
 Review results are stored under `.peer/cache`.
 The cache avoids repeating model work when the relevant inputs have not changed.
+If a check exhausts its iteration budget or stops because of a transient provider error, `peer`
+stores the completed conversation and resumes it the next time the same check runs.
+Pass `--no-resume` to `peer review` or `peer check` to ignore resumable checkpoints for that run.
 
 `peer prune` removes cache data belonging to older `peer` versions while preserving data for the current version.
 `peer prune --all` removes every cache entry, including entries for the current version.

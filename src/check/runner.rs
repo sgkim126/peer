@@ -4,9 +4,9 @@ use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::{
-    Agent, AgentOutcome, CheckError, CheckOutput, CheckResult, CheckTarget, ExtractToolExecutor,
-    Finding, LlmCallError, LlmUsage, ProviderRuntime, RawUsage, request_clarification,
-    submit_check_result,
+    Agent, AgentCheckpoint, AgentOutcome, CheckError, CheckOutput, CheckResult, CheckTarget,
+    ExtractToolExecutor, Finding, LlmCallError, LlmUsage, ProviderRuntime, RawUsage,
+    request_clarification, submit_check_result,
 };
 
 use super::CheckDefinition;
@@ -17,6 +17,7 @@ pub struct CheckRunConfig {
     pub input_per_1m_usd: f64,
     pub output_per_1m_usd: f64,
     pub context_usage: Option<LlmUsage>,
+    pub checkpoint: Option<AgentCheckpoint>,
     pub console: Console,
 }
 
@@ -47,6 +48,11 @@ pub struct Checker {
     config: CheckRunConfig,
 }
 
+pub struct CheckExecution {
+    pub result: CheckResult,
+    pub checkpoint: Option<AgentCheckpoint>,
+}
+
 impl Checker {
     pub fn new(extractor: Extractor, runtime: ProviderRuntime, config: CheckRunConfig) -> Self {
         Self {
@@ -60,7 +66,7 @@ impl Checker {
         self,
         check: &C,
         review_context: &ReviewContextDigest,
-    ) -> Result<CheckResult, CheckRunError>
+    ) -> Result<CheckExecution, CheckRunError>
     where
         C: CheckDefinition,
     {
@@ -85,13 +91,20 @@ impl Checker {
             ExtractToolExecutor::new(self.extractor),
             self.config.console,
         );
-        match agent.run_loop(request, self.config.max_iterations).await {
+        match agent
+            .run_loop(
+                request,
+                self.config.max_iterations,
+                self.config.checkpoint.clone(),
+            )
+            .await
+        {
             AgentOutcome::Terminal(done) if done.call.name == submit_check_result().name => {
                 let output: CheckOutput = match serde_json::from_value(done.call.arguments) {
                     Ok(output) => output,
                     Err(error) => {
                         let reason = format!("invalid submit_check_result arguments: {error}");
-                        return Ok(build_result(
+                        return Ok(completed(build_result(
                             check,
                             target,
                             format!("Check did not complete: {reason}"),
@@ -100,7 +113,7 @@ impl Checker {
                             done.usage,
                             Some(CheckError::InvalidOutput { reason }),
                             &self.config,
-                        ));
+                        )));
                     }
                 };
                 if !output.findings.iter().all(|finding| {
@@ -115,7 +128,7 @@ impl Checker {
                         "finding commit is outside the check target".to_string(),
                     ));
                 }
-                Ok(build_result(
+                Ok(completed(build_result(
                     check,
                     target,
                     output.summary,
@@ -124,13 +137,13 @@ impl Checker {
                     done.usage,
                     None,
                     &self.config,
-                ))
+                )))
             }
             AgentOutcome::Terminal(done) if done.call.name == request_clarification().name => {
                 let questions = match parse_clarification_questions(done.call.arguments) {
                     Ok(questions) => questions,
                     Err(reason) => {
-                        return Ok(build_result(
+                        return Ok(completed(build_result(
                             check,
                             target,
                             format!("Check did not complete: {reason}"),
@@ -139,10 +152,10 @@ impl Checker {
                             done.usage,
                             Some(CheckError::InvalidOutput { reason }),
                             &self.config,
-                        ));
+                        )));
                     }
                 };
-                Ok(build_result(
+                Ok(completed(build_result(
                     check,
                     target,
                     format!(
@@ -158,11 +171,11 @@ impl Checker {
                     done.usage,
                     Some(CheckError::ClarificationRequired { questions }),
                     &self.config,
-                ))
+                )))
             }
             AgentOutcome::Terminal(done) => {
                 let reason = format!("unexpected terminal tool: {}", done.call.name);
-                Ok(build_result(
+                Ok(completed(build_result(
                     check,
                     target,
                     format!("Check did not complete: {reason}"),
@@ -173,27 +186,39 @@ impl Checker {
                         tool: done.call.name,
                     }),
                     &self.config,
-                ))
+                )))
             }
-            AgentOutcome::Error(failure) => Ok(build_result(
-                check,
-                target,
-                format!("Check did not complete: {}", failure.error),
-                Vec::new(),
-                failure.iterations,
-                failure.usage,
-                Some(if failure.exhausted {
-                    CheckError::Exhausted {
-                        reason: failure.error.to_string(),
-                    }
-                } else {
-                    CheckError::Agent {
-                        reason: failure.error.to_string(),
-                    }
-                }),
-                &self.config,
-            )),
+            AgentOutcome::Error(failure) => {
+                let reason = failure.error.to_string();
+                let iterations = failure.checkpoint.iterations;
+                let checkpoint = (failure.exhausted || failure.error.is_transient())
+                    .then_some(failure.checkpoint);
+                Ok(CheckExecution {
+                    result: build_result(
+                        check,
+                        target,
+                        format!("Check did not complete: {reason}"),
+                        Vec::new(),
+                        iterations,
+                        failure.usage,
+                        Some(if failure.exhausted {
+                            CheckError::Exhausted { reason }
+                        } else {
+                            CheckError::Agent { reason }
+                        }),
+                        &self.config,
+                    ),
+                    checkpoint,
+                })
+            }
         }
+    }
+}
+
+fn completed(result: CheckResult) -> CheckExecution {
+    CheckExecution {
+        result,
+        checkpoint: None,
     }
 }
 

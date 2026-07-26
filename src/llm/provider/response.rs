@@ -1,9 +1,12 @@
-#[derive(Debug, Clone, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 pub struct ToolCall {
     pub id: String,
     pub name: String,
     pub arguments: serde_json::Value,
     /// Provider-specific opaque state that must be replayed with the tool call.
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_state: Option<String>,
 }
 

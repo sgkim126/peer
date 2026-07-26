@@ -63,6 +63,29 @@ impl std::error::Error for CacheReadError {
 }
 
 #[derive(Debug)]
+pub struct CacheRemoveError {
+    pub path: PathBuf,
+    pub source: std::io::Error,
+}
+
+impl fmt::Display for CacheRemoveError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "failed to remove cache file {}: {}",
+            self.path.display(),
+            self.source
+        )
+    }
+}
+
+impl std::error::Error for CacheRemoveError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+#[derive(Debug)]
 pub enum CacheWriteError {
     Serialize {
         source: serde_json::Error,
