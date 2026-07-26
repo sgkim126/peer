@@ -320,6 +320,15 @@ async fn main() -> ExitCode {
                         console.debug(format_args!("{error:?}"));
                         return ExitCode::FAILURE;
                     }
+                    let review_head =
+                        match check::resolve_review_head(&command, &project_root, console).await {
+                            Ok(review_head) => review_head,
+                            Err(error) => {
+                                eprintln!("error: {error}");
+                                console.debug(format_args!("{error:?}"));
+                                return ExitCode::FAILURE;
+                            }
+                        };
                     let cache = CacheStore::new(project_root.join(".peer/cache"), console);
                     let compression = match context::compress_review_context(
                         &review_context,
@@ -346,6 +355,7 @@ async fn main() -> ExitCode {
                         check::CheckOptions {
                             context_usage: compression.usage,
                             resume: !no_resume,
+                            review_head,
                         },
                     )
                     .await

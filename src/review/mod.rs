@@ -27,6 +27,7 @@ pub enum ReviewTarget {
 pub struct ReviewPlan {
     checks: Vec<ReviewCheck>,
     ordered_commits: Vec<CommitHash>,
+    review_head: CommitHash,
 }
 
 #[derive(clap::ValueEnum, Debug, Clone, Copy, PartialEq)]
@@ -289,10 +290,10 @@ pub async fn validate_target(
 
 pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
     let mut checks = Vec::new();
-    let ordered_commits = match target {
+    let (ordered_commits, review_head) = match target {
         ReviewTarget::Commit(commit) => {
             append_commit_checks(&mut checks, commit);
-            vec![commit.clone()]
+            (vec![commit.clone()], commit.clone())
         }
         ReviewTarget::Range { from, to, commits } => {
             for commit in commits {
@@ -302,12 +303,13 @@ pub fn plan_checks(target: &ReviewTarget) -> ReviewPlan {
                 from: from.clone(),
                 to: to.clone(),
             });
-            commits.clone()
+            (commits.clone(), to.clone())
         }
     };
     ReviewPlan {
         checks,
         ordered_commits,
+        review_head,
     }
 }
 
@@ -339,6 +341,11 @@ pub async fn run(
         context_usage,
         resume,
     } = options;
+    let ReviewPlan {
+        checks: planned_checks,
+        ordered_commits,
+        review_head,
+    } = plan;
     let (provider, model) = config
         .resolve_provider(None, None)
         .expect("validated config must resolve its default provider and model");
@@ -347,12 +354,12 @@ pub async fn run(
         provider: provider.name.clone(),
         model: model.name.clone(),
     };
-    let mut checks = Vec::with_capacity(plan.checks.len());
+    let mut checks = Vec::with_capacity(planned_checks.len());
     let mut errors = Vec::new();
 
     // Checks are intentionally ordered: output follows commit order and the
     // range-level coherence check runs after all per-commit checks.
-    for review_check in plan.checks {
+    for review_check in planned_checks {
         let command = CheckCommand::from(review_check.clone());
         match check::handler(
             console,
@@ -364,6 +371,7 @@ pub async fn run(
             check::CheckOptions {
                 context_usage: None,
                 resume,
+                review_head: review_head.clone(),
             },
         )
         .await
@@ -379,7 +387,7 @@ pub async fn run(
     ReviewResult {
         summary,
         context_usage,
-        ordered_commits: plan.ordered_commits,
+        ordered_commits,
         checks,
         errors,
     }
@@ -589,12 +597,39 @@ mod tests {
 
         assert_eq!(plan.checks.len(), 9);
         assert_eq!(
+            plan.checks[2],
+            ReviewCheck::Quality {
+                revision: first.clone(),
+            }
+        );
+        assert_eq!(
+            plan.checks[6],
+            ReviewCheck::Quality {
+                revision: second.clone(),
+            }
+        );
+        assert_eq!(plan.review_head, second.clone());
+        assert_eq!(
             plan.checks.last(),
             Some(&ReviewCheck::Coherence {
                 from: first,
                 to: second,
             })
         );
+    }
+
+    #[test]
+    fn uses_the_target_commit_as_the_review_head_for_a_single_commit() {
+        let commit = CommitHash::new("abc1234").unwrap();
+        let plan = plan_checks(&ReviewTarget::Commit(commit.clone()));
+
+        assert_eq!(
+            plan.checks[2],
+            ReviewCheck::Quality {
+                revision: commit.clone(),
+            }
+        );
+        assert_eq!(plan.review_head, commit);
     }
 
     #[test]
