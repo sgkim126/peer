@@ -199,21 +199,6 @@ where
                     });
                 }
             }
-
-            if is_last_request {
-                return error_outcome(
-                    permanent_error(
-                        format!(
-                            "LLM agent did not call a terminal tool within {iteration} iterations"
-                        ),
-                        AgentError::LoopExhausted,
-                    ),
-                    conversation,
-                    usage,
-                    iteration,
-                    true,
-                );
-            }
         }
         let iterations = previous_iterations.saturating_add(max_iterations);
         error_outcome(
