@@ -21,6 +21,11 @@ on:
         required: false
         default: ""
         type: string
+      no_resume:
+        description: Start checks without resuming cached checkpoints.
+        required: false
+        default: false
+        type: boolean
       check_mode:
         description: How to apply the selected review checks.
         required: true
@@ -62,7 +67,7 @@ permissions:
   pull-requests: write
 
 env:
-  PEER_VERSION: "0.11.0"
+  PEER_VERSION: "0.11.1"
 
 jobs:
   review:
@@ -253,6 +258,7 @@ jobs:
           version: ${{ env.PEER_VERSION }}
           provider: ${{ steps.review.outputs.provider }}
           model: ${{ steps.review.outputs.model }}
+          no-resume: ${{ inputs.no_resume }}
           skip-checks: ${{ steps.review.outputs.skip-checks }}
           only-checks: ${{ steps.review.outputs.only-checks }}
           cache-key: peer-cache-${{ runner.os }}-${{ github.repository }}-pr-${{ steps.review.outputs.pr-number }}

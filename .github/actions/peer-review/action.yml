@@ -11,6 +11,10 @@ inputs:
   model:
     description: LLM model name to pass to peer review.
     required: false
+  no-resume:
+    description: Start checks without resuming cached checkpoints.
+    required: false
+    default: "false"
   skip-checks:
     description: Comma-separated checks to skip.
     required: false
@@ -137,6 +141,7 @@ runs:
       env:
         PEER_REVIEW_PROVIDER: ${{ inputs.provider }}
         PEER_REVIEW_MODEL: ${{ inputs.model }}
+        PEER_REVIEW_NO_RESUME: ${{ inputs.no-resume }}
         PEER_REVIEW_SKIP_CHECKS: ${{ inputs.skip-checks }}
         PEER_REVIEW_ONLY_CHECKS: ${{ inputs.only-checks }}
         PEER_REVIEW_TARGET: ${{ inputs.target }}
@@ -180,6 +185,9 @@ runs:
         fi
         if [ -n "$PEER_REVIEW_MODEL" ]; then
           args+=(--model "$PEER_REVIEW_MODEL")
+        fi
+        if [ "$PEER_REVIEW_NO_RESUME" = "true" ]; then
+          args+=(--no-resume)
         fi
         if [ -n "$PEER_REVIEW_SKIP_CHECKS" ] && [ -n "$PEER_REVIEW_ONLY_CHECKS" ]; then
           echo 'Only one of skip-checks or only-checks may be specified.' >&2
