@@ -1,5 +1,6 @@
 use std::fmt;
 
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::console::Console;
@@ -35,11 +36,17 @@ pub struct AgentTerminal {
     pub iterations: u32,
 }
 
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+pub struct AgentCheckpoint {
+    pub conversation: Vec<ConversationTurn>,
+    pub iterations: u32,
+}
+
 #[derive(Debug)]
 pub struct AgentFailure {
     pub error: LlmCallError,
     pub usage: RawUsage,
-    pub iterations: u32,
+    pub checkpoint: AgentCheckpoint,
     pub exhausted: bool,
 }
 
@@ -98,15 +105,21 @@ where
                 is_last_request,
             ) {
                 Ok(http_request) => http_request,
-                Err(error) => return error_outcome(error, usage, iteration, false),
+                Err(error) => {
+                    return error_outcome(error, conversation, usage, iteration, false);
+                }
             };
             let response = match self.transport.send(http_request).await {
                 Ok(response) => response,
-                Err(error) => return error_outcome(error, usage, iteration, false),
+                Err(error) => {
+                    return error_outcome(error, conversation, usage, iteration, false);
+                }
             };
             let result = match self.provider.parse_response(response) {
                 Ok(result) => result,
-                Err(error) => return error_outcome(error, usage, iteration, false),
+                Err(error) => {
+                    return error_outcome(error, conversation, usage, iteration, false);
+                }
             };
             usage += result.usage;
 
@@ -147,10 +160,21 @@ where
                             ),
                             AgentError::MultipleTerminalCalls,
                         ),
+                        conversation,
                         usage,
                         iteration,
                         false,
                     );
+                }
+            }
+
+            if !tool_calls.is_empty() {
+                conversation.push(ConversationTurn::AssistantToolCalls(tool_calls.clone()));
+                for (call_id, result) in self.tool_executor.execute_all(tool_calls).await {
+                    conversation.push(ConversationTurn::ToolResult {
+                        call_id,
+                        result: tool_result_json(result),
+                    });
                 }
             }
 
@@ -162,18 +186,11 @@ where
                         ),
                         AgentError::LoopExhausted,
                     ),
+                    conversation,
                     usage,
                     iteration,
                     true,
                 );
-            }
-
-            conversation.push(ConversationTurn::AssistantToolCalls(tool_calls.clone()));
-            for (call_id, result) in self.tool_executor.execute_all(tool_calls).await {
-                conversation.push(ConversationTurn::ToolResult {
-                    call_id,
-                    result: tool_result_json(result),
-                });
             }
         }
         error_outcome(
@@ -183,6 +200,7 @@ where
                 ),
                 AgentError::LoopExhausted,
             ),
+            conversation,
             usage,
             max_iterations,
             true,
@@ -206,6 +224,7 @@ fn permanent_error(message: String, source: AgentError) -> LlmCallError {
 
 fn error_outcome(
     error: LlmCallError,
+    conversation: Vec<ConversationTurn>,
     usage: RawUsage,
     iterations: u32,
     exhausted: bool,
@@ -213,7 +232,10 @@ fn error_outcome(
     AgentOutcome::Error(AgentFailure {
         error,
         usage,
-        iterations,
+        checkpoint: AgentCheckpoint {
+            conversation,
+            iterations,
+        },
         exhausted,
     })
 }
@@ -474,7 +496,94 @@ mod tests {
             "permanent LLM call failure: LLM agent called multiple terminal tools: request_clarification, submit_check_result"
         );
         assert_eq!(failure.usage.input_tokens, 10);
-        assert_eq!(failure.iterations, 1);
+        assert_eq!(failure.checkpoint.iterations, 1);
+    }
+
+    #[tokio::test]
+    async fn transient_failure_preserves_the_current_conversation() {
+        let conversation = vec![
+            ConversationTurn::System("Review code.".to_string()),
+            ConversationTurn::User("Review abc1234.".to_string()),
+        ];
+        let provider = MockProvider::default();
+        let transport = TestTransport::new([Err(LlmCallError::Transient {
+            message: "request timed out".to_string(),
+            source: Box::new(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "request timed out",
+            )),
+        })]);
+        let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
+        let request = AgentRequest {
+            model: "test-model".to_string(),
+            conversation: conversation.clone(),
+            tools: tools(),
+            terminal_tools: vec![submit_check_result()],
+        };
+
+        let AgentOutcome::Error(failure) = agent.run_loop(request, 2).await else {
+            panic!("expected error outcome");
+        };
+
+        assert_eq!(failure.checkpoint.conversation, conversation);
+        assert_eq!(failure.checkpoint.iterations, 1);
+        assert!(!failure.exhausted);
+    }
+
+    #[tokio::test]
+    async fn exhaustion_preserves_the_last_tool_exchange() {
+        let call = tool_call(
+            "call-diff",
+            "get_commit_diff",
+            json!({ "revision": "HEAD" }),
+        );
+        let provider =
+            MockProvider::new([Ok(call_result(LlmResponse::ToolCalls(vec![call.clone()])))]);
+        let transport = TestTransport::new([Ok(response())]);
+        let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
+
+        let AgentOutcome::Error(failure) = agent.run_loop(request(tools()), 1).await else {
+            panic!("expected error outcome");
+        };
+
+        assert!(failure.exhausted);
+        assert_eq!(failure.checkpoint.iterations, 1);
+        assert_eq!(
+            failure.checkpoint.conversation,
+            [
+                ConversationTurn::AssistantToolCalls(vec![call]),
+                ConversationTurn::ToolResult {
+                    call_id: "call-diff".to_string(),
+                    result: json!({ "revision": "HEAD" }),
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn checkpoint_round_trips_through_json() {
+        let checkpoint = AgentCheckpoint {
+            conversation: vec![ConversationTurn::AssistantToolCalls(vec![ToolCall {
+                id: "call-1".to_string(),
+                name: "get_commit_diff".to_string(),
+                arguments: json!({ "revision": "HEAD" }),
+                provider_state: Some("opaque-state".to_string()),
+            }])],
+            iterations: 2,
+        };
+
+        let value = serde_json::to_value(&checkpoint).unwrap();
+        let restored: AgentCheckpoint = serde_json::from_value(value.clone()).unwrap();
+
+        assert_eq!(restored, checkpoint);
+        assert_eq!(
+            value["conversation"][0]["type"],
+            serde_json::Value::String("assistant_tool_calls".to_string())
+        );
+        assert_eq!(
+            value["conversation"][0]["content"][0]["provider_state"],
+            "opaque-state"
+        );
     }
 
     #[tokio::test]

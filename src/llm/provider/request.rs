@@ -1,6 +1,9 @@
+use serde::{Deserialize, Serialize};
+
 use super::ToolCall;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[serde(tag = "type", content = "content", rename_all = "snake_case")]
 pub enum ConversationTurn {
     System(String),
     User(String),

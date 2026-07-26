@@ -180,7 +180,7 @@ impl Checker {
                 target,
                 format!("Check did not complete: {}", failure.error),
                 Vec::new(),
-                failure.iterations,
+                failure.checkpoint.iterations,
                 failure.usage,
                 Some(if failure.exhausted {
                     CheckError::Exhausted {
