@@ -76,7 +76,7 @@ where
         let request = compression_request(&self.model, context);
         let agent = Agent::new(self.provider, self.transport, NoToolExecutor, self.console);
         match agent
-            .run_loop(request, CONTEXT_COMPRESSION_MAX_ITERATIONS)
+            .run_loop(request, CONTEXT_COMPRESSION_MAX_ITERATIONS, None)
             .await
         {
             AgentOutcome::Terminal(terminal) => {

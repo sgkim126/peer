@@ -156,6 +156,7 @@ pub async fn handler(
             input_per_1m_usd: model_config.input_per_1m_usd,
             output_per_1m_usd: model_config.output_per_1m_usd,
             context_usage,
+            checkpoint: None,
             console,
         },
     )

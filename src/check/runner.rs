@@ -4,9 +4,9 @@ use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::{
-    Agent, AgentOutcome, CheckError, CheckOutput, CheckResult, CheckTarget, ExtractToolExecutor,
-    Finding, LlmCallError, LlmUsage, ProviderRuntime, RawUsage, request_clarification,
-    submit_check_result,
+    Agent, AgentCheckpoint, AgentOutcome, CheckError, CheckOutput, CheckResult, CheckTarget,
+    ExtractToolExecutor, Finding, LlmCallError, LlmUsage, ProviderRuntime, RawUsage,
+    request_clarification, submit_check_result,
 };
 
 use super::CheckDefinition;
@@ -17,6 +17,7 @@ pub struct CheckRunConfig {
     pub input_per_1m_usd: f64,
     pub output_per_1m_usd: f64,
     pub context_usage: Option<LlmUsage>,
+    pub checkpoint: Option<AgentCheckpoint>,
     pub console: Console,
 }
 
@@ -85,7 +86,14 @@ impl Checker {
             ExtractToolExecutor::new(self.extractor),
             self.config.console,
         );
-        match agent.run_loop(request, self.config.max_iterations).await {
+        match agent
+            .run_loop(
+                request,
+                self.config.max_iterations,
+                self.config.checkpoint.clone(),
+            )
+            .await
+        {
             AgentOutcome::Terminal(done) if done.call.name == submit_check_result().name => {
                 let output: CheckOutput = match serde_json::from_value(done.call.arguments) {
                     Ok(output) => output,

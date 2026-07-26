@@ -6,7 +6,7 @@ mod tools;
 #[cfg(test)]
 mod test_support;
 
-pub use self::agent::{Agent, AgentOutcome, AgentRequest};
+pub use self::agent::{Agent, AgentCheckpoint, AgentOutcome, AgentRequest};
 use self::provider::LlmRequest;
 pub use self::provider::{
     ConversationTurn, LlmCallError, LlmProvider, LlmResponse, LlmTransport, ProviderCreationError,

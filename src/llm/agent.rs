@@ -71,13 +71,34 @@ where
         }
     }
 
-    pub async fn run_loop(&self, request: AgentRequest, max_iterations: u32) -> AgentOutcome {
+    pub async fn run_loop(
+        &self,
+        request: AgentRequest,
+        max_iterations: u32,
+        checkpoint: Option<AgentCheckpoint>,
+    ) -> AgentOutcome {
         let AgentRequest {
             model,
             mut conversation,
             tools,
             terminal_tools,
         } = request;
+        let previous_iterations = match checkpoint {
+            Some(checkpoint) if checkpoint.is_valid_for(&conversation) => {
+                self.console.debug(format_args!(
+                    "agent resuming from checkpoint after {} iterations",
+                    checkpoint.iterations
+                ));
+                conversation = checkpoint.conversation;
+                checkpoint.iterations
+            }
+            Some(_) => {
+                self.console
+                    .debug(format_args!("ignoring invalid agent checkpoint"));
+                0
+            }
+            None => 0,
+        };
         let all_tools = tools
             .iter()
             .chain(&terminal_tools)
@@ -89,8 +110,9 @@ where
             .collect::<Vec<_>>();
         let mut usage = RawUsage::default();
 
-        for iteration in 1..=max_iterations {
-            let is_last_request = iteration == max_iterations;
+        for run_iteration in 1..=max_iterations {
+            let iteration = previous_iterations.saturating_add(run_iteration);
+            let is_last_request = run_iteration == max_iterations;
             let request_tools = if is_last_request {
                 &terminal_tools
             } else {
@@ -125,7 +147,7 @@ where
 
             let LlmResponse::ToolCalls(tool_calls) = result.response;
             self.console.debug(format_args!(
-                "agent iteration {iteration}/{}: {}",
+                "agent iteration {iteration} ({run_iteration}/{} this run): {}",
                 max_iterations,
                 tool_calls
                     .iter()
@@ -182,7 +204,7 @@ where
                 return error_outcome(
                     permanent_error(
                         format!(
-                            "LLM agent did not call a terminal tool within {max_iterations} iterations"
+                            "LLM agent did not call a terminal tool within {iteration} iterations"
                         ),
                         AgentError::LoopExhausted,
                     ),
@@ -193,18 +215,45 @@ where
                 );
             }
         }
+        let iterations = previous_iterations.saturating_add(max_iterations);
         error_outcome(
             permanent_error(
-                format!(
-                    "LLM agent did not call a terminal tool within {max_iterations} iterations"
-                ),
+                format!("LLM agent did not call a terminal tool within {iterations} iterations"),
                 AgentError::LoopExhausted,
             ),
             conversation,
             usage,
-            max_iterations,
+            iterations,
             true,
         )
+    }
+}
+
+impl AgentCheckpoint {
+    fn is_valid_for(&self, initial_conversation: &[ConversationTurn]) -> bool {
+        if !self.conversation.starts_with(initial_conversation) {
+            return false;
+        }
+
+        let mut remaining = &self.conversation[initial_conversation.len()..];
+        while let Some((turn, rest)) = remaining.split_first() {
+            let ConversationTurn::AssistantToolCalls(calls) = turn else {
+                return false;
+            };
+            if calls.is_empty() || rest.len() < calls.len() {
+                return false;
+            }
+            if !calls.iter().zip(rest).all(|(call, turn)| {
+                matches!(
+                    turn,
+                    ConversationTurn::ToolResult { call_id, .. } if call_id == &call.id
+                )
+            }) {
+                return false;
+            }
+            remaining = &rest[calls.len()..];
+        }
+        true
     }
 }
 
@@ -370,7 +419,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
-        let outcome = agent.run_loop(request(tools), 2).await;
+        let outcome = agent.run_loop(request(tools), 2, None).await;
 
         let AgentOutcome::Terminal(result) = outcome else {
             panic!("expected terminal outcome");
@@ -406,7 +455,7 @@ mod tests {
         };
 
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
-        let outcome = agent.run_loop(request, 1).await;
+        let outcome = agent.run_loop(request, 1, None).await;
 
         let AgentOutcome::Terminal(result) = outcome else {
             panic!("expected terminal outcome");
@@ -426,7 +475,7 @@ mod tests {
         let transport = TestTransport::new([Ok(response())]);
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
 
-        let outcome = agent.run_loop(request(tools()), 2).await;
+        let outcome = agent.run_loop(request(tools()), 2, None).await;
 
         let AgentOutcome::Terminal(result) = outcome else {
             panic!("expected terminal outcome");
@@ -455,7 +504,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, FailingToolExecutor, Console::default());
-        let outcome = agent.run_loop(request(tools), 2).await;
+        let outcome = agent.run_loop(request(tools), 2, None).await;
 
         let AgentOutcome::Terminal(terminal) = outcome else {
             panic!("expected terminal outcome");
@@ -486,7 +535,7 @@ mod tests {
         let transport = TestTransport::new([Ok(response())]);
 
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
-        let outcome = agent.run_loop(request(tools()), 2).await;
+        let outcome = agent.run_loop(request(tools()), 2, None).await;
 
         let AgentOutcome::Error(failure) = outcome else {
             panic!("expected error outcome");
@@ -521,7 +570,7 @@ mod tests {
             terminal_tools: vec![submit_check_result()],
         };
 
-        let AgentOutcome::Error(failure) = agent.run_loop(request, 2).await else {
+        let AgentOutcome::Error(failure) = agent.run_loop(request, 2, None).await else {
             panic!("expected error outcome");
         };
 
@@ -542,7 +591,7 @@ mod tests {
         let transport = TestTransport::new([Ok(response())]);
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
 
-        let AgentOutcome::Error(failure) = agent.run_loop(request(tools()), 1).await else {
+        let AgentOutcome::Error(failure) = agent.run_loop(request(tools()), 1, None).await else {
             panic!("expected error outcome");
         };
 
@@ -587,6 +636,112 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn resumes_a_valid_checkpoint_with_a_fresh_iteration_budget() {
+        let initial = vec![
+            ConversationTurn::System("Review code.".to_string()),
+            ConversationTurn::User("Review abc1234.".to_string()),
+        ];
+        let previous_call = tool_call(
+            "call-diff",
+            "get_commit_diff",
+            json!({ "revision": "abc1234" }),
+        );
+        let mut saved_conversation = initial.clone();
+        saved_conversation.push(ConversationTurn::AssistantToolCalls(vec![
+            previous_call.clone(),
+        ]));
+        saved_conversation.push(ConversationTurn::ToolResult {
+            call_id: previous_call.id.clone(),
+            result: previous_call.arguments.clone(),
+        });
+        let checkpoint = AgentCheckpoint {
+            conversation: saved_conversation.clone(),
+            iterations: 3,
+        };
+        let provider =
+            MockProvider::new([Ok(call_result(LlmResponse::ToolCalls(vec![tool_call(
+                "call-submit",
+                &submit_check_result().name,
+                json!({ "summary": "done", "findings": [] }),
+            )])))]);
+        let transport = TestTransport::new([Ok(response())]);
+        let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
+        let request = AgentRequest {
+            model: "test-model".to_string(),
+            conversation: initial,
+            tools: tools(),
+            terminal_tools: vec![submit_check_result()],
+        };
+
+        let AgentOutcome::Terminal(terminal) = agent.run_loop(request, 2, Some(checkpoint)).await
+        else {
+            panic!("expected terminal outcome");
+        };
+
+        assert_eq!(
+            agent.provider.requests()[0].conversation,
+            saved_conversation
+        );
+        assert_eq!(terminal.iterations, 4);
+        assert_eq!(
+            terminal.usage,
+            RawUsage {
+                input_tokens: 10,
+                output_tokens: 5,
+            }
+        );
+    }
+
+    #[tokio::test]
+    async fn ignores_a_checkpoint_for_different_initial_conversation() {
+        let initial = vec![ConversationTurn::System("Current prompt.".to_string())];
+        let checkpoint = AgentCheckpoint {
+            conversation: vec![ConversationTurn::System("Old prompt.".to_string())],
+            iterations: 4,
+        };
+        let provider =
+            MockProvider::new([Ok(call_result(LlmResponse::ToolCalls(vec![tool_call(
+                "call-submit",
+                &submit_check_result().name,
+                json!({ "summary": "done", "findings": [] }),
+            )])))]);
+        let transport = TestTransport::new([Ok(response())]);
+        let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
+        let request = AgentRequest {
+            model: "test-model".to_string(),
+            conversation: initial.clone(),
+            tools: tools(),
+            terminal_tools: vec![submit_check_result()],
+        };
+
+        let AgentOutcome::Terminal(terminal) = agent.run_loop(request, 2, Some(checkpoint)).await
+        else {
+            panic!("expected terminal outcome");
+        };
+
+        assert_eq!(agent.provider.requests()[0].conversation, initial);
+        assert_eq!(terminal.iterations, 1);
+    }
+
+    #[test]
+    fn rejects_a_checkpoint_with_an_incomplete_tool_exchange() {
+        let initial = vec![ConversationTurn::System("Review code.".to_string())];
+        let checkpoint = AgentCheckpoint {
+            conversation: vec![
+                initial[0].clone(),
+                ConversationTurn::AssistantToolCalls(vec![tool_call(
+                    "call-diff",
+                    "get_commit_diff",
+                    json!({ "revision": "HEAD" }),
+                )]),
+            ],
+            iterations: 1,
+        };
+
+        assert!(!checkpoint.is_valid_for(&initial));
+    }
+
+    #[tokio::test]
     async fn executes_tools_and_replays_results_in_order() {
         let first = tool_call("call-1", "get_commit_diff", json!({ "revision": "HEAD" }));
         let second = tool_call("call-2", "get_commit_diff", json!({ "revision": "HEAD~1" }));
@@ -605,7 +760,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
-        agent.run_loop(request(tools), 3).await;
+        agent.run_loop(request(tools), 3, None).await;
 
         let requests = agent.provider.requests();
         assert_eq!(requests.len(), 2);
@@ -643,7 +798,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, EchoToolExecutor, Console::default());
-        agent.run_loop(request(tools), 2).await;
+        agent.run_loop(request(tools), 2, None).await;
 
         let requests = agent.provider.requests();
         assert!(requests[1].is_last_request);
@@ -675,7 +830,7 @@ mod tests {
         let tools = tools();
 
         let agent = Agent::new(provider, transport, FailingToolExecutor, Console::default());
-        agent.run_loop(request(tools), 3).await;
+        agent.run_loop(request(tools), 3, None).await;
 
         let ConversationTurn::ToolResult { result, .. } =
             &agent.provider.requests()[1].conversation[1]
