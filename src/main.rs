@@ -85,6 +85,7 @@ async fn main() -> ExitCode {
             title,
             body_file,
             comments_file,
+            no_resume,
             format,
             repo,
         } => {
@@ -188,7 +189,10 @@ async fn main() -> ExitCode {
                 project_root,
                 &cache,
                 &compression.digest,
-                compression.usage,
+                review::ReviewOptions {
+                    context_usage: compression.usage,
+                    resume: !no_resume,
+                },
             )
             .await;
             if let Some(usage) = &result.context_usage {
@@ -278,6 +282,7 @@ async fn main() -> ExitCode {
             title,
             body_file,
             comments_file,
+            no_resume,
             command,
         } => {
             if title.is_none() {
@@ -338,7 +343,10 @@ async fn main() -> ExitCode {
                         project_root,
                         &cache,
                         &compression.digest,
-                        compression.usage,
+                        check::CheckOptions {
+                            context_usage: compression.usage,
+                            resume: !no_resume,
+                        },
                     )
                     .await
                 }

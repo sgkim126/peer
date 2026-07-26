@@ -92,6 +92,11 @@ impl From<ExtractError> for CheckCommandError {
     }
 }
 
+pub struct CheckOptions {
+    pub context_usage: Option<LlmUsage>,
+    pub resume: bool,
+}
+
 pub async fn handler(
     console: Console,
     command: CheckCommand,
@@ -99,8 +104,12 @@ pub async fn handler(
     project_root: PathBuf,
     cache_store: &CacheStore,
     review_context: &ReviewContextDigest,
-    context_usage: Option<LlmUsage>,
+    options: CheckOptions,
 ) -> Result<CheckResult, CheckCommandError> {
+    let CheckOptions {
+        context_usage,
+        resume,
+    } = options;
     let extractor = Extractor::new(project_root, console);
 
     let check: Check = match command {
@@ -141,7 +150,8 @@ pub async fn handler(
     });
     let checkpoint = match cached {
         Some(LoadedCheckCache::Complete(result)) => return Ok(*result),
-        Some(LoadedCheckCache::Resumable(checkpoint)) => Some(checkpoint),
+        Some(LoadedCheckCache::Resumable(checkpoint)) if resume => Some(checkpoint),
+        Some(LoadedCheckCache::Resumable(_)) => None,
         None => None,
     };
     let resumed = checkpoint.is_some();
@@ -593,7 +603,10 @@ mod tests {
             directory.path().to_path_buf(),
             &cache_store,
             &review_context,
-            None,
+            CheckOptions {
+                context_usage: None,
+                resume: true,
+            },
         )
         .await
         .unwrap();
