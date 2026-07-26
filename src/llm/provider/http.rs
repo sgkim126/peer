@@ -1,18 +1,17 @@
 use std::fmt::{self, Display, Formatter};
+use std::time::{Duration, Instant};
 
 use reqwest::StatusCode;
 use reqwest::header::{HeaderMap, HeaderName};
 use serde_json::Value;
-
-use std::time::{Duration, Instant};
-
 use time::{
     OffsetDateTime,
     format_description::well_known::{Rfc2822, Rfc3339},
 };
 
-use super::{LlmCallError, Request, Response};
 use crate::console::Console;
+
+use super::{LlmCallError, Request, Response};
 
 const MAX_ATTEMPTS: u32 = 3;
 const BASE_RETRY_DELAY: Duration = Duration::from_secs(1);
@@ -291,9 +290,9 @@ impl std::error::Error for ProviderHttpError {}
 
 #[cfg(test)]
 mod tests {
-    use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue};
-
     use super::*;
+
+    use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
 
     #[test]
     fn formats_headers() {

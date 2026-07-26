@@ -1,8 +1,9 @@
-use std::{num::NonZeroU8, path::PathBuf};
+use std::num::NonZeroU8;
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::llm::provider::ProviderKind;
+use crate::llm::ProviderKind;
 use crate::review::ReviewCheckKind;
 
 #[derive(Parser, Debug)]
@@ -167,9 +168,9 @@ pub enum OutputFormat {
 
 #[cfg(test)]
 mod tests {
-    use std::assert_matches;
-
     use super::*;
+
+    use std::assert_matches;
 
     fn parse(args: &[&str]) -> Cli {
         Cli::parse_from(args)

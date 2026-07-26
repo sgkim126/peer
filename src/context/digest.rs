@@ -153,8 +153,10 @@ impl std::error::Error for DigestValidationError {}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::context::{ReviewCommentThread, ReviewThreadComment};
+
     use std::assert_matches;
+
+    use super::super::{ReviewCommentThread, ReviewThreadComment};
 
     fn context() -> ReviewContext {
         ReviewContext {

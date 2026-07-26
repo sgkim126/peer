@@ -53,11 +53,13 @@ impl Extractor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::git::GitError;
+
     use std::assert_matches;
+
     use tempfile::TempDir;
 
     use crate::console::Console;
+    use crate::git::GitError;
 
     struct Repo {
         _tmp: TempDir,

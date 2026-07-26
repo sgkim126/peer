@@ -1,9 +1,12 @@
+use std::fmt;
+use std::path::Path;
+
 use serde::{Deserialize, Serialize};
-use std::{fmt, path::Path};
 
 use crate::console::Console;
 use crate::git::CommitHash;
-use crate::llm::provider::RawUsage;
+
+use super::RawUsage;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -127,7 +130,7 @@ impl CheckResult {
 }
 
 #[cfg_attr(not(test), expect(dead_code))]
-pub async fn validate_per_commit_targets(
+async fn validate_per_commit_targets(
     findings: &[Finding],
     target: &CommitHash,
     dir: &Path,
@@ -157,7 +160,7 @@ pub async fn validate_per_commit_targets(
 }
 
 #[cfg_attr(not(test), expect(dead_code))]
-pub async fn validate_range_targets(
+async fn validate_range_targets(
     findings: &[Finding],
     commits: &[CommitHash],
     dir: &Path,

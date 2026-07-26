@@ -11,7 +11,7 @@ use crate::config::Config;
 use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::git::{CommitHash, GitError, run_git};
-use crate::llm::result::{CheckResult, LlmUsage};
+use crate::llm::{CheckResult, LlmUsage};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {
@@ -421,11 +421,11 @@ impl From<GitError> for ReviewTargetError {
 mod tests {
     use super::*;
 
-    use crate::llm::result::{CheckError, CheckTarget};
     use std::assert_matches;
-    use std::path::PathBuf;
 
     use tempfile::TempDir;
+
+    use crate::llm::{CheckError, CheckTarget};
 
     struct Repo {
         _tmp: TempDir,

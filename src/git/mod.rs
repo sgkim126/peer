@@ -5,9 +5,11 @@ use std::path::Path;
 
 use tokio::process::Command;
 
+use crate::console::Console;
+
 pub use self::commit_hash::CommitHash;
 pub use self::error::GitError;
-use crate::console::Console;
+use self::error::InvalidCommitHashReason;
 
 pub async fn run_git_bytes(
     args: &[&str],
@@ -54,6 +56,7 @@ fn format_argv(args: &[&str]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use std::assert_matches;
 
     #[test]

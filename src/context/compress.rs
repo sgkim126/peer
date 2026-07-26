@@ -4,13 +4,11 @@ use crate::cache::{CacheKey, CacheStore};
 use crate::config::Config;
 use crate::console::Console;
 use crate::error::PeerError;
-use crate::llm::agent::{Agent, AgentOutcome};
-use crate::llm::provider::{
-    ConversationTurn, LlmCallError, LlmProvider, LlmTransport, ProviderCreationError,
-    ProviderRuntime, RawUsage,
+use crate::llm::{
+    Agent, AgentOutcome, AgentRequest, ConversationTurn, LlmCallError, LlmProvider, LlmTransport,
+    LlmUsage, NoToolExecutor, ProviderCreationError, ProviderRuntime, RawUsage,
+    submit_review_context_digest,
 };
-use crate::llm::result::LlmUsage;
-use crate::llm::tools::{NoToolExecutor, submit_review_context_digest};
 
 use super::{DigestValidationError, ReviewContext, ReviewContextDigest};
 
@@ -195,10 +193,10 @@ pub async fn compress_review_context(
     Ok(result)
 }
 
-fn compression_request(model: &str, context: &ReviewContext) -> crate::llm::agent::AgentRequest {
+fn compression_request(model: &str, context: &ReviewContext) -> AgentRequest {
     let input = serde_json::to_string_pretty(&context.compression_input())
         .expect("serializing review context compression input cannot fail");
-    crate::llm::agent::AgentRequest {
+    AgentRequest {
         model: model.to_string(),
         conversation: vec![
             ConversationTurn::System(SYSTEM_PROMPT.to_string()),
@@ -258,6 +256,8 @@ impl std::error::Error for ContextCompressionError {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::assert_matches;
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -265,9 +265,9 @@ mod tests {
     use reqwest::StatusCode;
     use serde_json::json;
 
-    use super::*;
-    use crate::llm::provider::{LlmCallResult, LlmResponse, Request, Response, ToolCall};
-    use crate::llm::test_support::MockProvider;
+    use crate::llm::{LlmCallResult, LlmResponse, MockProvider, Request, Response, ToolCall};
+
+    use super::super::{ReviewContextItem, ReviewContextItemKind};
 
     struct TestTransport {
         responses: Mutex<VecDeque<Result<Response, LlmCallError>>>,
@@ -424,8 +424,8 @@ mod tests {
         .unwrap();
         let digest = ReviewContextDigest {
             overview: "Preserve review decisions.".to_string(),
-            items: vec![crate::context::ReviewContextItem {
-                kind: crate::context::ReviewContextItemKind::Requirement,
+            items: vec![ReviewContextItem {
+                kind: ReviewContextItemKind::Requirement,
                 text: "Keep decisions and open questions.".to_string(),
                 sources: vec!["body".to_string()],
             }],

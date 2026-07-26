@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-use crate::llm::result::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
+#[cfg(test)]
+use crate::llm::CheckResult;
+use crate::llm::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
 use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_html, escape_markdown};
-
-#[cfg(test)]
-use crate::llm::result::CheckResult;
 
 pub fn render(result: &RenderCheck, repo: &str) -> String {
     let mut body = String::new();
@@ -243,8 +242,9 @@ fn neutralize_mentions(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
+    use crate::llm::FileLocation;
 
     fn result() -> CheckResult {
         CheckResult {

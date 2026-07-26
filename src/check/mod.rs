@@ -1,7 +1,7 @@
 mod coherence;
 mod intent;
 mod quality;
-pub mod runner;
+mod runner;
 mod security;
 mod size;
 
@@ -17,17 +17,19 @@ use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::agent::AgentRequest;
-use crate::llm::provider::{ProviderCreationError, ProviderRuntime};
-use crate::llm::result::{CheckResult, CheckTarget, Finding, LlmUsage};
-use runner::{CheckRunConfig, CheckRunError, Checker};
-
-use self::{
-    coherence::CoherenceCheck, intent::IntentCheck, quality::QualityCheck, security::SecurityCheck,
-    size::SizeCheck,
+use crate::llm::{
+    AgentRequest, CheckResult, CheckTarget, Finding, LlmUsage, ProviderCreationError,
+    ProviderRuntime,
 };
 
-pub trait CheckDefinition {
+use self::coherence::CoherenceCheck;
+use self::intent::IntentCheck;
+use self::quality::QualityCheck;
+use self::runner::{CheckRunConfig, CheckRunError, Checker};
+use self::security::SecurityCheck;
+use self::size::SizeCheck;
+
+trait CheckDefinition {
     fn name(&self) -> &'static str;
     fn target(&self) -> CheckTarget;
     fn expected_commits(&self) -> &[CommitHash];
@@ -98,7 +100,7 @@ pub async fn handler(
     cache_store: &CacheStore,
     review_context: &ReviewContextDigest,
     context_usage: Option<LlmUsage>,
-) -> Result<crate::llm::result::CheckResult, CheckCommandError> {
+) -> Result<CheckResult, CheckCommandError> {
     let extractor = Extractor::new(project_root, console);
 
     let check: Check = match command {
@@ -317,7 +319,6 @@ fn store_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult, c
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::llm::result::{CheckResult, LlmUsage};
 
     #[tokio::test]
     async fn cached_checks_do_not_require_provider_creation() {

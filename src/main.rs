@@ -13,6 +13,9 @@ mod render;
 mod review;
 mod secret;
 
+use std::io::Read;
+use std::process::ExitCode;
+
 use clap::Parser;
 
 use crate::cache::CacheStore;
@@ -20,10 +23,7 @@ use crate::cli::{Cli, Command};
 use crate::config::{Config, discover, discover_peer_root};
 use crate::console::Console;
 use crate::error::PeerError;
-use crate::llm::provider::ProviderKind;
-
-use std::io::Read;
-use std::process::ExitCode;
+use crate::llm::ProviderKind;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -444,6 +444,7 @@ fn apply_llm_overrides(
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::config::DEFAULT_CONFIG_TOML;
 
     #[test]

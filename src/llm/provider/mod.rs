@@ -13,14 +13,14 @@ use reqwest::StatusCode;
 use reqwest::header::HeaderMap;
 use serde_json::Value;
 
-pub use anthropic::AnthropicProvider;
-pub use error::LlmCallError;
-pub use gemini::GeminiProvider;
-pub use http::ProviderHttpClient;
-pub use mistral::MistralProvider;
-pub use openai::OpenAiProvider;
-pub use request::{ConversationTurn, LlmRequest, ToolSpec};
-pub use response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
+pub use self::anthropic::AnthropicProvider;
+pub use self::error::LlmCallError;
+pub use self::gemini::GeminiProvider;
+pub use self::http::ProviderHttpClient;
+pub use self::mistral::MistralProvider;
+pub use self::openai::OpenAiProvider;
+pub use self::request::{ConversationTurn, LlmRequest, ToolSpec};
+pub use self::response::{LlmCallResult, LlmResponse, RawUsage, ToolCall};
 
 /// A configured provider paired with the HTTP transport used to call it.
 ///
@@ -166,7 +166,7 @@ impl From<LlmCallError> for ProviderCreationError {
 }
 
 #[cfg(test)]
-mod runtime_tests {
+mod tests {
     use super::*;
 
     use std::assert_matches;

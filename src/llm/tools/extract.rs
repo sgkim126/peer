@@ -1,17 +1,18 @@
 #![cfg_attr(not(test), expect(dead_code))]
 
-use std::{num::NonZeroU8, path::Path};
+use std::num::NonZeroU8;
+use std::path::Path;
 
 use serde::{Deserialize, Deserializer, de};
 use serde_json::json;
 
 use crate::extract::{ExtractData, Extractor, FileContent, FileContentRange};
-use crate::llm::provider::{ToolCall, ToolSpec};
 
-use super::executor::{ToolExecutionError, ToolExecutionResult, ToolExecutor};
+use super::super::{ToolCall, ToolSpec};
+use super::{ToolExecutionError, ToolExecutionResult, ToolExecutor};
 
 #[cfg_attr(not(test), expect(dead_code))]
-pub fn get_commit_message() -> ToolSpec {
+fn get_commit_message() -> ToolSpec {
     ToolSpec {
         name: "get_commit_message".to_string(),
         description: "Returns the full commit message for a commit.".to_string(),
@@ -63,7 +64,7 @@ pub fn get_changed_files() -> ToolSpec {
 }
 
 #[cfg_attr(not(test), expect(dead_code))]
-pub fn get_commits_in_range() -> ToolSpec {
+fn get_commits_in_range() -> ToolSpec {
     ToolSpec {
         name: "get_commits_in_range".to_string(),
         description: "Returns commit hashes in a two-dot range, oldest to newest.".to_string(),

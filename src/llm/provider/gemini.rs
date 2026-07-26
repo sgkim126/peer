@@ -3,11 +3,12 @@ use std::fmt;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
 
+use crate::secret::Secret;
+
 use super::{
     ConversationTurn, LlmCallError, LlmCallResult, LlmProvider, LlmRequest, LlmResponse, RawUsage,
     Request, Response, ToolCall, ToolSpec,
 };
-use crate::secret::Secret;
 
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-goog-api-key");
@@ -337,11 +338,11 @@ impl std::error::Error for GeminiStatusError {}
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::assert_matches;
 
     use reqwest::StatusCode;
-
-    use super::*;
 
     fn provider() -> GeminiProvider {
         GeminiProvider::new(

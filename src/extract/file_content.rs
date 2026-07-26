@@ -2,8 +2,9 @@ use std::path::Path;
 
 use serde::{Deserialize, Deserializer, Serialize, de};
 
-use super::{ExtractError, Extractor, validate_repository_relative_path};
 use crate::git::{CommitHash, GitError, run_git_bytes};
+
+use super::{ExtractError, Extractor, validate_repository_relative_path};
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -146,10 +147,13 @@ fn select_line_range(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::assert_matches;
+
+    use tempfile::TempDir;
+
     use crate::console::Console;
     use crate::git::run_git;
-    use std::assert_matches;
-    use tempfile::TempDir;
 
     struct Repo {
         _tmp: TempDir,

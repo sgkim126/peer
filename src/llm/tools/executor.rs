@@ -3,7 +3,8 @@ use std::fmt;
 use futures_util::stream::{self, StreamExt};
 
 use crate::extract::ExtractError;
-use crate::llm::provider::ToolCall;
+
+use super::super::ToolCall;
 
 pub type ToolExecutionResult = Result<serde_json::Value, ToolExecutionError>;
 
@@ -91,9 +92,11 @@ impl ToolExecutor for NoToolExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
     use std::assert_matches;
     use std::error::Error;
+
+    use serde_json::json;
 
     struct EchoToolExecutor;
 

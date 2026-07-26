@@ -3,13 +3,12 @@ use std::fmt::{self, Write};
 
 use owo_colors::Style;
 
-use crate::llm::result::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
+#[cfg(test)]
+use crate::llm::CheckResult;
+use crate::llm::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
 use crate::review::{ModelUsage, ReviewSummary};
 
 use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_terminal};
-
-#[cfg(test)]
-use crate::llm::result::CheckResult;
 
 pub fn render(result: &RenderCheck, use_color: bool) -> String {
     let mut output = String::new();
@@ -228,8 +227,9 @@ fn finding_context(finding: &Finding) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::git::CommitHash;
-    use crate::llm::result::{CheckTarget, FileLocation, Finding, LlmUsage, Severity};
+    use crate::llm::FileLocation;
 
     fn result() -> CheckResult {
         CheckResult {

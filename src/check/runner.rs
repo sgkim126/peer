@@ -3,10 +3,11 @@ use std::fmt;
 use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
-use crate::llm::agent::{Agent, AgentOutcome};
-use crate::llm::provider::{LlmCallError, ProviderRuntime};
-use crate::llm::result::{CheckError, CheckOutput, CheckResult, LlmUsage};
-use crate::llm::tools::{ExtractToolExecutor, request_clarification, submit_check_result};
+use crate::llm::{
+    Agent, AgentOutcome, CheckError, CheckOutput, CheckResult, CheckTarget, ExtractToolExecutor,
+    Finding, LlmCallError, LlmUsage, ProviderRuntime, RawUsage, request_clarification,
+    submit_check_result,
+};
 
 use super::CheckDefinition;
 
@@ -69,8 +70,8 @@ impl Checker {
             .map_err(CheckRunError::Preparation)?;
         let target = check.target();
         let target_description = match &target {
-            crate::llm::result::CheckTarget::Commit(commit) => commit.to_string(),
-            crate::llm::result::CheckTarget::Range { from, to } => format!("{from}..{to}"),
+            CheckTarget::Commit(commit) => commit.to_string(),
+            CheckTarget::Range { from, to } => format!("{from}..{to}"),
         };
         self.config.console.debug(format_args!(
             "check {} for {}",
@@ -215,11 +216,11 @@ fn parse_clarification_questions(arguments: serde_json::Value) -> Result<Vec<Str
 #[allow(clippy::too_many_arguments)]
 fn build_result<C>(
     check: &C,
-    target: crate::llm::result::CheckTarget,
+    target: CheckTarget,
     summary: String,
-    findings: Vec<crate::llm::result::Finding>,
+    findings: Vec<Finding>,
     iterations: u32,
-    usage: crate::llm::provider::RawUsage,
+    usage: RawUsage,
     error: Option<CheckError>,
     config: &CheckRunConfig,
 ) -> CheckResult
@@ -247,6 +248,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use serde_json::json;
 
     #[test]

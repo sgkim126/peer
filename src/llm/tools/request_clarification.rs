@@ -1,6 +1,6 @@
 use serde_json::json;
 
-use crate::llm::provider::ToolSpec;
+use super::super::ToolSpec;
 
 pub fn request_clarification() -> ToolSpec {
     ToolSpec {

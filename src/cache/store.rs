@@ -8,8 +8,7 @@ use serde::de::DeserializeOwned;
 
 use crate::console::Console;
 
-use super::error::{CachePruneError, CacheReadError, CacheWriteError};
-use super::key::{CacheKey, CacheVersion};
+use super::{CacheKey, CachePruneError, CacheReadError, CacheVersion, CacheWriteError};
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -275,9 +274,11 @@ impl CacheStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde::{Deserialize, Serialize};
+
     use std::assert_matches;
     use std::path::Path;
+
+    use serde::Deserialize;
 
     #[derive(Debug, PartialEq, Serialize, Deserialize)]
     struct Value {
