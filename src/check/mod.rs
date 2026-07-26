@@ -6,7 +6,7 @@ mod security;
 mod size;
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -95,6 +95,31 @@ impl From<ExtractError> for CheckCommandError {
 pub struct CheckOptions {
     pub context_usage: Option<LlmUsage>,
     pub resume: bool,
+    pub review_head: CommitHash,
+}
+
+pub async fn resolve_review_head(
+    command: &CheckCommand,
+    project_root: &Path,
+    console: Console,
+) -> Result<CommitHash, ExtractError> {
+    let revision = match command {
+        CheckCommand::Size { revision } => revision,
+        CheckCommand::Intent { revision } => revision,
+        CheckCommand::Quality { revision } => revision,
+        CheckCommand::Security { revision } => revision,
+        CheckCommand::Coherence { range } => {
+            if range.contains("...") || !range.contains("..") {
+                return Err(ExtractError::InvalidTwoDotRange(range.clone()));
+            }
+            let (from, to) = range.split_once("..").expect("range contains two dots");
+            if from.is_empty() || to.is_empty() {
+                return Err(ExtractError::InvalidTwoDotRange(range.clone()));
+            }
+            to
+        }
+    };
+    Ok(CommitHash::resolve(revision, project_root, console).await?)
 }
 
 pub async fn handler(
@@ -109,6 +134,7 @@ pub async fn handler(
     let CheckOptions {
         context_usage,
         resume,
+        review_head,
     } = options;
     let extractor = Extractor::new(project_root, console);
 
@@ -120,7 +146,7 @@ pub async fn handler(
             Check::Intent(IntentCheck::try_new(&revision, &extractor).await?)
         }
         CheckCommand::Quality { revision } => {
-            Check::Quality(QualityCheck::try_new(&revision, &extractor).await?)
+            Check::Quality(QualityCheck::try_new(&revision, review_head, &extractor).await?)
         }
         CheckCommand::Security { revision } => {
             Check::Security(SecurityCheck::try_new(&revision, &extractor).await?)
@@ -257,6 +283,8 @@ impl CheckDefinition for Check {
 #[derive(Serialize)]
 struct CheckCacheParams<'a> {
     target: CheckTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    review_head: Option<&'a CommitHash>,
     review_context: &'a ReviewContextDigest,
 }
 
@@ -287,6 +315,10 @@ fn check_cache_key(
 ) -> Option<CacheKey> {
     let params = CheckCacheParams {
         target: check.target(),
+        review_head: match check {
+            Check::Quality(check) => Some(check.review_head()),
+            _ => None,
+        },
         review_context,
     };
     match CacheKey::from_params(format!("check-{}", check.name()), provider, model, &params) {
@@ -412,6 +444,38 @@ mod tests {
                 model: "test-model".to_string(),
             },
         }
+    }
+
+    #[test]
+    fn quality_cache_key_depends_on_the_review_head() {
+        let target = CheckTarget::Commit(CommitHash::new("abc1234").unwrap());
+        let first_head = CommitHash::new("def5678").unwrap();
+        let second_head = CommitHash::new("fed4321").unwrap();
+        let review_context = ReviewContextDigest::default();
+        let first = CacheKey::from_params(
+            "check-quality",
+            "test",
+            "test-model",
+            &CheckCacheParams {
+                target: target.clone(),
+                review_head: Some(&first_head),
+                review_context: &review_context,
+            },
+        )
+        .unwrap();
+        let second = CacheKey::from_params(
+            "check-quality",
+            "test",
+            "test-model",
+            &CheckCacheParams {
+                target,
+                review_head: Some(&second_head),
+                review_context: &review_context,
+            },
+        )
+        .unwrap();
+
+        assert_ne!(first.params_hash, second.params_hash);
     }
 
     #[test]
@@ -606,6 +670,9 @@ mod tests {
             CheckOptions {
                 context_usage: None,
                 resume: true,
+                review_head: CommitHash::resolve("HEAD", directory.path(), console)
+                    .await
+                    .unwrap(),
             },
         )
         .await
