@@ -18,14 +18,14 @@ use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::llm::{
-    AgentRequest, CheckResult, CheckTarget, Finding, LlmUsage, ProviderCreationError,
-    ProviderRuntime,
+    AgentCheckpoint, AgentRequest, CheckResult, CheckTarget, Finding, LlmUsage,
+    ProviderCreationError, ProviderRuntime,
 };
 
 use self::coherence::CoherenceCheck;
 use self::intent::IntentCheck;
 use self::quality::QualityCheck;
-use self::runner::{CheckRunConfig, CheckRunError, Checker};
+use self::runner::{CheckExecution, CheckRunConfig, CheckRunError, Checker};
 use self::security::SecurityCheck;
 use self::size::SizeCheck;
 
@@ -129,8 +129,8 @@ pub async fn handler(
         review_context,
         console,
     );
-    if let Some(key) = &cache_key
-        && let Some(result) = load_check_cache(
+    let cached = cache_key.as_ref().and_then(|key| {
+        load_check_cache(
             cache_store,
             key,
             &check,
@@ -138,9 +138,13 @@ pub async fn handler(
             context_usage.clone(),
             console,
         )
-    {
-        return Ok(result);
-    }
+    });
+    let checkpoint = match cached {
+        Some(LoadedCheckCache::Complete(result)) => return Ok(*result),
+        Some(LoadedCheckCache::Resumable(checkpoint)) => Some(checkpoint),
+        None => None,
+    };
+    let resumed = checkpoint.is_some();
     let runtime = ProviderRuntime::try_new(
         &provider_config.name,
         &provider_config.api_key_env,
@@ -156,16 +160,33 @@ pub async fn handler(
             input_per_1m_usd: model_config.input_per_1m_usd,
             output_per_1m_usd: model_config.output_per_1m_usd,
             context_usage,
-            checkpoint: None,
+            checkpoint,
             console,
         },
     )
     .run(&check, review_context)
-    .await?;
+    .await;
+    let execution = match result {
+        Ok(execution) => execution,
+        Err(error) => {
+            if !resumed {
+                return Err(error.into());
+            }
+            if matches!(error, CheckRunError::Preparation(_)) {
+                return Err(error.into());
+            }
+            if let Some(key) = &cache_key
+                && let Err(error) = cache_store.remove(key)
+            {
+                console.debug(format_args!("ignoring check cache remove error: {error:?}"));
+            }
+            return Err(error.into());
+        }
+    };
     if let Some(key) = &cache_key {
-        store_check_cache(cache_store, key, &result, console);
+        update_check_cache(cache_store, key, &execution, resumed, console);
     }
-    Ok(result)
+    Ok(execution.result)
 }
 
 enum Check {
@@ -229,11 +250,22 @@ struct CheckCacheParams<'a> {
     review_context: &'a ReviewContextDigest,
 }
 
-#[derive(Deserialize, Serialize)]
-struct CachedCheckResult {
-    summary: String,
-    findings: Vec<Finding>,
-    iterations: u32,
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+enum CachedCheck {
+    Complete {
+        summary: String,
+        findings: Vec<Finding>,
+        iterations: u32,
+    },
+    Resumable {
+        checkpoint: AgentCheckpoint,
+    },
+}
+
+enum LoadedCheckCache {
+    Complete(Box<CheckResult>),
+    Resumable(AgentCheckpoint),
 }
 
 fn check_cache_key(
@@ -263,8 +295,8 @@ fn load_check_cache(
     model: &str,
     context_usage: Option<LlmUsage>,
     console: Console,
-) -> Option<CheckResult> {
-    let cached = match store.read_json::<CachedCheckResult>(key) {
+) -> Option<LoadedCheckCache> {
+    let cached = match store.read_json::<CachedCheck>(key) {
         Ok(Some(cached)) => cached,
         Ok(None) => return None,
         Err(error) => {
@@ -272,7 +304,17 @@ fn load_check_cache(
             return None;
         }
     };
-    if !cached.findings.iter().all(|finding| {
+    let (summary, findings, iterations) = match cached {
+        CachedCheck::Complete {
+            summary,
+            findings,
+            iterations,
+        } => (summary, findings, iterations),
+        CachedCheck::Resumable { checkpoint } => {
+            return Some(LoadedCheckCache::Resumable(checkpoint));
+        }
+    };
+    if !findings.iter().all(|finding| {
         check
             .expected_commits()
             .iter()
@@ -284,13 +326,13 @@ fn load_check_cache(
         return None;
     }
 
-    Some(CheckResult {
+    Some(LoadedCheckCache::Complete(Box::new(CheckResult {
         check: check.name().to_string(),
         target: check.target(),
         ordered_commits: check.expected_commits().to_vec(),
-        summary: cached.summary,
-        findings: cached.findings,
-        iterations: cached.iterations,
+        summary,
+        findings,
+        iterations,
         error: None,
         context_usage,
         usage: LlmUsage {
@@ -299,18 +341,35 @@ fn load_check_cache(
             cost_usd: 0.0,
             model: model.to_string(),
         },
-    })
+    })))
 }
 
-fn store_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult, console: Console) {
-    if result.error.is_some() {
-        console.debug(format_args!("not caching incomplete check result"));
-        return;
-    }
-    let cached = CachedCheckResult {
-        summary: result.summary.clone(),
-        findings: result.findings.clone(),
-        iterations: result.iterations,
+fn update_check_cache(
+    store: &CacheStore,
+    key: &CacheKey,
+    execution: &CheckExecution,
+    resumed: bool,
+    console: Console,
+) {
+    let cached = match &execution.checkpoint {
+        Some(checkpoint) => CachedCheck::Resumable {
+            checkpoint: checkpoint.clone(),
+        },
+        None if execution.result.error.is_none() => CachedCheck::Complete {
+            summary: execution.result.summary.clone(),
+            findings: execution.result.findings.clone(),
+            iterations: execution.result.iterations,
+        },
+        None if resumed => {
+            if let Err(error) = store.remove(key) {
+                console.debug(format_args!("ignoring check cache remove error: {error:?}"));
+            }
+            return;
+        }
+        None => {
+            console.debug(format_args!("not caching incomplete check result"));
+            return;
+        }
     };
     if let Err(error) = store.write_json(key, &cached) {
         console.debug(format_args!("ignoring check cache write error: {error:?}"));
@@ -320,6 +379,128 @@ fn store_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult, c
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::assert_matches;
+
+    use crate::llm::{CheckError, ConversationTurn};
+
+    fn result(error: Option<CheckError>) -> CheckResult {
+        let commit = CommitHash::new("abc1234").unwrap();
+        CheckResult {
+            check: "size".to_string(),
+            target: CheckTarget::Commit(commit.clone()),
+            ordered_commits: vec![commit],
+            summary: "cached result".to_string(),
+            findings: Vec::new(),
+            iterations: 2,
+            error,
+            context_usage: None,
+            usage: LlmUsage {
+                input_tokens: 1,
+                output_tokens: 1,
+                cost_usd: 1.0,
+                model: "test-model".to_string(),
+            },
+        }
+    }
+
+    #[test]
+    fn cache_update_replaces_a_checkpoint_with_a_complete_result() {
+        let directory = tempfile::tempdir().unwrap();
+        let console = Console::default();
+        let cache_store = CacheStore::new(directory.path(), console);
+        let cache_key =
+            CacheKey::from_params("check-size", "test", "test-model", &"abc1234").unwrap();
+        let checkpoint = AgentCheckpoint {
+            conversation: vec![ConversationTurn::System("Review code.".to_string())],
+            iterations: 1,
+        };
+        update_check_cache(
+            &cache_store,
+            &cache_key,
+            &CheckExecution {
+                result: result(Some(CheckError::Exhausted {
+                    reason: "exhausted".to_string(),
+                })),
+                checkpoint: Some(checkpoint.clone()),
+            },
+            false,
+            console,
+        );
+        let cached = cache_store
+            .read_json::<CachedCheck>(&cache_key)
+            .unwrap()
+            .unwrap();
+        assert_matches!(
+            cached,
+            CachedCheck::Resumable {
+                checkpoint: cached
+            } if cached == checkpoint
+        );
+
+        update_check_cache(
+            &cache_store,
+            &cache_key,
+            &CheckExecution {
+                result: result(None),
+                checkpoint: None,
+            },
+            true,
+            console,
+        );
+        let cached = cache_store
+            .read_json::<CachedCheck>(&cache_key)
+            .unwrap()
+            .unwrap();
+        assert_matches!(
+            cached,
+            CachedCheck::Complete {
+                summary,
+                iterations: 2,
+                ..
+            } if summary == "cached result"
+        );
+    }
+
+    #[test]
+    fn non_resumable_failure_removes_a_loaded_checkpoint() {
+        let directory = tempfile::tempdir().unwrap();
+        let console = Console::default();
+        let cache_store = CacheStore::new(directory.path(), console);
+        let cache_key =
+            CacheKey::from_params("check-size", "test", "test-model", &"abc1234").unwrap();
+        cache_store
+            .write_json(
+                &cache_key,
+                &CachedCheck::Resumable {
+                    checkpoint: AgentCheckpoint {
+                        conversation: Vec::new(),
+                        iterations: 1,
+                    },
+                },
+            )
+            .unwrap();
+
+        update_check_cache(
+            &cache_store,
+            &cache_key,
+            &CheckExecution {
+                result: result(Some(CheckError::Agent {
+                    reason: "permanent failure".to_string(),
+                })),
+                checkpoint: None,
+            },
+            true,
+            console,
+        );
+
+        assert!(
+            cache_store
+                .read_json::<CachedCheck>(&cache_key)
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[tokio::test]
     async fn cached_checks_do_not_require_provider_creation() {
@@ -373,23 +554,35 @@ mod tests {
             console,
         )
         .unwrap();
-        let cached = CheckResult {
-            check: check.name().to_string(),
-            target: check.target(),
-            ordered_commits: check.expected_commits().to_vec(),
-            summary: "cached result".to_string(),
-            findings: Vec::new(),
-            iterations: 1,
-            error: None,
-            context_usage: None,
-            usage: LlmUsage {
-                input_tokens: 1,
-                output_tokens: 1,
-                cost_usd: 1.0,
-                model: model_name.clone(),
-            },
+        let checkpoint = AgentCheckpoint {
+            conversation: vec![ConversationTurn::System("cached prompt".to_string())],
+            iterations: 2,
         };
-        store_check_cache(&cache_store, &cache_key, &cached, console);
+        cache_store
+            .write_json(
+                &cache_key,
+                &CachedCheck::Resumable {
+                    checkpoint: checkpoint.clone(),
+                },
+            )
+            .unwrap();
+        let Some(LoadedCheckCache::Resumable(loaded)) =
+            load_check_cache(&cache_store, &cache_key, &check, &model_name, None, console)
+        else {
+            panic!("expected resumable check cache");
+        };
+        assert_eq!(loaded, checkpoint);
+
+        cache_store
+            .write_json(
+                &cache_key,
+                &CachedCheck::Complete {
+                    summary: "cached result".to_string(),
+                    findings: Vec::new(),
+                    iterations: 1,
+                },
+            )
+            .unwrap();
 
         let result = handler(
             console,

@@ -8,7 +8,9 @@ use serde::de::DeserializeOwned;
 
 use crate::console::Console;
 
-use super::{CacheKey, CachePruneError, CacheReadError, CacheVersion, CacheWriteError};
+use super::{
+    CacheKey, CachePruneError, CacheReadError, CacheRemoveError, CacheVersion, CacheWriteError,
+};
 
 static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
@@ -125,6 +127,23 @@ impl CacheStore {
         self.console
             .debug(format_args!("cache write: {}", path.display()));
         Ok(())
+    }
+
+    pub fn remove(&self, key: &CacheKey) -> Result<(), CacheRemoveError> {
+        let path = self.path_for(key);
+        match std::fs::remove_file(&path) {
+            Ok(()) => {
+                self.console
+                    .debug(format_args!("cache remove: {}", path.display()));
+                Ok(())
+            }
+            Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(source) => {
+                self.console
+                    .debug(format_args!("cannot remove {}: {source:?}", path.display()));
+                Err(CacheRemoveError { path, source })
+            }
+        }
     }
 
     pub fn prune(&self, all: bool) -> Result<usize, CachePruneError> {
@@ -340,6 +359,25 @@ mod tests {
         let store = CacheStore::new(directory.path(), Console::default());
 
         assert_eq!(store.read_json::<Value>(&key("missing")).unwrap(), None);
+    }
+
+    #[test]
+    fn removes_a_single_cache_value() {
+        let directory = tempfile::tempdir().unwrap();
+        let store = CacheStore::new(directory.path(), Console::default());
+        let key = key("key");
+        store
+            .write_json(
+                &key,
+                &Value {
+                    value: "cached".to_string(),
+                },
+            )
+            .unwrap();
+
+        store.remove(&key).unwrap();
+        assert_eq!(store.read_json::<Value>(&key).unwrap(), None);
+        store.remove(&key).unwrap();
     }
 
     #[test]
