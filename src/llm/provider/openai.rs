@@ -362,7 +362,7 @@ mod tests {
 
     fn provider() -> OpenAiProvider {
         OpenAiProvider::new(
-            Secret::new("test-api-key".to_string()),
+            Secret::from_env_with("TEST_API_KEY", |_| Ok("test-api-key".to_string())).unwrap(),
             Some("https://openai.example.test/"),
         )
     }

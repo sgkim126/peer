@@ -14,13 +14,16 @@ pub enum SecretError {
 }
 
 impl Secret {
-    pub fn new(value: String) -> Self {
-        Self(value)
+    pub fn from_env(name: &str) -> Result<Self, SecretError> {
+        Self::from_env_with(name, |name| std::env::var(name))
     }
 
-    pub fn from_env(name: &str) -> Result<Self, SecretError> {
-        match std::env::var(name) {
-            Ok(value) if !value.is_empty() => Ok(Self::new(value)),
+    pub fn from_env_with(
+        name: &str,
+        get: impl FnOnce(&str) -> Result<String, std::env::VarError>,
+    ) -> Result<Self, SecretError> {
+        match get(name) {
+            Ok(value) if !value.is_empty() => Ok(Self(value)),
             Ok(_) => Err(SecretError::MissingEnv {
                 name: name.to_string(),
             }),
@@ -76,9 +79,16 @@ impl std::error::Error for SecretError {}
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    use std::ffi::OsString;
+
+    #[cfg(unix)]
+    use std::os::unix::ffi::OsStringExt;
+
     #[test]
     fn debug_redacts_secret() {
-        let secret = Secret::new("secret-value".to_owned());
+        let secret =
+            Secret::from_env_with("TEST_SECRET", |_| Ok("secret-value".to_owned())).unwrap();
 
         assert_eq!(format!("{secret:?}"), "<******>");
     }
@@ -88,8 +98,47 @@ mod tests {
         let name = "PEER_TEST_MISSING_SECRET_7E3B8F91A2C4";
 
         assert_eq!(
-            Secret::from_env(name).unwrap_err(),
+            Secret::from_env_with(name, |_| Err(std::env::VarError::NotPresent)).unwrap_err(),
             SecretError::MissingEnv {
+                name: name.to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn from_env_fails_when_empty() {
+        let name = "PEER_TEST_EMPTY_SECRET_7E3B8F91A2C4";
+
+        assert_eq!(
+            Secret::from_env_with(name, |_| Ok(String::new())).unwrap_err(),
+            SecretError::MissingEnv {
+                name: name.to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn from_env_succeeds_when_set() {
+        let name = "PEER_TEST_PRESENT_SECRET_7E3B8F91A2C4";
+
+        let secret = Secret::from_env_with(name, |_| Ok("my-api-key".to_owned())).unwrap();
+
+        assert_eq!(secret.expose_secret(), "my-api-key");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn from_env_fails_when_value_is_not_unicode() {
+        let name = "PEER_TEST_NON_UNICODE_SECRET_7E3B8F91A2C4";
+
+        assert_eq!(
+            Secret::from_env_with(name, |_| {
+                Err(std::env::VarError::NotUnicode(OsString::from_vec(vec![
+                    0xff,
+                ])))
+            })
+            .unwrap_err(),
+            SecretError::NonUnicodeEnv {
                 name: name.to_owned()
             }
         );

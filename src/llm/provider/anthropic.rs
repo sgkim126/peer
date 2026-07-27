@@ -314,7 +314,7 @@ mod tests {
 
     fn provider() -> AnthropicProvider {
         AnthropicProvider::new(
-            Secret::new("test-api-key".to_string()),
+            Secret::from_env_with("TEST_API_KEY", |_| Ok("test-api-key".to_string())).unwrap(),
             Some("https://anthropic.example.test/"),
         )
     }

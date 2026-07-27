@@ -346,7 +346,7 @@ mod tests {
 
     fn provider() -> GeminiProvider {
         GeminiProvider::new(
-            Secret::new("test-api-key".to_string()),
+            Secret::from_env_with("TEST_API_KEY", |_| Ok("test-api-key".to_string())).unwrap(),
             Some("https://gemini.example.test/"),
         )
     }
