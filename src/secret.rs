@@ -4,7 +4,7 @@ use std::fmt;
 ///
 /// This does not erase copies made elsewhere, such as cloned values, prior
 /// allocations, logs, or serialized output.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub struct Secret(String);
 
 #[derive(Debug, PartialEq, Eq)]
@@ -88,10 +88,10 @@ mod tests {
         let name = "PEER_TEST_MISSING_SECRET_7E3B8F91A2C4";
 
         assert_eq!(
-            Secret::from_env(name),
-            Err(SecretError::MissingEnv {
+            Secret::from_env(name).unwrap_err(),
+            SecretError::MissingEnv {
                 name: name.to_owned()
-            })
+            }
         );
     }
 }

@@ -13,7 +13,7 @@ use super::{
 const DEFAULT_BASE_URL: &str = "https://generativelanguage.googleapis.com";
 const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-goog-api-key");
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct GeminiProvider {
     api_key: Secret,
     base_url: String,

@@ -12,7 +12,7 @@ use super::{
 
 const DEFAULT_BASE_URL: &str = "https://api.mistral.ai";
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct MistralProvider {
     api_key: Secret,
     base_url: String,
