@@ -279,18 +279,21 @@ jobs:
         if: always() && steps.placeholder.outputs.comment-id != ''
         uses: actions/github-script@v9
         env:
-          REVIEW_METADATA: ${{ steps.placeholder.outputs.check-metadata }}
+          REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
+          REVIEW_CHECK_METADATA: ${{ steps.placeholder.outputs.check-metadata }}
         with:
           script: |
             const fs = require('fs');
-            const metadata = process.env.REVIEW_METADATA;
+            const exitCode = '${{ steps.peer.outputs.exit-code }}';
+            const metadata = exitCode === '0'
+              ? process.env.REVIEW_CHECK_METADATA
+              : process.env.REVIEW_METADATA;
             const commentMetadata = [
               metadata,
               `Triggered by @${context.actor}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].filter(Boolean).join('\n');
             const stdoutPath = '${{ steps.peer.outputs.stdout-path }}';
-            const exitCode = '${{ steps.peer.outputs.exit-code }}';
             let output = '';
             if (stdoutPath) {
               try {
