@@ -250,6 +250,19 @@ fn parse_and_validate(content: &str, config_path: &Path) -> Result<Config, PeerE
                     provider.name, model.name
                 )));
             }
+
+            for (field, value) in [
+                ("input_per_1m_usd", model.input_per_1m_usd),
+                ("output_per_1m_usd", model.output_per_1m_usd),
+            ] {
+                if !value.is_finite() || value < 0.0 {
+                    return Err(PeerError::invalid_config(format!(
+                        "provider '{}' model '{}' has invalid {field} value {value}: \
+                         expected a finite, non-negative number",
+                        provider.name, model.name
+                    )));
+                }
+            }
         }
 
         if !provider
@@ -488,6 +501,56 @@ models = [
             error.to_string(),
             "provider 'duplicate-model-test' configures model 'same-model' more than once"
         );
+    }
+
+    #[test]
+    fn fails_when_a_model_price_is_negative_or_non_finite() {
+        let invalid_prices = [
+            (
+                "input_per_1m_usd = 0.5",
+                "input_per_1m_usd = -0.1",
+                "input_per_1m_usd",
+            ),
+            (
+                "output_per_1m_usd = 1.5",
+                "output_per_1m_usd = -0.1",
+                "output_per_1m_usd",
+            ),
+            (
+                "input_per_1m_usd = 0.5",
+                "input_per_1m_usd = nan",
+                "input_per_1m_usd",
+            ),
+            (
+                "input_per_1m_usd = 0.5",
+                "input_per_1m_usd = inf",
+                "input_per_1m_usd",
+            ),
+            (
+                "input_per_1m_usd = 0.5",
+                "input_per_1m_usd = -inf",
+                "input_per_1m_usd",
+            ),
+        ];
+
+        for (original, replacement, field) in invalid_prices {
+            let content = DEFAULT_CONFIG_TOML.replacen(original, replacement, 1);
+            let error = parse_and_validate(&content, Path::new("config.toml")).unwrap_err();
+            let message = error.to_string();
+
+            assert!(message.contains("provider 'mistral' model 'mistral-large-2512'"));
+            assert!(message.contains(field));
+            assert!(message.contains("expected a finite, non-negative number"));
+        }
+    }
+
+    #[test]
+    fn accepts_zero_model_prices() {
+        let content = DEFAULT_CONFIG_TOML
+            .replacen("input_per_1m_usd = 0.5", "input_per_1m_usd = 0.0", 1)
+            .replacen("output_per_1m_usd = 1.5", "output_per_1m_usd = 0.0", 1);
+
+        parse_and_validate(&content, Path::new("config.toml")).unwrap();
     }
 
     #[test]
