@@ -4,7 +4,6 @@ use std::fmt;
 ///
 /// This does not erase copies made elsewhere, such as cloned values, prior
 /// allocations, logs, or serialized output.
-#[derive(Clone)]
 pub struct Secret(String);
 
 #[derive(Debug, PartialEq, Eq)]

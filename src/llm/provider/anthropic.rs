@@ -16,7 +16,7 @@ const ANTHROPIC_VERSION: &str = "2023-06-01";
 const API_KEY_HEADER: HeaderName = HeaderName::from_static("x-api-key");
 const VERSION_HEADER: HeaderName = HeaderName::from_static("anthropic-version");
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct AnthropicProvider {
     api_key: Secret,
     base_url: String,

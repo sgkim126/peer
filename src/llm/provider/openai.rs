@@ -12,7 +12,7 @@ use super::{
 
 const DEFAULT_BASE_URL: &str = "https://api.openai.com";
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct OpenAiProvider {
     api_key: Secret,
     base_url: String,
