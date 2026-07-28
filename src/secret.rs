@@ -42,10 +42,12 @@ impl Secret {
 
 impl Drop for Secret {
     fn drop(&mut self) {
-        // `String` is valid UTF-8 before this operation, and a sequence of NUL
-        // bytes is valid UTF-8 afterwards.
+        // SAFETY: The mutable borrow is exclusive, and every byte is replaced
+        // with NUL before the borrow ends, leaving the `String` as valid UTF-8.
         let bytes = unsafe { self.0.as_mut_vec() };
         for byte in bytes {
+            // SAFETY: `byte` comes from an exclusive mutable reference to the
+            // initialized `String` buffer, so it is valid, aligned, and writable.
             unsafe { std::ptr::write_volatile(byte, 0) };
         }
 
