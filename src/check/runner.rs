@@ -235,6 +235,16 @@ fn parse_clarification_questions(arguments: serde_json::Value) -> Result<Vec<Str
             "invalid request_clarification arguments: questions must not be empty".to_string(),
         );
     }
+    if arguments
+        .questions
+        .iter()
+        .any(|question| question.trim().is_empty())
+    {
+        return Err(
+            "invalid request_clarification arguments: questions must not contain blank values"
+                .to_string(),
+        );
+    }
     Ok(arguments.questions)
 }
 
@@ -293,5 +303,15 @@ mod tests {
             parse_clarification_questions(json!({ "questions": [] })).unwrap_err(),
             "invalid request_clarification arguments: questions must not be empty"
         );
+    }
+
+    #[test]
+    fn rejects_blank_clarification_questions() {
+        for question in ["", " \t\n"] {
+            assert_eq!(
+                parse_clarification_questions(json!({ "questions": [question] })).unwrap_err(),
+                "invalid request_clarification arguments: questions must not contain blank values"
+            );
+        }
     }
 }

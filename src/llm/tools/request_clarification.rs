@@ -12,7 +12,8 @@ pub fn request_clarification() -> ToolSpec {
                 "questions": {
                     "type": "array",
                     "items": {
-                        "type": "string"
+                        "type": "string",
+                        "minLength": 1
                     },
                     "minItems": 1,
                     "description": "Questions for the user. Each question must explain why the missing information is needed."
@@ -36,7 +37,7 @@ mod tests {
     }
 
     #[test]
-    fn requires_at_least_one_string_question() {
+    fn requires_at_least_one_non_empty_string_question() {
         let tool = request_clarification();
 
         assert_eq!(tool.parameters["required"], json!(["questions"]));
@@ -45,6 +46,10 @@ mod tests {
         assert_eq!(
             tool.parameters["properties"]["questions"]["items"]["type"],
             "string"
+        );
+        assert_eq!(
+            tool.parameters["properties"]["questions"]["items"]["minLength"],
+            1
         );
     }
 }
