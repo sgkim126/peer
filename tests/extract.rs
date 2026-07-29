@@ -282,7 +282,7 @@ fn list_tree_returns_entries_at_the_requested_revision() {
         "add source tree",
     );
 
-    let json = repo.extract(&["list-tree", "HEAD", "--path", "src", "--recursive"]);
+    let json = repo.extract(&["list-tree", "HEAD", "--path", "src///", "--recursive"]);
 
     assert_eq!(
         json,
