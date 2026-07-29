@@ -8,7 +8,6 @@ mod file_diff;
 mod grep;
 mod list_tree;
 
-use std::fmt::Arguments;
 use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -39,10 +38,6 @@ impl Extractor {
             project_root,
             console,
         }
-    }
-
-    pub fn debug(&self, message: Arguments<'_>) {
-        self.console.debug(message);
     }
 }
 

@@ -21,7 +21,7 @@ impl Extractor {
         to_revision: &str,
         path: &Path,
     ) -> Result<FileDiff, ExtractError> {
-        self.debug(format_args!(
+        self.console.debug(format_args!(
             "extract file diff: {from_revision}..{to_revision} {}",
             path.display()
         ));
