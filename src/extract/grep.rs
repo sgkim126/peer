@@ -33,7 +33,10 @@ impl Extractor {
         }
         let context_lines = context_lines.get().to_string();
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
-        let path = path.map(Path::to_string_lossy);
+        let path = path.map(|path| {
+            path.to_str()
+                .expect("repository-relative path was validated as UTF-8")
+        });
         let mut args: Vec<&str> = vec![
             "--literal-pathspecs",
             "grep",
@@ -46,7 +49,7 @@ impl Extractor {
             hash.as_ref(),
         ];
 
-        if let Some(path) = path.as_deref() {
+        if let Some(path) = path {
             args.push("--");
             args.push(path);
         }

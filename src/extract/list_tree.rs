@@ -48,7 +48,13 @@ impl Extractor {
             .filter(|path| !path.as_os_str().is_empty())
             .map_or_else(
                 || hash.to_string(),
-                |path| format!("{hash}:{}", path.to_string_lossy()),
+                |path| {
+                    format!(
+                        "{hash}:{}",
+                        path.to_str()
+                            .expect("repository-relative path was validated as UTF-8")
+                    )
+                },
             );
         let args = if recursive {
             vec!["ls-tree", "-rz", "-t", &treeish]
@@ -108,7 +114,13 @@ fn parse_tree_listing(
 
         let path = normalized_path.map_or_else(
             || path.to_string(),
-            |prefix| prefix.join(path).to_string_lossy().into_owned(),
+            |prefix| {
+                prefix
+                    .join(path)
+                    .to_str()
+                    .expect("repository-relative path was validated as UTF-8")
+                    .to_owned()
+            },
         );
         let entry = TreeEntry { path, kind };
         if entries.len() < MAX_TREE_ENTRIES {

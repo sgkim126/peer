@@ -115,6 +115,7 @@ pub async fn handler(
 
 fn validate_repository_relative_path(path: &Path) -> Result<(), ExtractError> {
     if path.as_os_str().is_empty()
+        || path.to_str().is_none()
         || path.is_absolute()
         || path
             .components()
@@ -126,4 +127,28 @@ fn validate_repository_relative_path(path: &Path) -> Result<(), ExtractError> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_non_utf8_path() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let path = PathBuf::from(OsString::from_vec(b"invalid-\xff.txt".to_vec()));
+        let error = validate_repository_relative_path(&path).unwrap_err();
+
+        assert!(matches!(
+            &error,
+            ExtractError::InvalidRepositoryRelativePath(_)
+        ));
+        assert_eq!(
+            error.to_string(),
+            "repository-relative path must be valid UTF-8"
+        );
+    }
 }

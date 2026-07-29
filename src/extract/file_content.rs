@@ -85,8 +85,10 @@ impl Extractor {
         ));
         validate_repository_relative_path(path)?;
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
-        // TODO: Normalize Windows path separators to `/` for Git tree paths.
-        let path = path.to_string_lossy().into_owned();
+        let path = path
+            .to_str()
+            .expect("repository-relative path was validated as UTF-8")
+            .to_owned();
         let treeish = format!("{hash}:{path}");
 
         let bytes = run_git_bytes(&["show", &treeish], &self.project_root, self.console).await?;
