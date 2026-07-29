@@ -130,17 +130,7 @@ impl ProviderHttpClient {
                         return Err(error.into());
                     }
 
-                    let RetryAt::At(retry_at) =
-                        retry_at(&reqwest::header::HeaderMap::new(), attempt)
-                    else {
-                        return Err(LlmCallError::Permanent {
-                            message: format!(
-                                "internal {} HTTP retry error: {error}",
-                                self.provider_name
-                            ),
-                            source: Box::new(ProviderHttpError::MissingRetryDelay { attempt }),
-                        });
-                    };
+                    let retry_at = Instant::now() + exponential_backoff_delay(attempt);
                     self.console.debug(format_args!(
                         "[{}] {} transport error retrying in {:.1}s (attempt {}/{}): {}",
                         self.provider_name,
@@ -257,19 +247,20 @@ fn retry_at(headers: &reqwest::header::HeaderMap, attempt: u32) -> RetryAt {
         };
     }
 
+    RetryAt::At(now + exponential_backoff_delay(attempt))
+}
+
+fn exponential_backoff_delay(attempt: u32) -> Duration {
     let multiplier = 1_u32
         .checked_shl(attempt.saturating_sub(1))
         .unwrap_or(u32::MAX);
-    RetryAt::At(
-        now + BASE_RETRY_DELAY
-            .saturating_mul(multiplier)
-            .min(MAX_RETRY_DELAY),
-    )
+    BASE_RETRY_DELAY
+        .saturating_mul(multiplier)
+        .min(MAX_RETRY_DELAY)
 }
 
 #[derive(Debug)]
 enum ProviderHttpError {
-    MissingRetryDelay { attempt: u32 },
     RetryLoopExited,
     UncloneableRequest,
 }
@@ -277,9 +268,6 @@ enum ProviderHttpError {
 impl std::fmt::Display for ProviderHttpError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::MissingRetryDelay { attempt } => {
-                write!(f, "missing retry delay for attempt {attempt}")
-            }
             Self::RetryLoopExited => f.write_str("retry loop exited without a response or error"),
             Self::UncloneableRequest => f.write_str("request body cannot be replayed"),
         }
@@ -473,5 +461,12 @@ mod tests {
             panic!("missing second retry time");
         };
         assert!(second_retry_at.saturating_duration_since(now) >= Duration::from_secs(2));
+    }
+
+    #[test]
+    fn calculates_exponential_backoff_delay() {
+        assert_eq!(exponential_backoff_delay(1), Duration::from_secs(1));
+        assert_eq!(exponential_backoff_delay(2), Duration::from_secs(2));
+        assert_eq!(exponential_backoff_delay(6), MAX_RETRY_DELAY);
     }
 }
