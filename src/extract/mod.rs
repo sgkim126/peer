@@ -114,7 +114,8 @@ pub async fn handler(
 }
 
 fn validate_repository_relative_path(path: &Path) -> Result<(), ExtractError> {
-    if path.is_absolute()
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
         || path
             .components()
             .any(|component| matches!(component, Component::ParentDir))

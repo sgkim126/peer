@@ -76,11 +76,23 @@ mod tests {
     use crate::console::Console;
 
     #[test]
-    fn rejects_absolute_and_parent_paths() {
+    fn rejects_empty_path() {
+        assert_matches!(
+            validate_repository_relative_path(Path::new("")),
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("/tmp/file.rs")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))
         );
+    }
+
+    #[test]
+    fn rejects_parent_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("src/../file.rs")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))

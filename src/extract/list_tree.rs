@@ -180,11 +180,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_absolute_and_parent_paths() {
+    fn rejects_empty_path() {
+        assert_matches!(
+            validate_repository_relative_path(Path::new("")),
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("/tmp")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))
         );
+    }
+
+    #[test]
+    fn rejects_parent_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("src/../secret")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))

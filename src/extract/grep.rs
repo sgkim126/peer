@@ -104,17 +104,33 @@ mod tests {
     use crate::console::Console;
 
     #[test]
-    fn validates_arguments() {
+    fn rejects_empty_query() {
         assert_matches!(
             validate_grep_arguments("", NonZeroU8::new(1).unwrap()),
             Err(ExtractError::InvalidGrepArguments(_))
         );
+    }
+
+    #[test]
+    fn rejects_too_many_lines() {
         assert_matches!(
             validate_grep_arguments("query", NonZeroU8::new(11).unwrap()),
             Err(ExtractError::InvalidGrepArguments(_))
         );
+    }
+
+    #[test]
+    fn rejects_parent_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("../secret")),
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
+    }
+
+    #[test]
+    fn rejects_empty_path() {
+        assert_matches!(
+            validate_repository_relative_path(Path::new("")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))
         );
     }
