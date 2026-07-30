@@ -123,18 +123,22 @@ fn select_line_range(
         return Ok((content, None));
     };
 
-    let lines = content.split_inclusive('\n').collect::<Vec<_>>();
-    let start_index = (line_range.start_line - 1) as usize;
-    if start_index >= lines.len() {
+    let selected_lines = content
+        .split_inclusive('\n')
+        .take(line_range.end_line as usize)
+        .skip((line_range.start_line - 1) as usize)
+        .collect::<Vec<_>>();
+    let selected_line_count = selected_lines.len() as u32;
+    let content = selected_lines.concat();
+
+    if selected_line_count == 0 {
         return Err(ExtractError::InvalidFileContentRange(format!(
             "start_line {} is beyond the end of the file",
             line_range.start_line
         )));
     }
 
-    let end_line = line_range.end_line.min(lines.len() as u32);
-    let end_index = (end_line - 1) as usize;
-    let content = lines[start_index..=end_index].concat();
+    let end_line = line_range.start_line + selected_line_count - 1;
     Ok((
         content,
         Some(FileContentRange {
@@ -208,6 +212,43 @@ mod tests {
 
         assert_eq!(content.as_ptr(), original_ptr);
         assert_eq!(range, None);
+    }
+
+    #[test]
+    fn select_line_range_returns_exact_range() {
+        let (content, range) = select_line_range(
+            "one\ntwo\nthree\nfour\n".to_string(),
+            Some(FileContentRange::new(2, 3).unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(content, "two\nthree\n");
+        assert_eq!(range, Some(FileContentRange::new(2, 3).unwrap()));
+    }
+
+    #[test]
+    fn select_line_range_clamps_to_unterminated_last_line() {
+        let (content, range) = select_line_range(
+            "one\ntwo\nthree".to_string(),
+            Some(FileContentRange::new(2, 10).unwrap()),
+        )
+        .unwrap();
+
+        assert_eq!(content, "two\nthree");
+        assert_eq!(range, Some(FileContentRange::new(2, 3).unwrap()));
+    }
+
+    #[test]
+    fn select_line_range_rejects_start_beyond_end_of_file() {
+        for content in ["", "one\n"] {
+            let error = select_line_range(
+                content.to_string(),
+                Some(FileContentRange::new(2, 2).unwrap()),
+            )
+            .unwrap_err();
+
+            assert_matches!(error, ExtractError::InvalidFileContentRange(_));
+        }
     }
 
     #[tokio::test]
