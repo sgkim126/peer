@@ -40,7 +40,16 @@ impl fmt::Display for CheckRunError {
         }
     }
 }
-impl std::error::Error for CheckRunError {}
+impl std::error::Error for CheckRunError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Preparation(error) => Some(error),
+            Self::LlmCall(error) => Some(error),
+            Self::InvalidOutput(_) => None,
+            Self::ClarificationRequested(_) => None,
+        }
+    }
+}
 
 pub struct Checker {
     extractor: Extractor,
