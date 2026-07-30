@@ -174,7 +174,13 @@ pub fn discover_peer_root(from: &Path) -> Result<PathBuf, PeerError> {
                     config_path.display()
                 )));
             }
-            Ok(_) => return Ok(dir.to_path_buf()),
+            Ok(metadata) if metadata.file_type().is_file() => return Ok(dir.to_path_buf()),
+            Ok(_) => {
+                return Err(PeerError::invalid_config(format!(
+                    "{} is not a regular file",
+                    config_path.display()
+                )));
+            }
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => {
                 return Err(PeerError::InvalidConfig {
@@ -344,6 +350,28 @@ mod tests {
         assert!(error.to_string().contains("is a symbolic link"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_fifo_config_file() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let peer = tmp.path().join(".peer");
+        let config = peer.join("config.toml");
+        fs::create_dir(&peer).unwrap();
+        assert!(
+            Command::new("mkfifo")
+                .arg(&config)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let error = discover_peer_root(tmp.path()).unwrap_err();
+
+        assert!(error.to_string().contains("is not a regular file"));
+    }
+
     #[test]
     fn fails_when_config_not_found() {
         let tmp = tempfile::tempdir().unwrap();
@@ -394,7 +422,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join(".peer/config.toml")).unwrap();
 
-        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
+        let error = discover(tmp.path()).unwrap_err();
+
+        assert!(error.to_string().contains("is not a regular file"));
     }
 
     #[test]
