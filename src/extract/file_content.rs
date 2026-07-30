@@ -105,7 +105,7 @@ impl Extractor {
         }
 
         let content = String::from_utf8(bytes).map_err(GitError::FromUtf8)?;
-        let (content, range) = select_line_range(&content, line_range)?;
+        let (content, range) = select_line_range(content, line_range)?;
         Ok(FileContent::Text {
             path,
             hash,
@@ -116,11 +116,11 @@ impl Extractor {
 }
 
 fn select_line_range(
-    content: &str,
+    content: String,
     line_range: Option<FileContentRange>,
 ) -> Result<(String, Option<FileContentRange>), ExtractError> {
     let Some(line_range) = line_range else {
-        return Ok((content.to_string(), None));
+        return Ok((content, None));
     };
 
     let lines = content.split_inclusive('\n').collect::<Vec<_>>();
@@ -197,6 +197,17 @@ mod tests {
                 .unwrap();
             CommitHash::new(raw.trim()).unwrap()
         }
+    }
+
+    #[test]
+    fn select_line_range_reuses_content_without_range() {
+        let content = "one\ntwo\n".to_string();
+        let original_ptr = content.as_ptr();
+
+        let (content, range) = select_line_range(content, None).unwrap();
+
+        assert_eq!(content.as_ptr(), original_ptr);
+        assert_eq!(range, None);
     }
 
     #[tokio::test]
