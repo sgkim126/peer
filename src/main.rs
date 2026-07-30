@@ -138,7 +138,14 @@ async fn main() -> ExitCode {
                 console.debug(format_args!("{error:?}"));
                 return ExitCode::FAILURE;
             }
-            let target = match review::resolve_target(&target, &project_root, console).await {
+            let target = match review::resolve_target(
+                &target,
+                config.review.max_commits.get(),
+                &project_root,
+                console,
+            )
+            .await
+            {
                 Ok(target) => target,
                 Err(error) => {
                     eprintln!("error: {error}");

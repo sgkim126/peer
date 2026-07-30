@@ -218,6 +218,7 @@ impl std::error::Error for ReviewCheckError {
 
 pub async fn resolve_target(
     target: &str,
+    max_commits: u32,
     project_root: &Path,
     console: Console,
 ) -> Result<ReviewTarget, ReviewTargetError> {
@@ -242,12 +243,30 @@ pub async fn resolve_target(
     let from = CommitHash::resolve(from, project_root, console).await?;
     let to = CommitHash::resolve(to, project_root, console).await?;
     let revision = format!("{from}..{to}");
-    let output = run_git(&["rev-list", "--reverse", &revision], project_root, console).await?;
+    let commit_limit = u64::from(max_commits) + 1;
+    let output = run_git(
+        &[
+            "rev-list",
+            "--reverse",
+            "--max-count",
+            &format!("{commit_limit}"),
+            &revision,
+        ],
+        project_root,
+        console,
+    )
+    .await?;
     let commits = output
         .lines()
         .filter(|line| !line.is_empty())
         .map(CommitHash::new)
         .collect::<Result<Vec<_>, _>>()?;
+    if commits.len() > max_commits as usize {
+        return Err(ReviewTargetError::TooManyCommits {
+            actual: commits.len(),
+            maximum: max_commits,
+        });
+    }
     if commits.is_empty() {
         return Err(ReviewTargetError::EmptyRange(target.to_string()));
     }
@@ -411,7 +430,7 @@ impl fmt::Display for ReviewTargetError {
             Self::TooManyCommits { actual, maximum } => {
                 write!(
                     f,
-                    "review target contains {actual} commits (max: {maximum})"
+                    "review target contains at least {actual} commits (max: {maximum})"
                 )
             }
             Self::MergeCommit(commit) => write!(f, "review target contains merge commit {commit}"),
@@ -539,7 +558,7 @@ mod tests {
         let target = format!("{base}..HEAD");
 
         assert_eq!(
-            resolve_target(&target, &repo.path, Console::default())
+            resolve_target(&target, 10, &repo.path, Console::default())
                 .await
                 .unwrap(),
             ReviewTarget::Range {
@@ -556,12 +575,29 @@ mod tests {
         repo.commit("a.txt", "first").await;
 
         assert_matches!(
-            resolve_target("HEAD...HEAD", &repo.path, Console::default()).await,
+            resolve_target("HEAD...HEAD", 10, &repo.path, Console::default()).await,
             Err(ReviewTargetError::InvalidRange(_))
         );
         assert_matches!(
-            resolve_target("HEAD..HEAD", &repo.path, Console::default()).await,
+            resolve_target("HEAD..HEAD", 10, &repo.path, Console::default()).await,
             Err(ReviewTargetError::EmptyRange(_))
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_oversized_ranges_while_resolving() {
+        let repo = Repo::new().await;
+        let base = repo.commit("a.txt", "first").await;
+        repo.commit("b.txt", "second").await;
+        repo.commit("c.txt", "third").await;
+        let target = format!("{base}..HEAD");
+
+        assert_matches!(
+            resolve_target(&target, 1, &repo.path, Console::default()).await,
+            Err(ReviewTargetError::TooManyCommits {
+                actual: 2,
+                maximum: 1
+            })
         );
     }
 
