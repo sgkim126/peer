@@ -79,7 +79,7 @@ impl Extractor {
         path: &Path,
         line_range: Option<FileContentRange>,
     ) -> Result<FileContent, ExtractError> {
-        self.debug(format_args!(
+        self.console.debug(format_args!(
             "extract file content: {revision} {}",
             path.display()
         ));

@@ -14,7 +14,8 @@ pub struct CommitList {
 
 impl Extractor {
     pub async fn commit_list(&self, range: &str) -> Result<CommitList, ExtractError> {
-        self.debug(format_args!("extract commit list: {range}"));
+        self.console
+            .debug(format_args!("extract commit list: {range}"));
         if range.contains("...") || !range.contains("..") {
             return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
         }
