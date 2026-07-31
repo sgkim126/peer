@@ -368,13 +368,10 @@ pub async fn run(
         ordered_commits,
         review_head,
     } = plan;
-    let (provider, model) = config
-        .resolve_provider(None, None)
-        .expect("validated config must resolve its default provider and model");
     let summary = ReviewSummary {
         peer_version: env!("CARGO_PKG_VERSION").to_string(),
-        provider: provider.name.clone(),
-        model: model.name.clone(),
+        provider: config.llm.default_provider.clone(),
+        model: config.llm.default_model.clone(),
     };
     let mut checks = Vec::with_capacity(planned_checks.len());
     let mut errors = Vec::new();

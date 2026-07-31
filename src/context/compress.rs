@@ -5,7 +5,6 @@ use serde::Deserialize;
 use crate::cache::{CacheKey, CacheKeyError, CacheStore};
 use crate::config::Config;
 use crate::console::Console;
-use crate::error::PeerError;
 use crate::llm::LlmUsage;
 use crate::pi::{
     ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig,
@@ -54,21 +53,18 @@ pub async fn compress_review_context(
         });
     }
 
-    let (provider_config, model_config) = config.resolve_provider(None, None)?;
-    let cache_key = match CacheKey::from_params(
-        CONTEXT_CACHE_NAMESPACE,
-        &provider_config.name,
-        &model_config.name,
-        context,
-    ) {
-        Ok(key) => Some(key),
-        Err(error) => {
-            console.debug(format_args!(
-                "cannot build review context cache key: {error:?}"
-            ));
-            None
-        }
-    };
+    let provider = &config.llm.default_provider;
+    let model_name = &config.llm.default_model;
+    let cache_key =
+        match CacheKey::from_params(CONTEXT_CACHE_NAMESPACE, provider, model_name, context) {
+            Ok(key) => Some(key),
+            Err(error) => {
+                console.debug(format_args!(
+                    "cannot build review context cache key: {error:?}"
+                ));
+                None
+            }
+        };
     if let Some(key) = &cache_key {
         match cache.read_json::<ReviewContextDigest>(key) {
             Ok(Some(digest)) => match digest.validate(context) {
@@ -93,11 +89,11 @@ pub async fn compress_review_context(
     let (run_config, prompt) = compression_request(context);
     let session_key = CacheKey::from_params(
         "pi-session-review-context-digest",
-        &provider_config.name,
-        &model_config.name,
+        provider,
+        model_name,
         context,
     )?;
-    let model = ModelRef::try_new(provider_config.name.as_str(), model_config.name.as_str())?;
+    let model = ModelRef::try_new(provider.as_str(), model_name.as_str())?;
     let result = runtime
         .run(PiRunRequest {
             session_key,
@@ -147,7 +143,6 @@ fn compression_request(context: &ReviewContext) -> (RunConfig, String) {
 
 #[derive(Debug)]
 pub enum ContextCompressionError {
-    Config(PeerError),
     CacheKey(CacheKeyError),
     InvalidModel(ModelRefError),
     Pi(PiRunError),
@@ -173,7 +168,6 @@ impl ContextCompressionError {
 impl fmt::Display for ContextCompressionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Config(source) => source.fmt(f),
             Self::CacheKey(source) => write!(f, "cannot build Pi session cache key: {source}"),
             Self::InvalidModel(source) => write!(f, "invalid Pi model: {source}"),
             Self::Pi(source) => write!(f, "failed to compress review context: {source}"),
@@ -190,19 +184,12 @@ impl fmt::Display for ContextCompressionError {
 impl std::error::Error for ContextCompressionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Config(source) => Some(source),
             Self::CacheKey(source) => Some(source),
             Self::InvalidModel(source) => Some(source),
             Self::Pi(source) => Some(source),
             Self::InvalidOutcome { source, .. } => Some(source),
             Self::InvalidDigest { source, .. } => Some(source),
         }
-    }
-}
-
-impl From<PeerError> for ContextCompressionError {
-    fn from(error: PeerError) -> Self {
-        Self::Config(error)
     }
 }
 
@@ -292,18 +279,14 @@ mod tests {
     #[tokio::test]
     async fn uses_cache_without_starting_pi() {
         let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
-        let (provider_name, model_name) = {
-            let (provider, model) = config.resolve_provider(None, None).unwrap();
-            (provider.name.clone(), model.name.clone())
-        };
         let directory = tempfile::tempdir().unwrap();
         let cache = CacheStore::new(directory.path(), Console::default());
         let mut runtime = PiRuntime::new(directory.path(), cache.clone(), Console::default());
         let context = context();
         let key = CacheKey::from_params(
             CONTEXT_CACHE_NAMESPACE,
-            &provider_name,
-            &model_name,
+            &config.llm.default_provider,
+            &config.llm.default_model,
             &context,
         )
         .unwrap();

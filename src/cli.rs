@@ -3,7 +3,6 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
-use crate::llm::ProviderKind;
 use crate::review::ReviewCheckKind;
 
 #[derive(Parser, Debug)]
@@ -34,7 +33,7 @@ pub enum Command {
         target: String,
 
         #[arg(long)]
-        provider: Option<ProviderKind>,
+        provider: Option<String>,
 
         #[arg(long)]
         model: Option<String>,
@@ -82,7 +81,7 @@ pub enum Command {
 
     Check {
         #[arg(long, global = true)]
-        provider: Option<ProviderKind>,
+        provider: Option<String>,
 
         #[arg(long, global = true)]
         model: Option<String>,
@@ -358,7 +357,7 @@ mod tests {
             cli.command,
             Command::Review {
                 target: "HEAD".into(),
-                provider: Some(ProviderKind::OpenAi),
+                provider: Some("openai".into()),
                 model: Some("gpt-5.6-terra".into()),
                 skip_checks: Vec::new(),
                 only_checks: Vec::new(),
@@ -373,10 +372,16 @@ mod tests {
     }
 
     #[test]
-    fn review_rejects_an_unsupported_provider() {
-        let result = Cli::try_parse_from(["peer", "review", "HEAD", "--provider", "unknown"]);
+    fn review_accepts_arbitrary_provider_override() {
+        let cli = parse(&["peer", "review", "HEAD", "--provider", "custom"]);
 
-        assert!(result.is_err());
+        assert_matches!(
+            cli.command,
+            Command::Review {
+                provider: Some(provider),
+                ..
+            } if provider == "custom"
+        );
     }
 
     #[test]
@@ -794,7 +799,7 @@ mod tests {
         assert_eq!(
             cli.command,
             Command::Check {
-                provider: Some(ProviderKind::OpenAi),
+                provider: Some("openai".into()),
                 model: Some("gpt-5.6-terra".into()),
                 title: None,
                 body_file: None,

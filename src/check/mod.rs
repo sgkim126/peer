@@ -181,21 +181,16 @@ pub async fn handler(
             Check::Coherence(CoherenceCheck::try_new(&range, &extractor).await?)
         }
     };
-    let (provider_config, model_config) = config.resolve_provider(None, None)?;
+    let provider = &config.llm.default_provider;
+    let model_name = &config.llm.default_model;
     let max_iterations = config.max_iterations_for(check.name()).get();
-    let cache_key = check_cache_key(
-        &check,
-        &provider_config.name,
-        &model_config.name,
-        review_context,
-        console,
-    );
+    let cache_key = check_cache_key(&check, provider, model_name, review_context, console);
     let cached = cache_key.as_ref().and_then(|key| {
         load_check_cache(
             cache_store,
             key,
             &check,
-            &model_config.name,
+            model_name,
             context_usage.clone(),
             console,
         )
@@ -203,13 +198,8 @@ pub async fn handler(
     if let Some(LoadedCheckCache::Complete(result)) = cached {
         return Ok(*result);
     }
-    let session_key = check_session_key(
-        &check,
-        &provider_config.name,
-        &model_config.name,
-        review_context,
-    )?;
-    let model = ModelRef::try_new(provider_config.name.as_str(), model_config.name.as_str())?;
+    let session_key = check_session_key(&check, provider, model_name, review_context)?;
+    let model = ModelRef::try_new(provider.as_str(), model_name.as_str())?;
     let result = Checker::new(
         extractor,
         CheckRunConfig {
@@ -564,10 +554,8 @@ mod tests {
         .unwrap();
 
         let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
-        let (provider_name, model_name) = {
-            let (provider, model) = config.resolve_provider(None, None).unwrap();
-            (provider.name.clone(), model.name.clone())
-        };
+        let provider_name = config.llm.default_provider.clone();
+        let model_name = config.llm.default_model.clone();
         let extractor = Extractor::new(directory.path().to_path_buf(), console);
         let check = Check::Size(SizeCheck::try_new("HEAD", &extractor).await.unwrap());
         let review_context = ReviewContextDigest::default();
