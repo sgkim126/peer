@@ -140,15 +140,29 @@ fn render_finding(finding: &Finding, use_color: bool) -> String {
 
 fn write_usage(output: &mut String, label: &str, usage: &LlmUsage) {
     writeln!(output).unwrap();
-    write!(
-        output,
-        "{label}: {} input, {} output, ${:.6} ({})",
-        usage.input_tokens,
-        usage.output_tokens,
-        usage.cost_usd,
-        escape_terminal(&usage.model)
-    )
-    .unwrap();
+    if usage.cache_read_tokens == 0 && usage.cache_write_tokens == 0 {
+        write!(
+            output,
+            "{label}: {} input, {} output, ${:.6} ({})",
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cost_usd,
+            escape_terminal(&usage.model)
+        )
+        .unwrap();
+    } else {
+        write!(
+            output,
+            "{label}: {} input, {} output, {} cache read, {} cache write, ${:.6} ({})",
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_read_tokens,
+            usage.cache_write_tokens,
+            usage.cost_usd,
+            escape_terminal(&usage.model)
+        )
+        .unwrap();
+    }
 }
 
 fn label(value: &str, use_color: bool) -> String {
@@ -266,8 +280,11 @@ mod tests {
             usage: LlmUsage {
                 input_tokens: 100,
                 output_tokens: 20,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 cost_usd: 0.001,
                 model: "test-model".to_string(),
+                models: Vec::new(),
             },
         }
     }
@@ -286,8 +303,11 @@ mod tests {
         result.context_usage = Some(LlmUsage {
             input_tokens: 40,
             output_tokens: 10,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
             cost_usd: 0.0004,
             model: "context-model".to_string(),
+            models: Vec::new(),
         });
 
         let output = render_context_usage(result.context_usage.as_ref().unwrap());

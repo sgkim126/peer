@@ -530,8 +530,11 @@ mod tests {
                 usage: LlmUsage {
                     input_tokens: 0,
                     output_tokens: 0,
+                    cache_read_tokens: 0,
+                    cache_write_tokens: 0,
                     cost_usd: 0.0,
                     model: "test".to_string(),
+                    models: Vec::new(),
                 },
             }],
             errors: Vec::new(),
