@@ -16,12 +16,16 @@ impl CommitHash {
 
     pub async fn resolve(rev: &str, dir: &Path, console: Console) -> Result<Self, GitError> {
         let rev_commit = format!("{rev}^{{commit}}");
-        let output = super::run_git(&["rev-parse", "--verify", &rev_commit], dir, console)
-            .await
-            .map_err(|err| match err {
-                GitError::NonZeroExit { .. } => GitError::InvalidRevision(rev.to_string()),
-                err => err,
-            })?;
+        let output = super::run_git(
+            &["rev-parse", "--verify", "--end-of-options", &rev_commit],
+            dir,
+            console,
+        )
+        .await
+        .map_err(|err| match err {
+            GitError::NonZeroExit { .. } => GitError::InvalidRevision(rev.to_string()),
+            err => err,
+        })?;
         let commit_hash = output.trim();
         Self::new(commit_hash)
     }
@@ -152,6 +156,28 @@ mod tests {
             .unwrap();
 
         assert_eq!(tag, head);
+    }
+
+    #[tokio::test]
+    async fn resolve_resolves_revision_starting_with_hyphen() {
+        let tmp = create_repo_with_commit().await;
+        let console = Console::default();
+        super::super::run_git(
+            &["update-ref", "refs/heads/-release", "HEAD"],
+            tmp.path(),
+            console,
+        )
+        .await
+        .unwrap();
+
+        let head = CommitHash::resolve("HEAD", tmp.path(), console)
+            .await
+            .unwrap();
+        let revision = CommitHash::resolve("-release", tmp.path(), console)
+            .await
+            .unwrap();
+
+        assert_eq!(revision, head);
     }
 
     #[tokio::test]
