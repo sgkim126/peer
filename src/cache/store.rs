@@ -182,15 +182,22 @@ impl CacheStore {
                 }
             })?;
             let path = entry.path();
-            let file_type = entry.file_type().map_err(|source| {
-                self.console.debug(format_args!(
-                    "cannot inspect cache entry {path:?}: {source:?}"
-                ));
-                CachePruneError::InspectEntry {
-                    path: path.clone(),
-                    source,
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
+                    skipped += 1;
+                    self.console.debug(format_args!(
+                        "cache entry skipped path={path:?} reason=already-missing"
+                    ));
+                    continue;
                 }
-            })?;
+                Err(source) => {
+                    self.console.debug(format_args!(
+                        "cannot inspect cache entry {path:?}: {source:?}"
+                    ));
+                    return Err(CachePruneError::InspectEntry { path, source });
+                }
+            };
             let should_prune = all
                 || (file_type.is_dir()
                     && entry
