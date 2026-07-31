@@ -53,7 +53,7 @@ fn init_fails_without_git_repo() {
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn init_fails_when_git_is_unavailable() {
-    let (mut cmd, _tmp) = peer_in_tmp();
+    let (mut cmd, tmp) = peer_in_tmp();
     let out = cmd.env("PATH", "").arg("init").output().unwrap();
 
     assert!(!out.status.success());
@@ -63,6 +63,7 @@ fn init_fails_when_git_is_unavailable() {
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr),
     );
+    assert!(!tmp.path().join(".peer").exists());
 }
 
 #[test]
