@@ -452,6 +452,28 @@ mod tests {
         let first_head = CommitHash::new("def5678").unwrap();
         let second_head = CommitHash::new("fed4321").unwrap();
         let review_context = ReviewContextDigest::default();
+        let without_head = CacheKey::from_params(
+            "check-quality",
+            "test",
+            "test-model",
+            &CheckCacheParams {
+                target: target.clone(),
+                review_head: None,
+                review_context: &review_context,
+            },
+        )
+        .unwrap();
+        let also_without_head = CacheKey::from_params(
+            "check-quality",
+            "test",
+            "test-model",
+            &CheckCacheParams {
+                target: target.clone(),
+                review_head: None,
+                review_context: &review_context,
+            },
+        )
+        .unwrap();
         let first = CacheKey::from_params(
             "check-quality",
             "test",
@@ -475,6 +497,8 @@ mod tests {
         )
         .unwrap();
 
+        assert_eq!(without_head.params_hash, also_without_head.params_hash);
+        assert_ne!(without_head.params_hash, first.params_hash);
         assert_ne!(first.params_hash, second.params_hash);
     }
 
