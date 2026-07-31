@@ -33,7 +33,10 @@ impl Extractor {
         }
         let context_lines = context_lines.get().to_string();
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
-        let path = path.map(Path::to_string_lossy);
+        let path = path.map(|path| {
+            path.to_str()
+                .expect("repository-relative path was validated as UTF-8")
+        });
         let mut args: Vec<&str> = vec![
             "--literal-pathspecs",
             "grep",
@@ -46,7 +49,7 @@ impl Extractor {
             hash.as_ref(),
         ];
 
-        if let Some(path) = path.as_deref() {
+        if let Some(path) = path {
             args.push("--");
             args.push(path);
         }
@@ -104,17 +107,33 @@ mod tests {
     use crate::console::Console;
 
     #[test]
-    fn validates_arguments() {
+    fn rejects_empty_query() {
         assert_matches!(
             validate_grep_arguments("", NonZeroU8::new(1).unwrap()),
             Err(ExtractError::InvalidGrepArguments(_))
         );
+    }
+
+    #[test]
+    fn rejects_too_many_lines() {
         assert_matches!(
             validate_grep_arguments("query", NonZeroU8::new(11).unwrap()),
             Err(ExtractError::InvalidGrepArguments(_))
         );
+    }
+
+    #[test]
+    fn rejects_parent_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("../secret")),
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
+    }
+
+    #[test]
+    fn rejects_empty_path() {
+        assert_matches!(
+            validate_repository_relative_path(Path::new("")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))
         );
     }

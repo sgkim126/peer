@@ -28,7 +28,9 @@ impl Extractor {
         validate_repository_relative_path(path)?;
         let from = CommitHash::resolve(from_revision, &self.project_root, self.console).await?;
         let to = CommitHash::resolve(to_revision, &self.project_root, self.console).await?;
-        let path = path.to_string_lossy().into_owned();
+        let path = path
+            .to_str()
+            .expect("repository-relative path was validated as UTF-8");
         let diff = run_git(
             &[
                 "--literal-pathspecs",
@@ -37,7 +39,7 @@ impl Extractor {
                 from.as_ref(),
                 to.as_ref(),
                 "--",
-                &path,
+                path,
             ],
             &self.project_root,
             self.console,
@@ -76,11 +78,23 @@ mod tests {
     use crate::console::Console;
 
     #[test]
-    fn rejects_absolute_and_parent_paths() {
+    fn rejects_empty_path() {
+        assert_matches!(
+            validate_repository_relative_path(Path::new("")),
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("/tmp/file.rs")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))
         );
+    }
+
+    #[test]
+    fn rejects_parent_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("src/../file.rs")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))

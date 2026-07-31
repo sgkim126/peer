@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -42,11 +42,20 @@ impl Extractor {
             validate_repository_relative_path(path)?;
         }
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
-        let path_prefix = path.map(|path| path.to_string_lossy().into_owned());
-        let treeish = path_prefix
+        let normalized_path: Option<PathBuf> = path.map(|path| path.components().collect());
+        let treeish = normalized_path
             .as_deref()
-            .filter(|path| !path.is_empty())
-            .map_or_else(|| hash.to_string(), |path| format!("{hash}:{path}"));
+            .filter(|path| !path.as_os_str().is_empty())
+            .map_or_else(
+                || hash.to_string(),
+                |path| {
+                    format!(
+                        "{hash}:{}",
+                        path.to_str()
+                            .expect("repository-relative path was validated as UTF-8")
+                    )
+                },
+            );
         let args = if recursive {
             vec!["ls-tree", "-rz", "-t", &treeish]
         } else {
@@ -54,13 +63,13 @@ impl Extractor {
         };
         let output = run_git(&args, &self.project_root, self.console).await?;
 
-        parse_tree_listing(&output, path_prefix.as_deref())
+        parse_tree_listing(&output, normalized_path.as_deref())
     }
 }
 
 fn parse_tree_listing(
     output: &str,
-    path_prefix: Option<&str>,
+    normalized_path: Option<&Path>,
 ) -> Result<TreeListing, ExtractError> {
     let mut entries = Vec::new();
     let mut truncated = false;
@@ -103,13 +112,17 @@ fn parse_tree_listing(
             }
         };
 
-        let mut entry = TreeEntry {
-            path: path.to_string(),
-            kind,
-        };
-        if let Some(prefix) = path_prefix.filter(|prefix| !prefix.is_empty()) {
-            entry.path = format!("{prefix}/{}", entry.path);
-        }
+        let path = normalized_path.map_or_else(
+            || path.to_string(),
+            |prefix| {
+                prefix
+                    .join(path)
+                    .to_str()
+                    .expect("repository-relative path was validated as UTF-8")
+                    .to_owned()
+            },
+        );
+        let entry = TreeEntry { path, kind };
         if entries.len() < MAX_TREE_ENTRIES {
             entries.push(entry);
         } else {
@@ -133,7 +146,7 @@ mod tests {
                 "100644 blob abc123\tlib.rs\0",
                 "040000 tree def456\tnested\0"
             ),
-            Some("src"),
+            Some(Path::new("src")),
         )
         .unwrap();
 
@@ -151,6 +164,16 @@ mod tests {
             ]
         );
         assert!(!listing.truncated);
+    }
+
+    #[test]
+    fn normalizes_trailing_separators_before_prefixing_paths() {
+        let normalized_path = Path::new("src///").components().collect::<PathBuf>();
+        let listing =
+            parse_tree_listing("100644 blob abc123\tlib.rs\0", Some(&normalized_path)).unwrap();
+
+        assert_eq!(normalized_path, Path::new("src"));
+        assert_eq!(listing.entries[0].path, "src/lib.rs");
     }
 
     #[test]
@@ -180,11 +203,23 @@ mod tests {
     }
 
     #[test]
-    fn rejects_absolute_and_parent_paths() {
+    fn rejects_empty_path() {
+        assert_matches!(
+            validate_repository_relative_path(Path::new("")),
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
+    }
+
+    #[test]
+    fn rejects_absolute_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("/tmp")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))
         );
+    }
+
+    #[test]
+    fn rejects_parent_path() {
         assert_matches!(
             validate_repository_relative_path(Path::new("src/../secret")),
             Err(ExtractError::InvalidRepositoryRelativePath(_))

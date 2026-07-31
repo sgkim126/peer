@@ -85,8 +85,10 @@ impl Extractor {
         ));
         validate_repository_relative_path(path)?;
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
-        // TODO: Normalize Windows path separators to `/` for Git tree paths.
-        let path = path.to_string_lossy().into_owned();
+        let path = path
+            .to_str()
+            .expect("repository-relative path was validated as UTF-8")
+            .to_owned();
         let treeish = format!("{hash}:{path}");
 
         let bytes = run_git_bytes(&["show", &treeish], &self.project_root, self.console).await?;
@@ -263,17 +265,34 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn file_content_rejects_absolute_and_parent_paths() {
+    async fn rejects_empty_path() {
         let extractor = Extractor::new(std::path::PathBuf::from("/unused"), Console::default());
+        assert_matches!(
+            extractor.file_content("HEAD", Path::new(""), None).await,
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
+    }
 
-        for path in [Path::new("/tmp/file.rs"), Path::new("src/../file.rs")] {
-            let error = extractor
-                .file_content("HEAD", path, None)
-                .await
-                .unwrap_err();
+    #[tokio::test]
+    async fn rejects_absoulte_path() {
+        let extractor = Extractor::new(std::path::PathBuf::from("/unused"), Console::default());
+        assert_matches!(
+            extractor
+                .file_content("HEAD", Path::new("/tmp/file.rs"), None)
+                .await,
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
+    }
 
-            assert_matches!(error, ExtractError::InvalidRepositoryRelativePath(_));
-        }
+    #[tokio::test]
+    async fn rejects_parent_path() {
+        let extractor = Extractor::new(std::path::PathBuf::from("/unused"), Console::default());
+        assert_matches!(
+            extractor
+                .file_content("HEAD", Path::new("src/../file.rs"), None)
+                .await,
+            Err(ExtractError::InvalidRepositoryRelativePath(_))
+        );
     }
 
     #[tokio::test]

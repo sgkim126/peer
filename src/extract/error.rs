@@ -28,6 +28,12 @@ impl fmt::Display for ExtractError {
             Self::InvalidTwoDotRange(range) => {
                 write!(f, "{range} is not a two-dot range")
             }
+            Self::InvalidRepositoryRelativePath(path) if path.as_os_str().is_empty() => {
+                write!(f, "repository-relative path must not be empty")
+            }
+            Self::InvalidRepositoryRelativePath(path) if path.to_str().is_none() => {
+                write!(f, "repository-relative path must be valid UTF-8")
+            }
             Self::InvalidRepositoryRelativePath(path) => {
                 write!(f, "{} is not a repository-relative path", path.display())
             }
