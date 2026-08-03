@@ -25,6 +25,11 @@ jobs:
             --no-self-update
           rustup default stable
 
+      - name: Install Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+
       - name: Cache Cargo dependencies
         uses: actions/cache@v6
         with:
