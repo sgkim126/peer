@@ -44,7 +44,6 @@ impl From<serde_json::Error> for CodecError {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn read_record<R, T>(stdout: &mut R) -> Result<T, CodecError>
 where
     R: AsyncBufRead + Unpin,
@@ -64,7 +63,6 @@ where
     Ok(serde_json::from_slice(&record)?)
 }
 
-#[expect(dead_code)]
 pub async fn write_record<W, T>(stdin: &mut W, value: &T) -> Result<(), CodecError>
 where
     W: AsyncWrite + Unpin,
