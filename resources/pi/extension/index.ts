@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { type ConfigureEnvelope, decodeConfigureEnvelope } from "./protocol.ts";
+import { registerReadTools } from "./tools/read.ts";
 import { registerTerminalTools } from "./tools/terminal.ts";
 
 export default function peerExtension(pi: ExtensionAPI) {
@@ -8,6 +9,7 @@ export default function peerExtension(pi: ExtensionAPI) {
     let completedTurns = 0;
     const getConfig = () => envelope;
 
+    registerReadTools(pi, getConfig);
     registerTerminalTools(pi, getConfig);
 
     const activateConfiguredTools = (
