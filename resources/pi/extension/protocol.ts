@@ -78,25 +78,26 @@ function isCheckKind(value: unknown): value is CheckKind {
     return CHECK_KINDS.some((kind) => kind === value);
 }
 
-function isReadToolArray(value: unknown): value is ReadTool[] {
+function isArrayOf<T extends string>(
+    value: unknown,
+    allowList: readonly T[],
+): value is T[] {
     if (!Array.isArray(value)) {
         return false;
     }
-    return value.every((item) => READ_TOOLS.some((tool) => tool === item));
+    return value.every((item) => allowList.some((allowed) => allowed === item));
+}
+
+function isReadToolArray(value: unknown): value is ReadTool[] {
+    return isArrayOf(value, READ_TOOLS);
 }
 
 function isCheckTerminalToolArray(value: unknown): value is CheckTerminalTool[] {
-    if (!Array.isArray(value)) {
-        return false;
-    }
-    return value.every((item) => CHECK_TERMINAL_TOOLS.some((tool) => tool === item));
+    return isArrayOf(value, CHECK_TERMINAL_TOOLS);
 }
 
 function isReviewContextTerminalToolArray(value: unknown): value is ReviewContextTerminalTool[] {
-    if (!Array.isArray(value)) {
-        return false;
-    }
-    return value.every((item) => REVIEW_CONTEXT_TERMINAL_TOOLS.some((tool) => tool === item));
+    return isArrayOf(value, REVIEW_CONTEXT_TERMINAL_TOOLS);
 }
 
 function isOperation(value: unknown): value is RunConfig["operation"] {
