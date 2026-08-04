@@ -45,7 +45,7 @@ impl PiRuntime {
             tool_socket: tool_server.socket_path().to_path_buf(),
         })
         .map_err(PiRunError::Start)?;
-        let mut runner = PiRunner::new(process, tool_server, self.cache.clone());
+        let mut runner = PiRunner::new(process, tool_server, self.cache.clone(), self.console);
         runner.run(request).await
     }
 }

@@ -9,7 +9,8 @@ use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncWrite, BufReader};
 use tokio::process::Child;
 
-use crate::cache::{CacheKey, CacheStore, CacheWriteError};
+use crate::cache::{CacheKey, CacheReadError, CacheStore, CacheWriteError};
+use crate::console::Console;
 use crate::llm::{LlmModelUsage, LlmUsage};
 
 use super::assets::AssetError;
@@ -26,6 +27,7 @@ pub struct PiRunRequest {
     pub config: RunConfig,
     pub model: ModelRef,
     pub prompt: String,
+    pub resume: bool,
 }
 
 #[derive(Debug)]
@@ -45,10 +47,28 @@ pub enum PiRunError {
     Start(std::io::Error),
     ToolServer(std::io::Error),
     Rpc(RpcError),
+    CacheRead(CacheReadError),
     CacheWrite(CacheWriteError),
     UnsafeSessionPath(PathBuf),
     InvalidState(String),
     Exhausted { turns: u32, usage: LlmUsage },
+}
+
+impl PiRunError {
+    fn session_status(&self) -> SessionStatus {
+        match self {
+            Self::Dependency(_) => SessionStatus::FailedTerminal,
+            Self::Assets(_) => SessionStatus::FailedTerminal,
+            Self::Start(_) => SessionStatus::FailedTerminal,
+            Self::ToolServer(_) => SessionStatus::FailedTerminal,
+            Self::Rpc(_) => SessionStatus::FailedTransient,
+            Self::CacheRead(_) => SessionStatus::FailedTerminal,
+            Self::CacheWrite(_) => SessionStatus::FailedTerminal,
+            Self::UnsafeSessionPath(_) => SessionStatus::FailedTerminal,
+            Self::InvalidState(_) => SessionStatus::FailedTerminal,
+            Self::Exhausted { .. } => SessionStatus::Exhausted,
+        }
+    }
 }
 
 impl fmt::Display for PiRunError {
@@ -59,6 +79,7 @@ impl fmt::Display for PiRunError {
             Self::Start(error) => write!(f, "cannot start Pi RPC process: {error}"),
             Self::ToolServer(error) => write!(f, "cannot start peer tool server: {error}"),
             Self::Rpc(error) => error.fmt(f),
+            Self::CacheRead(error) => write!(f, "cannot read Pi session cache: {error}"),
             Self::CacheWrite(error) => write!(f, "cannot write Pi session cache: {error}"),
             Self::UnsafeSessionPath(path) => {
                 write!(
@@ -83,6 +104,7 @@ impl std::error::Error for PiRunError {
             Self::Start(error) => Some(error),
             Self::ToolServer(error) => Some(error),
             Self::Rpc(error) => Some(error),
+            Self::CacheRead(error) => Some(error),
             Self::CacheWrite(error) => Some(error),
             Self::UnsafeSessionPath(_) => None,
             Self::InvalidState(_) => None,
@@ -106,6 +128,12 @@ impl From<AssetError> for PiRunError {
 impl From<RpcError> for PiRunError {
     fn from(error: RpcError) -> Self {
         Self::Rpc(error)
+    }
+}
+
+impl From<CacheReadError> for PiRunError {
+    fn from(error: CacheReadError) -> Self {
+        Self::CacheRead(error)
     }
 }
 
@@ -135,6 +163,18 @@ struct SessionRecord {
     last_usage_entry_id: Option<String>,
 }
 
+impl SessionRecord {
+    fn resumable(&self) -> bool {
+        match self.status {
+            SessionStatus::Running => true,
+            SessionStatus::Exhausted => true,
+            SessionStatus::FailedTransient => true,
+            SessionStatus::Completed => false,
+            SessionStatus::FailedTerminal => false,
+        }
+    }
+}
+
 type ProcessClient = RpcClient<BufReader<tokio::process::ChildStdout>, tokio::process::ChildStdin>;
 
 #[expect(dead_code)]
@@ -143,12 +183,18 @@ pub struct PiRunner {
     client: ProcessClient,
     cache: CacheStore,
     version_root: PathBuf,
+    console: Console,
     _tool_server: ToolServer,
 }
 
 impl PiRunner {
     #[expect(dead_code)]
-    pub fn new(process: PiProcess, tool_server: ToolServer, cache: CacheStore) -> Self {
+    pub fn new(
+        process: PiProcess,
+        tool_server: ToolServer,
+        cache: CacheStore,
+        console: Console,
+    ) -> Self {
         let (child, stdin, stdout) = process.into_parts();
         let version_root = cache.root().join(CacheKey::version());
         Self {
@@ -156,31 +202,84 @@ impl PiRunner {
             client: RpcClient::new(BufReader::new(stdout), stdin),
             cache,
             version_root,
+            console,
             _tool_server: tool_server,
         }
     }
 
     #[expect(dead_code)]
     pub async fn run(&mut self, request: PiRunRequest) -> Result<PiRunResult, PiRunError> {
+        let existing = if request.resume {
+            match self.cache.read_json(&request.session_key) {
+                Ok(record) => record,
+                Err(CacheReadError::Deserialize { .. }) => None,
+                Err(error) => return Err(error.into()),
+            }
+        } else {
+            None
+        };
+        let (mut record, continuation) = match existing.filter(SessionRecord::resumable) {
+            Some(record) => {
+                if let Err(error) = self.switch_session(&record).await {
+                    let mut failed = record;
+                    failed.status = error.session_status();
+                    if let Err(write_error) = self.write_session(&request.session_key, &failed) {
+                        self.console.debug(format_args!(
+                            "cannot persist Pi session state: {write_error}"
+                        ));
+                    }
+                    return Err(error);
+                }
+                (record, true)
+            }
+            None => {
+                let response = self
+                    .client
+                    .request(json!({
+                        "type": "new_session"
+                    }))
+                    .await?;
+                ensure_not_cancelled(&response.data, "new_session")?;
+                (self.current_session().await?, false)
+            }
+        };
+        record.status = SessionStatus::Running;
+        self.write_session(&request.session_key, &record)?;
+
+        let result = self
+            .run_configured(&request, &mut record, continuation)
+            .await;
+        record.status = result
+            .as_ref()
+            .map_or_else(PiRunError::session_status, |_| SessionStatus::Completed);
+        if let Err(error) = self.write_session(&request.session_key, &record) {
+            self.console
+                .debug(format_args!("cannot persist Pi session state: {error}"));
+        }
+        result
+    }
+
+    async fn switch_session(&mut self, record: &SessionRecord) -> Result<(), PiRunError> {
+        validate_relative_path(&record.session_path)?;
+        let session_path = self.version_root.join(&record.session_path);
+        let session_path = session_path
+            .to_str()
+            .ok_or_else(|| PiRunError::UnsafeSessionPath(session_path.to_path_buf()))?;
         let response = self
             .client
             .request(json!({
-                "type": "new_session"
+                "type": "switch_session",
+                "sessionPath": session_path
             }))
             .await?;
-        ensure_not_cancelled(&response.data, "new_session")?;
-        let mut record = self.current_session().await?;
-        self.write_session(&request.session_key, &record)?;
-
-        let result = self.run_configured(&request, &mut record).await;
-        record.status = match &result {
-            Ok(_) => SessionStatus::Completed,
-            Err(PiRunError::Exhausted { .. }) => SessionStatus::Exhausted,
-            Err(PiRunError::Rpc(_)) => SessionStatus::FailedTransient,
-            Err(_) => SessionStatus::FailedTerminal,
-        };
-        self.write_session(&request.session_key, &record)?;
-        result
+        ensure_not_cancelled(&response.data, "switch_session")?;
+        let actual = self.current_session().await?;
+        if actual.session_id != record.session_id || actual.session_path != record.session_path {
+            return Err(PiRunError::InvalidState(
+                "switched Pi session does not match the cached session".to_string(),
+            ));
+        }
+        Ok(())
     }
 
     async fn current_session(&mut self) -> Result<SessionRecord, PiRunError> {
@@ -230,6 +329,7 @@ impl PiRunner {
         &mut self,
         request: &PiRunRequest,
         record: &mut SessionRecord,
+        continuation: bool,
     ) -> Result<PiRunResult, PiRunError> {
         let config_bytes = serde_json::to_vec(&request.config)
             .map_err(|error| PiRunError::InvalidState(error.to_string()))?;
@@ -258,10 +358,15 @@ impl PiRunner {
             }))
             .await?;
         ensure_not_cancelled(&response.data, "set_model")?;
+        let message = if continuation {
+            format!("/peer-continue-v1 {digest}")
+        } else {
+            request.prompt.clone()
+        };
         self.client
             .request(json!({
                 "type": "prompt",
-                "message": request.prompt
+                "message": message
             }))
             .await?;
 
@@ -575,6 +680,60 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("cancelled new_session"));
+    }
+
+    fn session_record(status: SessionStatus) -> SessionRecord {
+        SessionRecord {
+            status,
+            session_id: "session-1".to_string(),
+            session_path: PathBuf::from("pi-sessions/session.jsonl"),
+            last_usage_entry_id: None,
+        }
+    }
+
+    #[test]
+    fn resumes_running_sessions() {
+        assert!(session_record(SessionStatus::Running).resumable());
+    }
+
+    #[test]
+    fn resumes_exhausted_sessions() {
+        assert!(session_record(SessionStatus::Exhausted).resumable());
+    }
+
+    #[test]
+    fn resumes_transiently_failed_sessions() {
+        assert!(session_record(SessionStatus::FailedTransient).resumable());
+    }
+
+    #[test]
+    fn does_not_resume_completed_sessions() {
+        assert!(!session_record(SessionStatus::Completed).resumable());
+    }
+
+    #[test]
+    fn does_not_resume_terminally_failed_sessions() {
+        assert!(!session_record(SessionStatus::FailedTerminal).resumable());
+    }
+
+    #[test]
+    fn marks_session_switch_mismatches_as_terminal() {
+        let error = PiRunError::InvalidState(
+            "switched Pi session does not match the cached session".to_string(),
+        );
+        assert_eq!(error.session_status(), SessionStatus::FailedTerminal);
+    }
+
+    #[test]
+    fn rejects_cancelled_session_switches() {
+        let error = ensure_not_cancelled(
+            &Some(json!({
+                "cancelled": true
+            })),
+            "switch_session",
+        )
+        .unwrap_err();
+        assert!(error.to_string().contains("cancelled switch_session"));
     }
 
     #[test]
