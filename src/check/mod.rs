@@ -380,8 +380,11 @@ fn load_check_cache(
         usage: LlmUsage {
             input_tokens: 0,
             output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
             cost_usd: 0.0,
             model: model.to_string(),
+            models: Vec::new(),
         },
     })))
 }
@@ -440,8 +443,11 @@ mod tests {
             usage: LlmUsage {
                 input_tokens: 1,
                 output_tokens: 1,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 cost_usd: 1.0,
                 model: "test-model".to_string(),
+                models: Vec::new(),
             },
         }
     }

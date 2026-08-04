@@ -166,6 +166,20 @@ fn write_usage_markdown(output: &mut String, heading: &str, usage: &LlmUsage) {
     writeln!(output).unwrap();
     writeln!(output, "- **Input tokens:** {}", usage.input_tokens).unwrap();
     writeln!(output, "- **Output tokens:** {}", usage.output_tokens).unwrap();
+    if usage.cache_read_tokens != 0 || usage.cache_write_tokens != 0 {
+        writeln!(
+            output,
+            "- **Cache-read tokens:** {}",
+            usage.cache_read_tokens
+        )
+        .unwrap();
+        writeln!(
+            output,
+            "- **Cache-write tokens:** {}",
+            usage.cache_write_tokens
+        )
+        .unwrap();
+    }
     writeln!(output, "- **Cost:** ${:.6}", usage.cost_usd).unwrap();
     writeln!(output, "- **Model:** {}", escape_markdown(&usage.model)).unwrap();
 }
@@ -212,8 +226,11 @@ mod tests {
             usage: LlmUsage {
                 input_tokens: 100,
                 output_tokens: 20,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 cost_usd: 0.001,
                 model: "test-model".to_string(),
+                models: Vec::new(),
             },
         }
     }
@@ -246,6 +263,20 @@ mod tests {
 
         assert!(output.contains("### Check usage"));
         assert!(output.contains("- **Cost:** $0.001000"));
+        assert!(!output.contains("Cache-read tokens"));
+        assert!(!output.contains("Cache-write tokens"));
+    }
+
+    #[test]
+    fn includes_cache_usage_when_available() {
+        let mut result = result();
+        result.usage.cache_read_tokens = 80;
+        result.usage.cache_write_tokens = 10;
+
+        let output = render(&result.into());
+
+        assert!(output.contains("- **Cache-read tokens:** 80"));
+        assert!(output.contains("- **Cache-write tokens:** 10"));
     }
 
     #[test]
@@ -254,8 +285,11 @@ mod tests {
         result.context_usage = Some(LlmUsage {
             input_tokens: 40,
             output_tokens: 10,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
             cost_usd: 0.0004,
             model: "contextmodel".to_string(),
+            models: Vec::new(),
         });
 
         let output = render_context_usage(result.context_usage.as_ref().unwrap());

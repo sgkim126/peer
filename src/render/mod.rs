@@ -639,8 +639,11 @@ mod tests {
             usage: LlmUsage {
                 input_tokens: 100,
                 output_tokens: 20,
+                cache_read_tokens: 0,
+                cache_write_tokens: 0,
                 cost_usd: 0.001,
                 model: "test-model".to_string(),
+                models: Vec::new(),
             },
         }
     }
@@ -657,8 +660,11 @@ mod tests {
         LlmUsage {
             input_tokens: 40,
             output_tokens: 10,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
             cost_usd: 0.0004,
             model: "test-model".to_string(),
+            models: Vec::new(),
         }
     }
 
