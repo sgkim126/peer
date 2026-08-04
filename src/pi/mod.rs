@@ -5,4 +5,5 @@ mod process;
 mod protocol;
 mod rpc;
 mod runner;
+mod runtime;
 mod tool_server;
