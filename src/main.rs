@@ -9,6 +9,7 @@ mod extract;
 mod git;
 mod init;
 mod llm;
+mod pi;
 mod render;
 mod review;
 mod secret;

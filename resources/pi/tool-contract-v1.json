@@ -1,0 +1,18 @@
+{
+  "version": 1,
+  "read_tools": [
+    "get_commit_message",
+    "get_commit_diff",
+    "get_changed_files",
+    "get_commits_in_range",
+    "get_file_content",
+    "get_file_diff",
+    "list_tree",
+    "grep"
+  ],
+  "terminal_tools": [
+    "submit_check_result",
+    "request_clarification",
+    "submit_review_context_digest"
+  ]
+}
