@@ -267,6 +267,10 @@ Use `--debug` when diagnosing execution errors.
 
 ## Development
 
+Development requires Cargo 1.96.0 or later. Running the Pi TypeScript tests also
+requires Node.js 22.18.0 or later on the Node.js 22 release line, or Node.js
+23.6.0 or later.
+
 Run the test suite, lints, and formatting check before submitting a change.
 
 ```bash
