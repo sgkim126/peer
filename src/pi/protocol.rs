@@ -51,7 +51,6 @@ pub enum Operation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct RunConfig {
     pub tool_contract_digest: String,
     pub operation: Operation,
