@@ -19,14 +19,16 @@ pub fn submit_check_result() -> ToolSpec {
                         "type": "object",
                         "properties": {
                             "commit": {
-                                "type": "string"
+                                "type": "string",
+                                "minLength": 1
                             },
                             "severity": {
                                 "type": "string",
                                 "enum": ["info", "low", "medium", "high", "critical"]
                             },
                             "message": {
-                                "type": "string"
+                                "type": "string",
+                                "minLength": 1
                             },
                             "file": {
                                 "type": "string"
@@ -71,6 +73,14 @@ mod tests {
         assert_eq!(
             tool.parameters["properties"]["findings"]["items"]["properties"]["severity"]["enum"],
             json!(["info", "low", "medium", "high", "critical"])
+        );
+        assert_eq!(
+            tool.parameters["properties"]["findings"]["items"]["properties"]["commit"]["minLength"],
+            json!(1)
+        );
+        assert_eq!(
+            tool.parameters["properties"]["findings"]["items"]["properties"]["message"]["minLength"],
+            json!(1)
         );
     }
 }
