@@ -1,6 +1,8 @@
 use std::collections::HashSet;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::Read;
 use std::num::NonZeroU32;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -129,12 +131,47 @@ impl Config {
 pub fn discover(from: &Path) -> Result<(Config, PathBuf), PeerError> {
     let project_root = discover_peer_root(from)?;
     let config_path = project_root.join(".peer").join("config.toml");
-    let content = fs::read_to_string(&config_path).map_err(|source| PeerError::InvalidConfig {
-        message: format!("cannot read {}", config_path.display()),
-        source: Some(Box::new(source)),
-    })?;
+    let content = read_config_no_follow(&config_path)?;
     let config = parse_and_validate(&content, &config_path)?;
     Ok((config, project_root))
+}
+
+fn read_config_no_follow(config_path: &Path) -> Result<String, PeerError> {
+    #[cfg(target_os = "linux")]
+    const O_NOFOLLOW: i32 = 0o400000;
+    #[cfg(target_os = "linux")]
+    const O_NONBLOCK: i32 = 0o4000;
+    #[cfg(target_os = "macos")]
+    const O_NOFOLLOW: i32 = 0x100;
+    #[cfg(target_os = "macos")]
+    const O_NONBLOCK: i32 = 0x4;
+
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(O_NOFOLLOW | O_NONBLOCK)
+        .open(config_path)
+        .map_err(|source| PeerError::InvalidConfig {
+            message: format!("cannot read {}", config_path.display()),
+            source: Some(Box::new(source)),
+        })?;
+    let metadata = file.metadata().map_err(|source| PeerError::InvalidConfig {
+        message: format!("cannot inspect {}", config_path.display()),
+        source: Some(Box::new(source)),
+    })?;
+    if !metadata.file_type().is_file() {
+        return Err(PeerError::invalid_config(format!(
+            "{} is not a regular file",
+            config_path.display()
+        )));
+    }
+
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|source| PeerError::InvalidConfig {
+            message: format!("cannot read {}", config_path.display()),
+            source: Some(Box::new(source)),
+        })?;
+    Ok(content)
 }
 
 /// Walks parent directories from `from` looking for a `.peer/config.toml`
@@ -174,7 +211,13 @@ pub fn discover_peer_root(from: &Path) -> Result<PathBuf, PeerError> {
                     config_path.display()
                 )));
             }
-            Ok(_) => return Ok(dir.to_path_buf()),
+            Ok(metadata) if metadata.file_type().is_file() => return Ok(dir.to_path_buf()),
+            Ok(_) => {
+                return Err(PeerError::invalid_config(format!(
+                    "{} is not a regular file",
+                    config_path.display()
+                )));
+            }
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {}
             Err(source) => {
                 return Err(PeerError::InvalidConfig {
@@ -341,7 +384,66 @@ mod tests {
 
         let error = discover(tmp.path()).unwrap_err();
 
-        assert!(error.to_string().contains("is a symbolic link"));
+        assert!(error.to_string().contains("is a symbolic link"))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_follow_read_rejects_a_symbolic_link_config_file() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = init_dir(DEFAULT_CONFIG_TOML);
+        let config = tmp.path().join(".peer/config.toml");
+        let link = tmp.path().join("config.toml");
+        symlink(config, &link).unwrap();
+
+        assert_matches!(
+            read_config_no_follow(&link),
+            Err(PeerError::InvalidConfig { .. })
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_fifo_config_file() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let peer = tmp.path().join(".peer");
+        let config = peer.join("config.toml");
+        fs::create_dir(&peer).unwrap();
+        assert!(
+            Command::new("mkfifo")
+                .arg(&config)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        let error = discover_peer_root(tmp.path()).unwrap_err();
+
+        assert!(error.to_string().contains("is not a regular file"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn no_follow_read_rejects_a_fifo_config_file() {
+        use std::process::Command;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("config.toml");
+        assert!(
+            Command::new("mkfifo")
+                .arg(&config)
+                .status()
+                .unwrap()
+                .success()
+        );
+
+        assert_matches!(
+            read_config_no_follow(&config),
+            Err(PeerError::InvalidConfig { .. })
+        );
     }
 
     #[test]
@@ -394,7 +496,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         fs::create_dir_all(tmp.path().join(".peer/config.toml")).unwrap();
 
-        assert_matches!(discover(tmp.path()), Err(PeerError::InvalidConfig { .. }));
+        let error = discover(tmp.path()).unwrap_err();
+
+        assert!(error.to_string().contains("is not a regular file"));
     }
 
     #[test]
