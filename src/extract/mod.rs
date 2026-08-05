@@ -128,6 +128,8 @@ fn validate_repository_relative_path(path: &Path) -> Result<(), ExtractError> {
 mod tests {
     use super::*;
 
+    use std::assert_matches;
+
     #[cfg(unix)]
     #[test]
     fn rejects_non_utf8_path() {
@@ -137,10 +139,7 @@ mod tests {
         let path = PathBuf::from(OsString::from_vec(b"invalid-\xff.txt".to_vec()));
         let error = validate_repository_relative_path(&path).unwrap_err();
 
-        assert!(matches!(
-            &error,
-            ExtractError::InvalidRepositoryRelativePath(_)
-        ));
+        assert_matches!(&error, ExtractError::InvalidRepositoryRelativePath(_));
         assert_eq!(
             error.to_string(),
             "repository-relative path must be valid UTF-8"
