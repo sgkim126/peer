@@ -125,8 +125,8 @@ async fn handle_connection(stream: UnixStream, extractor: &Extractor) -> Result<
     // structured response with the original request ID when available.
     let request_value: Value = match read_record(&mut reader).await {
         Ok(value) => value,
-        // Malformed records cannot provide a trustworthy request ID.
-        Err(error @ CodecError::Json(_)) => {
+        // Malformed or oversized records cannot provide a trustworthy request ID.
+        Err(error @ (CodecError::Json(_) | CodecError::RecordTooLarge { .. })) => {
             return write_request_error(&mut writer, String::new(), error).await;
         }
         // I/O failures are transport errors, not invalid client input, so let the
@@ -392,6 +392,7 @@ mod tests {
     use tokio::net::UnixStream;
 
     use crate::git::run_git;
+    use crate::pi::rpc::MAX_RECORD_BYTES_FOR_TEST;
 
     async fn send_raw_request(request: Vec<u8>) -> ToolResponse {
         let repository = tempfile::tempdir().unwrap();
@@ -596,6 +597,21 @@ mod tests {
                 .as_deref()
                 .unwrap()
                 .contains("unknown field `extra`")
+        );
+    }
+
+    #[tokio::test]
+    async fn reports_oversized_requests_without_an_id() {
+        let mut request = vec![b' '; MAX_RECORD_BYTES_FOR_TEST as usize];
+        request.push(b' ');
+        let response = send_raw_request(request).await;
+
+        assert_eq!(response.id, "");
+        assert!(!response.success);
+        assert_eq!(response.data, None);
+        assert_eq!(
+            response.error.as_deref(),
+            Some("Pi RPC record exceeds the 4194304-byte limit")
         );
     }
 

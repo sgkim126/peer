@@ -31,6 +31,7 @@ pub struct RpcRequest {
 #[derive(Debug)]
 pub enum RpcError {
     Codec(CodecError),
+    UnusableAfterOversizedRecord,
     InvalidCommand,
     ReservedCommandId,
     Rejected { command: String, reason: String },
@@ -40,6 +41,9 @@ impl fmt::Display for RpcError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Codec(error) => error.fmt(f),
+            Self::UnusableAfterOversizedRecord => {
+                f.write_str("Pi RPC client is unusable after an oversized record")
+            }
             Self::InvalidCommand => f.write_str("Pi RPC command must be a JSON object"),
             Self::ReservedCommandId => {
                 f.write_str("Pi RPC command must not contain the reserved `id` field")
@@ -55,6 +59,7 @@ impl std::error::Error for RpcError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Codec(error) => Some(error),
+            Self::UnusableAfterOversizedRecord => None,
             Self::InvalidCommand => None,
             Self::ReservedCommandId => None,
             Self::Rejected { .. } => None,
@@ -73,6 +78,7 @@ pub struct RpcClient<R, W> {
     writer: W,
     events: VecDeque<Value>,
     next_id: u64,
+    unusable: bool,
 }
 
 impl<R, W> RpcClient<R, W>
@@ -87,11 +93,13 @@ where
             writer,
             events: VecDeque::new(),
             next_id: 1,
+            unusable: false,
         }
     }
 
     #[cfg_attr(not(test), expect(dead_code))]
     pub async fn request(&mut self, command: Value) -> Result<RpcResponse, RpcError> {
+        self.ensure_usable()?;
         let Value::Object(command) = command else {
             return Err(RpcError::InvalidCommand);
         };
@@ -106,7 +114,7 @@ where
         write_record(&mut self.writer, &request).await?;
 
         loop {
-            let value: Value = read_record(&mut self.reader).await?;
+            let value = self.read_value().await?;
             if value.get("type").and_then(Value::as_str) != Some("response") {
                 self.events.push_back(value);
                 continue;
@@ -131,9 +139,30 @@ where
 
     #[cfg_attr(not(test), expect(dead_code))]
     pub async fn next_event(&mut self) -> Result<Value, RpcError> {
+        self.ensure_usable()?;
         match self.events.pop_front() {
             Some(event) => Ok(event),
-            None => Ok(read_record(&mut self.reader).await?),
+            None => self.read_value().await,
+        }
+    }
+
+    fn ensure_usable(&self) -> Result<(), RpcError> {
+        if self.unusable {
+            Err(RpcError::UnusableAfterOversizedRecord)
+        } else {
+            Ok(())
+        }
+    }
+
+    async fn read_value(&mut self) -> Result<Value, RpcError> {
+        match read_record(&mut self.reader).await {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                if matches!(&error, CodecError::RecordTooLarge { .. }) {
+                    self.unusable = true;
+                }
+                Err(error.into())
+            }
         }
     }
 }
@@ -146,6 +175,8 @@ mod tests {
 
     use serde_json::json;
     use tokio::io::{AsyncReadExt, AsyncWriteExt, BufReader, duplex};
+
+    use super::super::MAX_RECORD_BYTES_FOR_TEST;
 
     #[tokio::test]
     async fn queues_events_while_waiting_for_a_response() {
@@ -260,5 +291,23 @@ mod tests {
 
         assert_matches!(result, Err(RpcError::ReservedCommandId));
         assert_eq!(client.next_id, 1);
+    }
+
+    #[tokio::test]
+    async fn becomes_unusable_when_an_oversized_record_leaves_a_remainder() {
+        let mut input = vec![b' '; MAX_RECORD_BYTES_FOR_TEST as usize + 1];
+        input.extend_from_slice(b"{\"type\":\"agent_start\"}\n");
+        let mut client = RpcClient::new(BufReader::new(input.as_slice()), tokio::io::sink());
+
+        let first = client.next_event().await;
+        assert_matches!(
+            first,
+            Err(RpcError::Codec(CodecError::RecordTooLarge {
+                max_bytes: MAX_RECORD_BYTES_FOR_TEST
+            }))
+        );
+
+        let second = client.next_event().await;
+        assert_matches!(second, Err(RpcError::UnusableAfterOversizedRecord));
     }
 }

@@ -3,13 +3,19 @@ use std::io;
 
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+
+const MAX_RECORD_BYTES: u64 = 4 * 1024 * 1024;
+
+#[cfg(test)]
+pub const MAX_RECORD_BYTES_FOR_TEST: u64 = MAX_RECORD_BYTES;
 
 #[derive(Debug)]
 pub enum CodecError {
     Io(io::Error),
     Eof,
     Json(serde_json::Error),
+    RecordTooLarge { max_bytes: u64 },
 }
 
 impl fmt::Display for CodecError {
@@ -18,6 +24,9 @@ impl fmt::Display for CodecError {
             Self::Io(error) => write!(f, "Pi RPC I/O failed: {error}"),
             Self::Eof => f.write_str("Pi RPC stream ended unexpectedly"),
             Self::Json(error) => write!(f, "Pi RPC record is invalid JSON: {error}"),
+            Self::RecordTooLarge { max_bytes } => {
+                write!(f, "Pi RPC record exceeds the {max_bytes}-byte limit")
+            }
         }
     }
 }
@@ -28,6 +37,7 @@ impl std::error::Error for CodecError {
             Self::Io(error) => Some(error),
             Self::Eof => None,
             Self::Json(error) => Some(error),
+            Self::RecordTooLarge { .. } => None,
         }
     }
 }
@@ -50,8 +60,17 @@ where
     T: DeserializeOwned,
 {
     let mut record = Vec::new();
-    if stdout.read_until(b'\n', &mut record).await? == 0 {
+    let bytes_read = stdout
+        .take(MAX_RECORD_BYTES + 1)
+        .read_until(b'\n', &mut record)
+        .await?;
+    if bytes_read == 0 {
         return Err(CodecError::Eof);
+    }
+    if bytes_read as u64 > MAX_RECORD_BYTES {
+        return Err(CodecError::RecordTooLarge {
+            max_bytes: MAX_RECORD_BYTES,
+        });
     }
     if record.last() != Some(&b'\n') {
         return Err(CodecError::Eof);
@@ -69,6 +88,11 @@ where
     T: Serialize,
 {
     let mut record = serde_json::to_vec(value)?;
+    if record.len() as u64 + 1 > MAX_RECORD_BYTES {
+        return Err(CodecError::RecordTooLarge {
+            max_bytes: MAX_RECORD_BYTES,
+        });
+    }
     record.push(b'\n');
     stdin.write_all(&record).await?;
     stdin.flush().await?;
@@ -119,5 +143,62 @@ mod tests {
 
         let result = read_record::<_, serde_json::Value>(&mut BufReader::new(output)).await;
         assert_matches!(result, Err(CodecError::Eof));
+    }
+
+    #[tokio::test]
+    async fn reads_a_record_at_the_size_limit() {
+        let mut record = Vec::with_capacity(MAX_RECORD_BYTES as usize);
+        record.push(b'"');
+        record.resize(MAX_RECORD_BYTES as usize - 2, b'a');
+        record.extend_from_slice(b"\"\n");
+
+        let value: String = read_record(&mut BufReader::new(record.as_slice()))
+            .await
+            .unwrap();
+
+        assert_eq!(value.len(), MAX_RECORD_BYTES as usize - 3);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_record_over_the_size_limit() {
+        let mut record = Vec::with_capacity(MAX_RECORD_BYTES as usize + 1);
+        record.push(b'"');
+        record.resize(MAX_RECORD_BYTES as usize - 1, b'a');
+        record.extend_from_slice(b"\"\n");
+
+        let result = read_record::<_, String>(&mut BufReader::new(record.as_slice())).await;
+
+        assert_matches!(
+            result,
+            Err(CodecError::RecordTooLarge {
+                max_bytes: MAX_RECORD_BYTES
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn writes_a_record_at_the_size_limit() {
+        let value = "a".repeat(MAX_RECORD_BYTES as usize - 3);
+        let mut output = Vec::new();
+
+        write_record(&mut output, &value).await.unwrap();
+
+        assert_eq!(output.len(), MAX_RECORD_BYTES as usize);
+    }
+
+    #[tokio::test]
+    async fn rejects_a_record_over_the_size_limit_before_writing() {
+        let value = "a".repeat(MAX_RECORD_BYTES as usize - 2);
+        let mut output = Vec::new();
+
+        let result = write_record(&mut output, &value).await;
+
+        assert_matches!(
+            result,
+            Err(CodecError::RecordTooLarge {
+                max_bytes: MAX_RECORD_BYTES
+            })
+        );
+        assert!(output.is_empty());
     }
 }
