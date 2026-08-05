@@ -13,6 +13,7 @@ pub struct PiProcessOptions {
     pub session_dir: PathBuf,
     pub extension: PathBuf,
     pub agent_dir: PathBuf,
+    pub tool_socket: PathBuf,
 }
 
 pub struct PiProcess {
@@ -76,6 +77,7 @@ fn build_command(options: &PiProcessOptions) -> Command {
         .env("PI_CODING_AGENT_DIR", &options.agent_dir)
         .env("PI_SKIP_VERSION_CHECK", "1")
         .env("PI_TELEMETRY", "0")
+        .env("PEER_TOOL_SOCKET", &options.tool_socket)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())
@@ -107,6 +109,7 @@ mod tests {
             session_dir: Path::new("/tmp/sessions with spaces").to_path_buf(),
             extension: Path::new("/tmp/extension.ts").to_path_buf(),
             agent_dir: Path::new("/tmp/agent").to_path_buf(),
+            tool_socket: Path::new("/tmp/peer-tools.sock").to_path_buf(),
         };
 
         let command = build_command(&options);
@@ -117,6 +120,9 @@ mod tests {
                 .get_args()
                 .any(|argument| argument == options.session_dir)
         );
+        assert!(command.as_std().get_envs().any(|(key, value)| {
+            key == "PEER_TOOL_SOCKET" && value == Some(options.tool_socket.as_os_str())
+        }));
         assert_eq!(
             command.as_std().get_current_dir(),
             Some(options.cwd.as_path())
@@ -131,6 +137,7 @@ mod tests {
             session_dir: Path::new("/tmp/sessions").to_path_buf(),
             extension: Path::new("/tmp/extension.ts").to_path_buf(),
             agent_dir: Path::new("/tmp/agent").to_path_buf(),
+            tool_socket: Path::new("/tmp/peer-tools.sock").to_path_buf(),
         };
 
         let command = build_command(&options);
