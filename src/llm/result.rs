@@ -98,6 +98,7 @@ pub struct LlmUsage {
 }
 
 #[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct CheckOutput {
     #[serde(default)]
     pub summary: String,
@@ -105,6 +106,7 @@ pub struct CheckOutput {
 }
 
 impl LlmUsage {
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_raw_usage(
         usage: RawUsage,
         model: impl Into<String>,
@@ -145,6 +147,7 @@ impl LlmUsage {
     }
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 fn cost_usd(usage: RawUsage, input_per_1m_usd: f64, output_per_1m_usd: f64) -> f64 {
     (usage.input_tokens as f64 / 1_000_000.0) * input_per_1m_usd
         + (usage.output_tokens as f64 / 1_000_000.0) * output_per_1m_usd

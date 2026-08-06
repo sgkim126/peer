@@ -12,6 +12,7 @@ use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::git::{CommitHash, GitError, run_git};
 use crate::llm::{CheckResult, LlmUsage};
+use crate::pi::PiRuntime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {
@@ -111,9 +112,10 @@ pub struct ReviewSummary {
     pub model: String,
 }
 
-pub struct ReviewOptions {
+pub struct ReviewOptions<'a> {
     pub context_usage: Option<LlmUsage>,
     pub resume: bool,
+    pub runtime: &'a mut PiRuntime,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Serialize)]
@@ -354,11 +356,12 @@ pub async fn run(
     project_root: PathBuf,
     cache: &CacheStore,
     review_context: &ReviewContextDigest,
-    options: ReviewOptions,
+    options: ReviewOptions<'_>,
 ) -> ReviewResult {
     let ReviewOptions {
         context_usage,
         resume,
+        runtime,
     } = options;
     let ReviewPlan {
         checks: planned_checks,
@@ -391,6 +394,7 @@ pub async fn run(
                 context_usage: None,
                 resume,
                 review_head: review_head.clone(),
+                runtime,
             },
         )
         .await
