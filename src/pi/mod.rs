@@ -1,3 +1,4 @@
+mod dependency;
 mod process;
 mod protocol;
 mod rpc;
