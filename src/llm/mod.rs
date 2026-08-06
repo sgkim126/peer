@@ -13,7 +13,7 @@ pub use self::provider::{
     ProviderKind, ProviderRuntime, RawUsage, ToolCall, ToolSpec,
 };
 pub use self::result::{
-    CheckError, CheckOutput, CheckResult, CheckTarget, Finding, LlmUsage, Severity,
+    CheckError, CheckOutput, CheckResult, CheckTarget, Finding, LlmModelUsage, LlmUsage, Severity,
 };
 pub use self::tools::{
     ExtractToolExecutor, NoToolExecutor, ToolExecutionResult, ToolExecutor, get_changed_files,
