@@ -1,3 +1,4 @@
+mod assets;
 mod dependency;
 mod process;
 mod protocol;
