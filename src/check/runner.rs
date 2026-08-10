@@ -76,6 +76,12 @@ impl From<ModelRefError> for CheckRunError {
     }
 }
 
+impl From<ExtractError> for CheckRunError {
+    fn from(error: ExtractError) -> Self {
+        Self::Preparation(error)
+    }
+}
+
 pub struct Checker {
     extractor: Extractor,
     config: CheckRunConfig,
@@ -108,10 +114,7 @@ impl Checker {
     where
         C: CheckDefinition,
     {
-        let request = check
-            .request(&self.extractor, review_context)
-            .await
-            .map_err(CheckRunError::Preparation)?;
+        let request = check.request(&self.extractor, review_context).await?;
         let target = check.target();
         self.config
             .console
