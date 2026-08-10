@@ -214,6 +214,7 @@ async fn main() -> ExitCode {
                 review::ReviewOptions {
                     context_usage: compression.usage,
                     resume: !no_resume,
+                    runtime: &mut pi,
                 },
             )
             .await;
@@ -390,6 +391,7 @@ async fn main() -> ExitCode {
                             context_usage: compression.usage,
                             resume: !no_resume,
                             review_head,
+                            runtime: &mut pi,
                         },
                     )
                     .await

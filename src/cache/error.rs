@@ -63,6 +63,7 @@ impl std::error::Error for CacheReadError {
 }
 
 #[derive(Debug)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct CacheRemoveError {
     pub path: PathBuf,
     pub source: std::io::Error,

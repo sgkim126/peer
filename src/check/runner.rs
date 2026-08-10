@@ -1,42 +1,47 @@
 use std::fmt;
 
+use serde::Deserialize;
+
+use crate::cache::{CacheKey, CacheKeyError};
 use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
-use crate::llm::{
-    Agent, AgentCheckpoint, AgentOutcome, CheckError, CheckOutput, CheckResult, CheckTarget,
-    ExtractToolExecutor, Finding, LlmCallError, LlmUsage, ProviderRuntime, RawUsage,
-    request_clarification, submit_check_result,
+use crate::llm::{CheckError, CheckResult, CheckTarget, ConversationTurn, Finding, LlmUsage};
+use crate::pi::{
+    CheckKind, ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, ReadTool,
+    RunConfig, TerminalTool, tool_contract_digest,
 };
 
 use super::CheckDefinition;
 
 pub struct CheckRunConfig {
-    pub model: String,
+    pub model: ModelRef,
     pub max_iterations: u32,
-    pub input_per_1m_usd: f64,
-    pub output_per_1m_usd: f64,
     pub context_usage: Option<LlmUsage>,
-    pub checkpoint: Option<AgentCheckpoint>,
+    pub session_key: CacheKey,
+    pub resume: bool,
     pub console: Console,
 }
 
 #[derive(Debug)]
-#[expect(dead_code)]
 pub enum CheckRunError {
     Preparation(ExtractError),
-    LlmCall(LlmCallError),
+    Pi(PiRunError),
+    CacheKey(CacheKeyError),
+    InvalidModel(ModelRefError),
+    InvalidRequest(String),
     InvalidOutput(String),
-    ClarificationRequested(Vec<String>),
 }
 
 impl fmt::Display for CheckRunError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Preparation(e) => write!(f, "failed to prepare check: {e}"),
-            Self::LlmCall(e) => e.fmt(f),
+            Self::Pi(e) => e.fmt(f),
+            Self::CacheKey(e) => write!(f, "cannot build Pi session cache key: {e}"),
+            Self::InvalidModel(e) => write!(f, "invalid Pi model: {e}"),
+            Self::InvalidRequest(e) => write!(f, "invalid check request: {e}"),
             Self::InvalidOutput(e) => write!(f, "invalid check output: {e}"),
-            Self::ClarificationRequested(_) => f.write_str("check requested clarification"),
         }
     }
 }
@@ -44,88 +49,119 @@ impl std::error::Error for CheckRunError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Preparation(error) => Some(error),
-            Self::LlmCall(error) => Some(error),
+            Self::Pi(error) => Some(error),
+            Self::CacheKey(error) => Some(error),
+            Self::InvalidModel(error) => Some(error),
+            Self::InvalidRequest(_) => None,
             Self::InvalidOutput(_) => None,
-            Self::ClarificationRequested(_) => None,
         }
+    }
+}
+
+impl From<CacheKeyError> for CheckRunError {
+    fn from(error: CacheKeyError) -> Self {
+        Self::CacheKey(error)
+    }
+}
+
+impl From<ModelRefError> for CheckRunError {
+    fn from(error: ModelRefError) -> Self {
+        Self::InvalidModel(error)
     }
 }
 
 pub struct Checker {
     extractor: Extractor,
-    runtime: ProviderRuntime,
     config: CheckRunConfig,
 }
 
-pub struct CheckExecution {
-    pub result: CheckResult,
-    pub checkpoint: Option<AgentCheckpoint>,
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum CheckOutcome {
+    CheckResult {
+        #[serde(default)]
+        summary: String,
+        findings: Vec<Finding>,
+    },
+    Clarification {
+        questions: Vec<String>,
+    },
 }
 
 impl Checker {
-    pub fn new(extractor: Extractor, runtime: ProviderRuntime, config: CheckRunConfig) -> Self {
-        Self {
-            extractor,
-            runtime,
-            config,
-        }
+    pub fn new(extractor: Extractor, config: CheckRunConfig) -> Self {
+        Self { extractor, config }
     }
 
     pub async fn run<C>(
         self,
+        runtime: &mut PiRuntime,
         check: &C,
         review_context: &ReviewContextDigest,
-    ) -> Result<CheckExecution, CheckRunError>
+    ) -> Result<CheckResult, CheckRunError>
     where
         C: CheckDefinition,
     {
         let request = check
-            .agent_request(&self.extractor, &self.config.model, review_context)
+            .agent_request(&self.extractor, self.config.model.model(), review_context)
             .await
             .map_err(CheckRunError::Preparation)?;
         let target = check.target();
-        let target_description = match &target {
-            CheckTarget::Commit(commit) => commit.to_string(),
-            CheckTarget::Range { from, to } => format!("{from}..{to}"),
+        self.config
+            .console
+            .debug(format_args!("check {} for {target}", check.name()));
+        let (system_prompt, prompt) = prompts(request.conversation)?;
+        let read_tools = request
+            .tools
+            .into_iter()
+            .map(|tool| read_tool(&tool.name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let terminal_tools = request
+            .terminal_tools
+            .into_iter()
+            .map(|tool| terminal_tool(&tool.name))
+            .collect::<Result<Vec<_>, _>>()?;
+        let result = runtime
+            .run(PiRunRequest {
+                session_key: self.config.session_key.clone(),
+                config: RunConfig {
+                    tool_contract_digest: tool_contract_digest(),
+                    operation: Operation::Check {
+                        check: check_kind(check.name())?,
+                        target: target.to_string(),
+                        expected_commits: check.expected_commits().to_vec(),
+                    },
+                    system_prompt,
+                    read_tools,
+                    terminal_tools,
+                    max_turns: self.config.max_iterations,
+                },
+                model: self.config.model.clone(),
+                prompt,
+                resume: self.config.resume,
+            })
+            .await;
+        let result = match result {
+            Ok(result) => result,
+            Err(PiRunError::Exhausted { turns, usage }) => {
+                let reason = format!("Pi did not submit an outcome within {turns} turns");
+                return Ok(self.build_result(
+                    check,
+                    target,
+                    format!("Check did not complete: {reason}"),
+                    Vec::new(),
+                    turns,
+                    usage,
+                    Some(CheckError::Exhausted { reason }),
+                ));
+            }
+            Err(error) => return Err(CheckRunError::Pi(error)),
         };
-        self.config.console.debug(format_args!(
-            "check {} for {}",
-            check.name(),
-            target_description
-        ));
-        let (provider, transport) = self.runtime.into_parts();
-        let agent = Agent::new(
-            provider,
-            transport,
-            ExtractToolExecutor::new(self.extractor),
-            self.config.console,
-        );
-        match agent
-            .run_loop(
-                request,
-                self.config.max_iterations,
-                self.config.checkpoint.clone(),
-            )
-            .await
-        {
-            AgentOutcome::Terminal(done) if done.call.name == submit_check_result().name => {
-                let output: CheckOutput = match serde_json::from_value(done.call.arguments) {
-                    Ok(output) => output,
-                    Err(error) => {
-                        let reason = format!("invalid submit_check_result arguments: {error}");
-                        return Ok(completed(build_result(
-                            check,
-                            target,
-                            format!("Check did not complete: {reason}"),
-                            Vec::new(),
-                            done.iterations,
-                            done.usage,
-                            Some(CheckError::InvalidOutput { reason }),
-                            &self.config,
-                        )));
-                    }
-                };
-                if !output.findings.iter().all(|finding| {
+        let outcome: CheckOutcome = serde_json::from_value(result.outcome)
+            .map_err(|error| CheckRunError::InvalidOutput(error.to_string()))?;
+        match outcome {
+            CheckOutcome::CheckResult { summary, findings } => {
+                if !findings.iter().all(|finding| {
                     // Expected commits are full hashes produced while resolving the check
                     // target, but a finding may report an abbreviated commit hash.
                     check
@@ -137,34 +173,19 @@ impl Checker {
                         "finding commit is outside the check target".to_string(),
                     ));
                 }
-                Ok(completed(build_result(
+                Ok(self.build_result(
                     check,
                     target,
-                    output.summary,
-                    output.findings,
-                    done.iterations,
-                    done.usage,
+                    summary,
+                    findings,
+                    result.iterations,
+                    result.usage,
                     None,
-                    &self.config,
-                )))
+                ))
             }
-            AgentOutcome::Terminal(done) if done.call.name == request_clarification().name => {
-                let questions = match parse_clarification_questions(done.call.arguments) {
-                    Ok(questions) => questions,
-                    Err(reason) => {
-                        return Ok(completed(build_result(
-                            check,
-                            target,
-                            format!("Check did not complete: {reason}"),
-                            Vec::new(),
-                            done.iterations,
-                            done.usage,
-                            Some(CheckError::InvalidOutput { reason }),
-                            &self.config,
-                        )));
-                    }
-                };
-                Ok(completed(build_result(
+            CheckOutcome::Clarification { questions } => {
+                validate_questions(&questions).map_err(CheckRunError::InvalidOutput)?;
+                Ok(self.build_result(
                     check,
                     target,
                     format!(
@@ -176,116 +197,120 @@ impl Checker {
                             .join("\n")
                     ),
                     Vec::new(),
-                    done.iterations,
-                    done.usage,
+                    result.iterations,
+                    result.usage,
                     Some(CheckError::ClarificationRequired { questions }),
-                    &self.config,
-                )))
+                ))
             }
-            AgentOutcome::Terminal(done) => {
-                let reason = format!("unexpected terminal tool: {}", done.call.name);
-                Ok(completed(build_result(
-                    check,
-                    target,
-                    format!("Check did not complete: {reason}"),
-                    Vec::new(),
-                    done.iterations,
-                    done.usage,
-                    Some(CheckError::UnexpectedTerminal {
-                        tool: done.call.name,
-                    }),
-                    &self.config,
-                )))
-            }
-            AgentOutcome::Error(failure) => {
-                let reason = failure.error.to_string();
-                let iterations = failure.checkpoint.iterations;
-                let checkpoint = (failure.exhausted || failure.error.is_transient())
-                    .then_some(failure.checkpoint);
-                Ok(CheckExecution {
-                    result: build_result(
-                        check,
-                        target,
-                        format!("Check did not complete: {reason}"),
-                        Vec::new(),
-                        iterations,
-                        failure.usage,
-                        Some(if failure.exhausted {
-                            CheckError::Exhausted { reason }
-                        } else {
-                            CheckError::Agent { reason }
-                        }),
-                        &self.config,
-                    ),
-                    checkpoint,
-                })
-            }
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_result<C>(
+        &self,
+        check: &C,
+        target: CheckTarget,
+        summary: String,
+        findings: Vec<Finding>,
+        iterations: u32,
+        usage: LlmUsage,
+        error: Option<CheckError>,
+    ) -> CheckResult
+    where
+        C: CheckDefinition,
+    {
+        CheckResult {
+            check: check.name().to_string(),
+            target,
+            ordered_commits: check.expected_commits().to_vec(),
+            summary,
+            findings,
+            iterations,
+            error,
+            context_usage: self.config.context_usage.clone(),
+            usage,
         }
     }
 }
 
-fn completed(result: CheckResult) -> CheckExecution {
-    CheckExecution {
-        result,
-        checkpoint: None,
+fn prompts(conversation: Vec<ConversationTurn>) -> Result<(String, String), CheckRunError> {
+    let mut system_prompt = None;
+    let mut user_prompts = Vec::new();
+    for turn in conversation {
+        match turn {
+            ConversationTurn::System(prompt) if system_prompt.is_none() => {
+                system_prompt = Some(prompt);
+            }
+            ConversationTurn::User(prompt) => user_prompts.push(prompt),
+            ConversationTurn::System(_) => {
+                return Err(CheckRunError::InvalidRequest(
+                    "multiple system prompts".to_string(),
+                ));
+            }
+            ConversationTurn::AssistantToolCalls(_) | ConversationTurn::ToolResult { .. } => {
+                return Err(CheckRunError::InvalidRequest(
+                    "tool history is not supported".to_string(),
+                ));
+            }
+        }
+    }
+    let system_prompt = system_prompt
+        .filter(|prompt| !prompt.trim().is_empty())
+        .ok_or_else(|| CheckRunError::InvalidRequest("missing system prompt".to_string()))?;
+    if user_prompts.is_empty() {
+        return Err(CheckRunError::InvalidRequest(
+            "missing user prompt".to_string(),
+        ));
+    }
+    Ok((system_prompt, user_prompts.join("\n\n")))
+}
+
+fn validate_questions(questions: &[String]) -> Result<(), String> {
+    if questions.is_empty() {
+        return Err("clarification questions must not be empty".to_string());
+    }
+    if questions.iter().any(|question| question.trim().is_empty()) {
+        return Err("clarification questions must not contain blank values".to_string());
+    }
+    Ok(())
+}
+
+fn check_kind(name: &str) -> Result<CheckKind, CheckRunError> {
+    match name {
+        "size" => Ok(CheckKind::Size),
+        "intent" => Ok(CheckKind::Intent),
+        "quality" => Ok(CheckKind::Quality),
+        "security" => Ok(CheckKind::Security),
+        "coherence" => Ok(CheckKind::Coherence),
+        _ => Err(CheckRunError::InvalidRequest(format!(
+            "unknown check kind: {name}"
+        ))),
     }
 }
 
-fn parse_clarification_questions(arguments: serde_json::Value) -> Result<Vec<String>, String> {
-    #[derive(serde::Deserialize)]
-    struct ClarificationArguments {
-        questions: Vec<String>,
+fn read_tool(name: &str) -> Result<ReadTool, CheckRunError> {
+    match name {
+        "get_commit_message" => Ok(ReadTool::GetCommitMessage),
+        "get_commit_diff" => Ok(ReadTool::GetCommitDiff),
+        "get_changed_files" => Ok(ReadTool::GetChangedFiles),
+        "get_commits_in_range" => Ok(ReadTool::GetCommitsInRange),
+        "get_file_content" => Ok(ReadTool::GetFileContent),
+        "get_file_diff" => Ok(ReadTool::GetFileDiff),
+        "list_tree" => Ok(ReadTool::ListTree),
+        "grep" => Ok(ReadTool::Grep),
+        _ => Err(CheckRunError::InvalidRequest(format!(
+            "unknown read tool: {name}"
+        ))),
     }
-
-    let arguments: ClarificationArguments = serde_json::from_value(arguments)
-        .map_err(|error| format!("invalid request_clarification arguments: {error}"))?;
-    if arguments.questions.is_empty() {
-        return Err(
-            "invalid request_clarification arguments: questions must not be empty".to_string(),
-        );
-    }
-    if arguments
-        .questions
-        .iter()
-        .any(|question| question.trim().is_empty())
-    {
-        return Err(
-            "invalid request_clarification arguments: questions must not contain blank values"
-                .to_string(),
-        );
-    }
-    Ok(arguments.questions)
 }
 
-#[allow(clippy::too_many_arguments)]
-fn build_result<C>(
-    check: &C,
-    target: CheckTarget,
-    summary: String,
-    findings: Vec<Finding>,
-    iterations: u32,
-    usage: RawUsage,
-    error: Option<CheckError>,
-    config: &CheckRunConfig,
-) -> CheckResult
-where
-    C: CheckDefinition,
-{
-    CheckResult {
-        check: check.name().to_string(),
-        target,
-        ordered_commits: check.expected_commits().to_vec(),
-        summary,
-        findings,
-        iterations,
-        error,
-        context_usage: config.context_usage.clone(),
-        usage: LlmUsage::from_raw_usage(
-            usage,
-            &config.model,
-            config.input_per_1m_usd,
-            config.output_per_1m_usd,
-        ),
+fn terminal_tool(name: &str) -> Result<TerminalTool, CheckRunError> {
+    match name {
+        "submit_check_result" => Ok(TerminalTool::SubmitCheckResult),
+        "request_clarification" => Ok(TerminalTool::RequestClarification),
+        _ => Err(CheckRunError::InvalidRequest(format!(
+            "unknown terminal tool: {name}"
+        ))),
     }
 }
 
@@ -293,34 +318,45 @@ where
 mod tests {
     use super::*;
 
-    use serde_json::json;
+    use std::assert_matches;
 
     #[test]
-    fn parses_non_empty_clarification_questions() {
-        assert_eq!(
-            parse_clarification_questions(json!({
-                "questions": ["Which deployment policy applies?"]
-            }))
-            .unwrap(),
-            ["Which deployment policy applies?"]
-        );
+    fn separates_the_system_prompt_from_user_input() {
+        let (system, prompt) = prompts(vec![
+            ConversationTurn::System("Review code.".to_string()),
+            ConversationTurn::User("Input".to_string()),
+            ConversationTurn::User("Context".to_string()),
+        ])
+        .unwrap();
+
+        assert_eq!(system, "Review code.");
+        assert_eq!(prompt, "Input\n\nContext");
     }
 
     #[test]
-    fn rejects_empty_clarification_questions() {
-        assert_eq!(
-            parse_clarification_questions(json!({ "questions": [] })).unwrap_err(),
-            "invalid request_clarification arguments: questions must not be empty"
-        );
+    fn rejects_invalid_requests() {
+        let Err(CheckRunError::InvalidRequest(message)) =
+            prompts(vec![ConversationTurn::User("Input".to_string())])
+        else {
+            panic!("missing system prompt must be rejected");
+        };
+
+        assert_eq!(message, "missing system prompt");
     }
 
     #[test]
-    fn rejects_blank_clarification_questions() {
-        for question in ["", " \t\n"] {
-            assert_eq!(
-                parse_clarification_questions(json!({ "questions": [question] })).unwrap_err(),
-                "invalid request_clarification arguments: questions must not contain blank values"
-            );
-        }
+    fn validates_clarification_questions() {
+        assert_matches!(validate_questions(&["Which behavior?".to_string()]), Ok(_));
+        assert_matches!(validate_questions(&[]), Err(_));
+        assert_matches!(validate_questions(&["  ".to_string()]), Err(_));
+    }
+
+    #[test]
+    fn maps_prepared_tool_names_to_the_protocol() {
+        assert_eq!(read_tool("grep").unwrap(), ReadTool::Grep);
+        assert_eq!(
+            terminal_tool("submit_check_result").unwrap(),
+            TerminalTool::SubmitCheckResult
+        );
     }
 }

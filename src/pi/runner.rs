@@ -50,14 +50,7 @@ pub enum PiRunError {
     CacheWrite(CacheWriteError),
     UnsafeSessionPath(PathBuf),
     InvalidState(String),
-    Exhausted {
-        turns: u32,
-        #[expect(
-            dead_code,
-            reason = "usage must be retained for accounting when an exhausted run is resumed"
-        )]
-        usage: LlmUsage,
-    },
+    Exhausted { turns: u32, usage: LlmUsage },
 }
 
 impl PiRunError {

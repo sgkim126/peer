@@ -132,6 +132,7 @@ impl CacheStore {
         Ok(())
     }
 
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn remove(&self, key: &CacheKey) -> Result<(), CacheRemoveError> {
         let path = self.path_for(key);
         match std::fs::remove_file(&path) {
