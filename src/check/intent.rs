@@ -1,12 +1,10 @@
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::{
-    AgentRequest, CheckTarget, ConversationTurn, get_changed_files, get_file_content,
-    request_clarification, submit_check_result,
-};
+use crate::llm::CheckTarget;
+use crate::pi::ReadTool;
 
-use super::CheckDefinition;
+use super::{CheckDefinition, CheckRequest};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for alignment between its stated intent and its actual changes.
 
@@ -45,12 +43,11 @@ impl CheckDefinition for IntentCheck {
         std::slice::from_ref(&self.commit)
     }
 
-    async fn agent_request(
+    async fn request(
         &self,
         extractor: &Extractor,
-        model: &str,
         review_context: &ReviewContextDigest,
-    ) -> Result<AgentRequest, ExtractError> {
+    ) -> Result<CheckRequest, ExtractError> {
         let message = extractor.commit_message(self.commit.as_ref()).await?;
         let diff = extractor.commit_diff(self.commit.as_ref()).await?;
         let input = serde_json::json!({
@@ -58,21 +55,14 @@ impl CheckDefinition for IntentCheck {
             "commit_message": message.message,
             "diff": diff.diff,
         });
-        let mut request = AgentRequest {
-            model: model.to_string(),
-            conversation: vec![
-                ConversationTurn::System(SYSTEM_PROMPT.to_string()),
-                ConversationTurn::User(format!(
-                    "Review the following required commit data:\n{}",
-                    serde_json::to_string_pretty(&input).expect("intent check input serializes")
-                )),
-            ],
-            tools: vec![get_changed_files(), get_file_content()],
-            terminal_tools: vec![request_clarification(), submit_check_result()],
-        };
-        if let Some(prompt) = review_context.to_prompt() {
-            request.conversation.push(ConversationTurn::User(prompt));
-        }
-        Ok(request)
+        Ok(CheckRequest::new(
+            SYSTEM_PROMPT,
+            format!(
+                "Review the following required commit data:\n{}",
+                serde_json::to_string_pretty(&input).expect("intent check input serializes")
+            ),
+            vec![ReadTool::GetChangedFiles, ReadTool::GetFileContent],
+            review_context,
+        ))
     }
 }

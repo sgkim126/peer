@@ -17,8 +17,8 @@ use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::{AgentRequest, CheckResult, CheckTarget, Finding, LlmUsage};
-use crate::pi::{ModelRef, ModelRefError, PiRuntime};
+use crate::llm::{CheckResult, CheckTarget, Finding, LlmUsage};
+use crate::pi::{ModelRef, ModelRefError, PiRuntime, ReadTool, TerminalTool};
 
 use self::coherence::CoherenceCheck;
 use self::intent::IntentCheck;
@@ -31,12 +31,41 @@ trait CheckDefinition {
     fn name(&self) -> &'static str;
     fn target(&self) -> CheckTarget;
     fn expected_commits(&self) -> &[CommitHash];
-    async fn agent_request(
+    async fn request(
         &self,
         extractor: &Extractor,
-        model: &str,
         review_context: &ReviewContextDigest,
-    ) -> Result<AgentRequest, ExtractError>;
+    ) -> Result<CheckRequest, ExtractError>;
+}
+
+struct CheckRequest {
+    system_prompt: String,
+    prompt: String,
+    read_tools: Vec<ReadTool>,
+    terminal_tools: Vec<TerminalTool>,
+}
+
+impl CheckRequest {
+    fn new(
+        system_prompt: &str,
+        prompt: String,
+        read_tools: Vec<ReadTool>,
+        review_context: &ReviewContextDigest,
+    ) -> Self {
+        let prompt = match review_context.to_prompt() {
+            Some(context) => format!("{prompt}\n\n{context}"),
+            None => prompt,
+        };
+        Self {
+            system_prompt: system_prompt.to_string(),
+            prompt,
+            read_tools,
+            terminal_tools: vec![
+                TerminalTool::RequestClarification,
+                TerminalTool::SubmitCheckResult,
+            ],
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -239,18 +268,17 @@ impl CheckDefinition for Check {
         }
     }
 
-    async fn agent_request(
+    async fn request(
         &self,
         extractor: &Extractor,
-        model: &str,
         review_context: &ReviewContextDigest,
-    ) -> Result<AgentRequest, ExtractError> {
+    ) -> Result<CheckRequest, ExtractError> {
         match self {
-            Self::Size(check) => check.agent_request(extractor, model, review_context).await,
-            Self::Intent(check) => check.agent_request(extractor, model, review_context).await,
-            Self::Quality(check) => check.agent_request(extractor, model, review_context).await,
-            Self::Security(check) => check.agent_request(extractor, model, review_context).await,
-            Self::Coherence(check) => check.agent_request(extractor, model, review_context).await,
+            Self::Size(check) => check.request(extractor, review_context).await,
+            Self::Intent(check) => check.request(extractor, review_context).await,
+            Self::Quality(check) => check.request(extractor, review_context).await,
+            Self::Security(check) => check.request(extractor, review_context).await,
+            Self::Coherence(check) => check.request(extractor, review_context).await,
         }
     }
 }
