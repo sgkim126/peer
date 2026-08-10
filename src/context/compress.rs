@@ -54,9 +54,7 @@ pub async fn compress_review_context(
         });
     }
 
-    let (provider_config, model_config) = config
-        .resolve_provider(None, None)
-        .map_err(ContextCompressionError::Config)?;
+    let (provider_config, model_config) = config.resolve_provider(None, None)?;
     let cache_key = match CacheKey::from_params(
         CONTEXT_CACHE_NAMESPACE,
         &provider_config.name,
@@ -110,9 +108,7 @@ pub async fn compress_review_context(
         })
         .await?;
     let ContextOutcome::ReviewContext { digest } = serde_json::from_value(result.outcome)?;
-    digest
-        .validate(context)
-        .map_err(|source| ContextCompressionError::InvalidDigest { source })?;
+    digest.validate(context)?;
 
     if let Some(key) = &cache_key
         && let Err(error) = cache.write_json(key, &digest)
@@ -150,7 +146,7 @@ pub enum ContextCompressionError {
     InvalidModel(ModelRefError),
     Pi(PiRunError),
     InvalidOutcome(serde_json::Error),
-    InvalidDigest { source: DigestValidationError },
+    InvalidDigest(DigestValidationError),
 }
 
 impl fmt::Display for ContextCompressionError {
@@ -163,7 +159,7 @@ impl fmt::Display for ContextCompressionError {
             Self::InvalidOutcome(source) => {
                 write!(f, "invalid review context outcome from Pi: {source}")
             }
-            Self::InvalidDigest { source, .. } => {
+            Self::InvalidDigest(source) => {
                 write!(f, "invalid review context digest: {source}")
             }
         }
@@ -178,8 +174,14 @@ impl std::error::Error for ContextCompressionError {
             Self::InvalidModel(source) => Some(source),
             Self::Pi(source) => Some(source),
             Self::InvalidOutcome(source) => Some(source),
-            Self::InvalidDigest { source, .. } => Some(source),
+            Self::InvalidDigest(source) => Some(source),
         }
+    }
+}
+
+impl From<PeerError> for ContextCompressionError {
+    fn from(error: PeerError) -> Self {
+        Self::Config(error)
     }
 }
 
@@ -192,6 +194,12 @@ impl From<CacheKeyError> for ContextCompressionError {
 impl From<ModelRefError> for ContextCompressionError {
     fn from(error: ModelRefError) -> Self {
         Self::InvalidModel(error)
+    }
+}
+
+impl From<DigestValidationError> for ContextCompressionError {
+    fn from(error: DigestValidationError) -> Self {
+        Self::InvalidDigest(error)
     }
 }
 
