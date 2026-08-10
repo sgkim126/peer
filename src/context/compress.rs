@@ -107,8 +107,14 @@ pub async fn compress_review_context(
             resume,
         })
         .await?;
-    let ContextOutcome::ReviewContext { digest } = serde_json::from_value(result.outcome)?;
-    digest.validate(context)?;
+    let usage = result.usage;
+    let ContextOutcome::ReviewContext { digest } = match serde_json::from_value(result.outcome) {
+        Ok(outcome) => outcome,
+        Err(source) => return Err(ContextCompressionError::InvalidOutcome { source, usage }),
+    };
+    if let Err(source) = digest.validate(context) {
+        return Err(ContextCompressionError::InvalidDigest { source, usage });
+    }
 
     if let Some(key) = &cache_key
         && let Err(error) = cache.write_json(key, &digest)
@@ -119,7 +125,7 @@ pub async fn compress_review_context(
     }
     Ok(ContextCompression {
         digest,
-        usage: Some(result.usage),
+        usage: Some(usage),
     })
 }
 
@@ -145,8 +151,23 @@ pub enum ContextCompressionError {
     CacheKey(CacheKeyError),
     InvalidModel(ModelRefError),
     Pi(PiRunError),
-    InvalidOutcome(serde_json::Error),
-    InvalidDigest(DigestValidationError),
+    InvalidOutcome {
+        source: serde_json::Error,
+        usage: LlmUsage,
+    },
+    InvalidDigest {
+        source: DigestValidationError,
+        usage: LlmUsage,
+    },
+}
+
+impl ContextCompressionError {
+    pub fn usage(&self) -> Option<&LlmUsage> {
+        match self {
+            Self::InvalidOutcome { usage, .. } | Self::InvalidDigest { usage, .. } => Some(usage),
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for ContextCompressionError {
@@ -156,10 +177,10 @@ impl fmt::Display for ContextCompressionError {
             Self::CacheKey(source) => write!(f, "cannot build Pi session cache key: {source}"),
             Self::InvalidModel(source) => write!(f, "invalid Pi model: {source}"),
             Self::Pi(source) => write!(f, "failed to compress review context: {source}"),
-            Self::InvalidOutcome(source) => {
+            Self::InvalidOutcome { source, .. } => {
                 write!(f, "invalid review context outcome from Pi: {source}")
             }
-            Self::InvalidDigest(source) => {
+            Self::InvalidDigest { source, .. } => {
                 write!(f, "invalid review context digest: {source}")
             }
         }
@@ -173,8 +194,8 @@ impl std::error::Error for ContextCompressionError {
             Self::CacheKey(source) => Some(source),
             Self::InvalidModel(source) => Some(source),
             Self::Pi(source) => Some(source),
-            Self::InvalidOutcome(source) => Some(source),
-            Self::InvalidDigest(source) => Some(source),
+            Self::InvalidOutcome { source, .. } => Some(source),
+            Self::InvalidDigest { source, .. } => Some(source),
         }
     }
 }
@@ -197,21 +218,9 @@ impl From<ModelRefError> for ContextCompressionError {
     }
 }
 
-impl From<DigestValidationError> for ContextCompressionError {
-    fn from(error: DigestValidationError) -> Self {
-        Self::InvalidDigest(error)
-    }
-}
-
 impl From<PiRunError> for ContextCompressionError {
     fn from(error: PiRunError) -> Self {
         Self::Pi(error)
-    }
-}
-
-impl From<serde_json::Error> for ContextCompressionError {
-    fn from(error: serde_json::Error) -> Self {
-        Self::InvalidOutcome(error)
     }
 }
 

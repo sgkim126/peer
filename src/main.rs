@@ -195,6 +195,12 @@ async fn main() -> ExitCode {
                 Err(error) => {
                     eprintln!("error: {error}");
                     console.debug(format_args!("{error:?}"));
+                    if let Some(usage) = error.usage() {
+                        console.verbose(format_args!(
+                            "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
+                            usage.model, usage.cost_usd, usage.input_tokens, usage.output_tokens,
+                        ));
+                    }
                     return ExitCode::FAILURE;
                 }
             };
@@ -361,6 +367,15 @@ async fn main() -> ExitCode {
                         Err(error) => {
                             eprintln!("error: {error}");
                             console.debug(format_args!("{error:?}"));
+                            if let Some(usage) = error.usage() {
+                                console.verbose(format_args!(
+                                    "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
+                                    usage.model,
+                                    usage.cost_usd,
+                                    usage.input_tokens,
+                                    usage.output_tokens,
+                                ));
+                            }
                             return ExitCode::FAILURE;
                         }
                     };
