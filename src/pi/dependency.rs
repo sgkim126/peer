@@ -8,7 +8,6 @@ use tokio::process::Command;
 pub const SUPPORTED_PI_VERSION: &str = "0.83.0";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PiDependency {
     pub executable: PathBuf,
     pub version: String,
@@ -66,7 +65,6 @@ impl From<std::io::Error> for DependencyError {
 }
 
 impl PiDependency {
-    #[expect(dead_code)]
     pub async fn discover() -> Result<Self, DependencyError> {
         let search_path = std::env::var_os("PATH").ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, "PATH is not configured")

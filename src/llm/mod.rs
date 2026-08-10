@@ -16,9 +16,8 @@ pub use self::result::{
     CheckError, CheckOutput, CheckResult, CheckTarget, Finding, LlmModelUsage, LlmUsage, Severity,
 };
 pub use self::tools::{
-    ExtractToolExecutor, NoToolExecutor, ToolExecutionResult, ToolExecutor, get_changed_files,
-    get_commit_diff, get_file_content, get_file_diff, grep, list_tree, request_clarification,
-    submit_check_result, submit_review_context_digest,
+    ExtractToolExecutor, ToolExecutionResult, ToolExecutor, get_changed_files, get_commit_diff,
+    get_file_content, get_file_diff, grep, list_tree, request_clarification, submit_check_result,
 };
 
 #[cfg(test)]

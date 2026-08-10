@@ -40,7 +40,6 @@ pub struct PiRunResult {
 }
 
 #[derive(Debug)]
-#[expect(dead_code)]
 pub enum PiRunError {
     Dependency(DependencyError),
     Assets(AssetError),
@@ -51,7 +50,14 @@ pub enum PiRunError {
     CacheWrite(CacheWriteError),
     UnsafeSessionPath(PathBuf),
     InvalidState(String),
-    Exhausted { turns: u32, usage: LlmUsage },
+    Exhausted {
+        turns: u32,
+        #[expect(
+            dead_code,
+            reason = "usage must be retained for accounting when an exhausted run is resumed"
+        )]
+        usage: LlmUsage,
+    },
 }
 
 impl PiRunError {
@@ -188,7 +194,6 @@ pub struct PiRunner {
 }
 
 impl PiRunner {
-    #[expect(dead_code)]
     pub fn new(
         process: PiProcess,
         tool_server: ToolServer,
@@ -207,7 +212,6 @@ impl PiRunner {
         }
     }
 
-    #[expect(dead_code)]
     pub async fn run(&mut self, request: PiRunRequest) -> Result<PiRunResult, PiRunError> {
         let existing = if request.resume {
             match self.cache.read_json(&request.session_key) {

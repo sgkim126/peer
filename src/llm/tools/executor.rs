@@ -78,17 +78,6 @@ pub trait ToolExecutor {
     }
 }
 
-/// Rejects every non-terminal tool call.
-///
-/// This is used by one-shot agents that expose only a completion tool.
-pub struct NoToolExecutor;
-
-impl ToolExecutor for NoToolExecutor {
-    async fn execute(&self, call: ToolCall) -> ToolExecutionResult {
-        Err(ToolExecutionError::UnknownTool { name: call.name })
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -123,20 +112,6 @@ mod tests {
         let result = EchoToolExecutor.execute(call).await.unwrap();
 
         assert_eq!(result, arguments);
-    }
-
-    #[tokio::test]
-    async fn no_tool_executor_rejects_calls() {
-        let call = ToolCall {
-            id: "call-1".to_string(),
-            name: "unexpected".to_string(),
-            arguments: json!({}),
-            provider_state: None,
-        };
-
-        let error = NoToolExecutor.execute(call).await.unwrap_err();
-
-        assert_eq!(error.to_string(), "unknown tool: unexpected");
     }
 
     #[tokio::test]

@@ -25,6 +25,7 @@ use crate::config::{Config, discover, discover_peer_root};
 use crate::console::Console;
 use crate::error::PeerError;
 use crate::llm::ProviderKind;
+use crate::pi::PiRuntime;
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -179,17 +180,30 @@ async fn main() -> ExitCode {
             };
             console.debug(format_args!("{plan:?}"));
             let cache = CacheStore::new(project_root.join(".peer/cache"), console);
-            let compression =
-                match context::compress_review_context(&review_context, &config, &cache, console)
-                    .await
-                {
-                    Ok(compression) => compression,
-                    Err(error) => {
-                        eprintln!("error: {error}");
-                        console.debug(format_args!("{error:?}"));
-                        return ExitCode::FAILURE;
+            let mut pi = PiRuntime::new(&project_root, cache.clone(), console);
+            let compression = match context::compress_review_context(
+                &review_context,
+                &config,
+                &cache,
+                &mut pi,
+                !no_resume,
+                console,
+            )
+            .await
+            {
+                Ok(compression) => compression,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    if let Some(usage) = error.usage() {
+                        console.verbose(format_args!(
+                            "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
+                            usage.model, usage.cost_usd, usage.input_tokens, usage.output_tokens,
+                        ));
                     }
-                };
+                    return ExitCode::FAILURE;
+                }
+            };
             let result = review::run(
                 plan,
                 console,
@@ -338,10 +352,13 @@ async fn main() -> ExitCode {
                             }
                         };
                     let cache = CacheStore::new(project_root.join(".peer/cache"), console);
+                    let mut pi = PiRuntime::new(&project_root, cache.clone(), console);
                     let compression = match context::compress_review_context(
                         &review_context,
                         &config,
                         &cache,
+                        &mut pi,
+                        !no_resume,
                         console,
                     )
                     .await
@@ -350,6 +367,15 @@ async fn main() -> ExitCode {
                         Err(error) => {
                             eprintln!("error: {error}");
                             console.debug(format_args!("{error:?}"));
+                            if let Some(usage) = error.usage() {
+                                console.verbose(format_args!(
+                                    "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
+                                    usage.model,
+                                    usage.cost_usd,
+                                    usage.input_tokens,
+                                    usage.output_tokens,
+                                ));
+                            }
                             return ExitCode::FAILURE;
                         }
                     };

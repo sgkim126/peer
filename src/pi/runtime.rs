@@ -13,20 +13,36 @@ pub struct PiRuntime {
     project_root: PathBuf,
     console: Console,
     cache: CacheStore,
+    runner: Option<PiRunner>,
 }
 
 impl PiRuntime {
-    #[expect(dead_code)]
     pub fn new(project_root: impl Into<PathBuf>, cache: CacheStore, console: Console) -> Self {
         Self {
             project_root: project_root.into(),
             cache,
             console,
+            runner: None,
         }
     }
 
-    #[expect(dead_code)]
-    pub async fn run(&self, request: PiRunRequest) -> Result<PiRunResult, PiRunError> {
+    pub async fn run(&mut self, request: PiRunRequest) -> Result<PiRunResult, PiRunError> {
+        if self.runner.is_none() {
+            self.runner = Some(self.start_runner().await?);
+        }
+        let result = self
+            .runner
+            .as_mut()
+            .expect("Pi runner was initialized")
+            .run(request)
+            .await;
+        if matches!(result, Err(PiRunError::Rpc(_))) {
+            self.runner = None;
+        }
+        result
+    }
+
+    async fn start_runner(&self) -> Result<PiRunner, PiRunError> {
         let dependency = PiDependency::discover().await?;
         let version_root = self.cache.version_root();
         let assets = materialize(&version_root)?;
@@ -45,7 +61,11 @@ impl PiRuntime {
             tool_socket: tool_server.socket_path().to_path_buf(),
         })
         .map_err(PiRunError::Start)?;
-        let mut runner = PiRunner::new(process, tool_server, self.cache.clone(), self.console);
-        runner.run(request).await
+        Ok(PiRunner::new(
+            process,
+            tool_server,
+            self.cache.clone(),
+            self.console,
+        ))
     }
 }
