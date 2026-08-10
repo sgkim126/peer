@@ -31,6 +31,8 @@ pub enum CheckRunError {
     InvalidModel(ModelRefError),
     InvalidRequest(String),
     InvalidOutput(String),
+    InvalidFinding(String),
+    InvalidQuestion(String),
 }
 
 impl fmt::Display for CheckRunError {
@@ -42,6 +44,8 @@ impl fmt::Display for CheckRunError {
             Self::InvalidModel(e) => write!(f, "invalid Pi model: {e}"),
             Self::InvalidRequest(e) => write!(f, "invalid check request: {e}"),
             Self::InvalidOutput(e) => write!(f, "invalid check output: {e}"),
+            Self::InvalidFinding(e) => write!(f, "invalid check finding: {e}"),
+            Self::InvalidQuestion(e) => write!(f, "invalid clarification question: {e}"),
         }
     }
 }
@@ -54,6 +58,8 @@ impl std::error::Error for CheckRunError {
             Self::InvalidModel(error) => Some(error),
             Self::InvalidRequest(_) => None,
             Self::InvalidOutput(_) => None,
+            Self::InvalidFinding(_) => None,
+            Self::InvalidQuestion(_) => None,
         }
     }
 }
@@ -150,17 +156,18 @@ impl Checker {
             .map_err(|error| CheckRunError::InvalidOutput(error.to_string()))?;
         match outcome {
             CheckOutcome::CheckResult { summary, findings } => {
-                if !findings.iter().all(|finding| {
+                if let Some(finding) = findings.iter().find(|finding| {
                     // Expected commits are full hashes produced while resolving the check
                     // target, but a finding may report an abbreviated commit hash.
-                    check
+                    !check
                         .expected_commits()
                         .iter()
                         .any(|expected| expected.matches(&finding.commit))
                 }) {
-                    return Err(CheckRunError::InvalidOutput(
-                        "finding commit is outside the check target".to_string(),
-                    ));
+                    return Err(CheckRunError::InvalidFinding(format!(
+                        "commit {} is outside the check target",
+                        finding.commit
+                    )));
                 }
                 Ok(self.build_result(
                     check,
@@ -173,7 +180,7 @@ impl Checker {
                 ))
             }
             CheckOutcome::Clarification { questions } => {
-                validate_questions(&questions).map_err(CheckRunError::InvalidOutput)?;
+                validate_questions(&questions)?;
                 Ok(self.build_result(
                     check,
                     target,
@@ -222,12 +229,16 @@ impl Checker {
     }
 }
 
-fn validate_questions(questions: &[String]) -> Result<(), String> {
+fn validate_questions(questions: &[String]) -> Result<(), CheckRunError> {
     if questions.is_empty() {
-        return Err("clarification questions must not be empty".to_string());
+        return Err(CheckRunError::InvalidQuestion(
+            "clarification questions must not be empty".to_string(),
+        ));
     }
     if questions.iter().any(|question| question.trim().is_empty()) {
-        return Err("clarification questions must not contain blank values".to_string());
+        return Err(CheckRunError::InvalidQuestion(
+            "clarification questions must not contain blank values".to_string(),
+        ));
     }
     Ok(())
 }
@@ -254,7 +265,15 @@ mod tests {
     #[test]
     fn validates_clarification_questions() {
         assert_matches!(validate_questions(&["Which behavior?".to_string()]), Ok(_));
-        assert_matches!(validate_questions(&[]), Err(_));
-        assert_matches!(validate_questions(&["  ".to_string()]), Err(_));
+        assert_matches!(
+            validate_questions(&[]),
+            Err(CheckRunError::InvalidQuestion(message))
+                if message == "clarification questions must not be empty"
+        );
+        assert_matches!(
+            validate_questions(&["  ".to_string()]),
+            Err(CheckRunError::InvalidQuestion(message))
+                if message == "clarification questions must not contain blank values"
+        );
     }
 }
