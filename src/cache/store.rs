@@ -41,9 +41,12 @@ impl CacheStore {
         }
     }
 
+    pub fn version_root(&self) -> PathBuf {
+        self.root.join(CacheKey::version())
+    }
+
     fn path_for(&self, key: &CacheKey) -> PathBuf {
-        self.root
-            .join(CacheKey::version())
+        self.version_root()
             .join(sanitize_path_segment(&key.provider))
             .join(sanitize_path_segment(&key.model))
             .join(sanitize_path_segment(&key.namespace))
