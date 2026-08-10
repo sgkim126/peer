@@ -11,12 +11,10 @@ pub struct ModelRef {
 pub struct ModelRefError;
 
 impl ModelRef {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn provider(&self) -> &str {
         &self.provider
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn model(&self) -> &str {
         &self.model
     }

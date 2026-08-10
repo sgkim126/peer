@@ -2,6 +2,7 @@ use serde_json::json;
 
 use super::super::ToolSpec;
 
+#[cfg_attr(not(test), expect(dead_code))]
 pub fn submit_review_context_digest() -> ToolSpec {
     ToolSpec {
         name: "submit_review_context_digest".to_string(),

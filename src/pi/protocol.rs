@@ -60,7 +60,6 @@ pub struct RunConfig {
     pub max_turns: u32,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn tool_contract_digest() -> String {
     blake3::hash(TOOL_CONTRACT.as_bytes()).to_hex().to_string()
 }

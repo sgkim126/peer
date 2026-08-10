@@ -122,7 +122,6 @@ impl LlmUsage {
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn from_pi_models(models: Vec<LlmModelUsage>) -> Self {
         let input_tokens = models.iter().map(|usage| usage.input_tokens).sum();
         let output_tokens = models.iter().map(|usage| usage.output_tokens).sum();

@@ -26,7 +26,6 @@ pub struct ToolServer {
 }
 
 impl ToolServer {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn start(project_root: &Path, console: Console) -> Result<Self, std::io::Error> {
         let (directory, socket_path, listener) = bind_listener()?;
         let extractor = Arc::new(Extractor::new(project_root.to_path_buf(), console));
@@ -65,7 +64,6 @@ impl ToolServer {
         })
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn socket_path(&self) -> &Path {
         &self.socket_path
     }
@@ -287,7 +285,6 @@ struct GrepArguments {
     context_lines: Option<NonZeroU8>,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 async fn execute_tool(
     extractor: &Extractor,
     tool: &str,

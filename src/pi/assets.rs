@@ -77,7 +77,6 @@ impl std::error::Error for AssetError {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn materialize(cache_root: &Path) -> Result<MaterializedAssets, AssetError> {
     let digest = asset_digest();
     let runtime_root = cache_root.join("pi-runtime");

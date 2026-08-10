@@ -81,6 +81,7 @@ pub trait ToolExecutor {
 /// Rejects every non-terminal tool call.
 ///
 /// This is used by one-shot agents that expose only a completion tool.
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct NoToolExecutor;
 
 impl ToolExecutor for NoToolExecutor {

@@ -86,7 +86,6 @@ where
     R: AsyncBufRead + Unpin,
     W: AsyncWrite + Unpin,
 {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn new(reader: R, writer: W) -> Self {
         Self {
             reader,
@@ -97,7 +96,6 @@ where
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn request(&mut self, command: Value) -> Result<RpcResponse, RpcError> {
         self.ensure_usable()?;
         let Value::Object(command) = command else {
@@ -137,7 +135,6 @@ where
         }
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn next_event(&mut self) -> Result<Value, RpcError> {
         self.ensure_usable()?;
         match self.events.pop_front() {

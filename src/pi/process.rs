@@ -31,7 +31,6 @@ impl fmt::Debug for PiProcess {
 }
 
 impl PiProcess {
-    #[expect(dead_code)]
     pub fn spawn(options: &PiProcessOptions) -> Result<Self, std::io::Error> {
         let mut command = build_command(options);
         let mut child = command.spawn()?;
@@ -50,7 +49,6 @@ impl PiProcess {
         })
     }
 
-    #[expect(dead_code)]
     pub fn into_parts(self) -> (Child, ChildStdin, ChildStdout) {
         (self.child, self.stdin, self.stdout)
     }

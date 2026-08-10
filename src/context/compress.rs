@@ -1,13 +1,18 @@
 use std::fmt;
 
-use crate::cache::{CacheKey, CacheStore};
+use serde::Deserialize;
+
+use crate::cache::{CacheKey, CacheKeyError, CacheStore};
 use crate::config::Config;
 use crate::console::Console;
 use crate::error::PeerError;
 use crate::llm::{
     Agent, AgentOutcome, AgentRequest, ConversationTurn, LlmCallError, LlmProvider, LlmTransport,
-    LlmUsage, NoToolExecutor, ProviderCreationError, ProviderRuntime, RawUsage,
-    submit_review_context_digest,
+    LlmUsage, NoToolExecutor, RawUsage, submit_review_context_digest,
+};
+use crate::pi::{
+    ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig,
+    TerminalTool, tool_contract_digest,
 };
 
 use super::{DigestValidationError, ReviewContext, ReviewContextDigest};
@@ -32,11 +37,13 @@ pub struct ContextCompression {
 }
 
 #[derive(Debug)]
+#[expect(dead_code)]
 struct RawContextCompression {
     digest: ReviewContextDigest,
     usage: Option<RawUsage>,
 }
 
+#[expect(dead_code)]
 struct ReviewContextCompressor<P, T>
 where
     P: LlmProvider,
@@ -48,6 +55,7 @@ where
     console: Console,
 }
 
+#[expect(dead_code)]
 impl<P, T> ReviewContextCompressor<P, T>
 where
     P: LlmProvider,
@@ -73,7 +81,16 @@ where
             });
         }
 
-        let request = compression_request(&self.model, context);
+        let (run_config, prompt) = compression_request(context);
+        let request = AgentRequest {
+            model: self.model,
+            conversation: vec![
+                ConversationTurn::System(run_config.system_prompt),
+                ConversationTurn::User(prompt),
+            ],
+            tools: Vec::new(),
+            terminal_tools: vec![submit_review_context_digest()],
+        };
         let agent = Agent::new(self.provider, self.transport, NoToolExecutor, self.console);
         match agent
             .run_loop(request, CONTEXT_COMPRESSION_MAX_ITERATIONS, None)
@@ -104,10 +121,18 @@ where
     }
 }
 
+#[derive(Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+enum ContextOutcome {
+    ReviewContext { digest: ReviewContextDigest },
+}
+
 pub async fn compress_review_context(
     context: &ReviewContext,
     config: &Config,
     cache: &CacheStore,
+    runtime: &mut PiRuntime,
+    resume: bool,
     console: Console,
 ) -> Result<ContextCompression, ContextCompressionError> {
     if context.is_empty() {
@@ -155,73 +180,94 @@ pub async fn compress_review_context(
             }
         }
     }
-    let runtime = ProviderRuntime::try_new(
+    let (run_config, prompt) = compression_request(context);
+    let session_key = CacheKey::from_params(
+        "pi-session-review-context-digest",
         &provider_config.name,
-        &provider_config.api_key_env,
-        provider_config.base_url.as_deref(),
-        console,
-    )
-    .map_err(ContextCompressionError::Provider)?;
-    let (provider, transport) = runtime.into_parts();
-    let compression =
-        ReviewContextCompressor::new(provider, transport, &model_config.name, console)
-            .compress(context)
-            .await?;
-    compression
-        .digest
+        &model_config.name,
+        context,
+    )?;
+    let model: ModelRef = format!("{}/{}", provider_config.name, model_config.name).parse()?;
+    let result = runtime
+        .run(PiRunRequest {
+            session_key,
+            config: run_config,
+            model,
+            prompt,
+            resume,
+        })
+        .await?;
+    let ContextOutcome::ReviewContext { digest } = serde_json::from_value(result.outcome)?;
+    digest
         .validate(context)
         .map_err(|source| ContextCompressionError::InvalidDigest { source })?;
 
-    let result = ContextCompression {
-        digest: compression.digest,
-        usage: compression.usage.map(|usage| {
-            LlmUsage::from_raw_usage(
-                usage,
-                &model_config.name,
-                model_config.input_per_1m_usd,
-                model_config.output_per_1m_usd,
-            )
-        }),
-    };
     if let Some(key) = &cache_key
-        && let Err(error) = cache.write_json(key, &result.digest)
+        && let Err(error) = cache.write_json(key, &digest)
     {
         console.debug(format_args!(
             "ignoring review context cache write error: {error:?}"
         ));
     }
-    Ok(result)
+    Ok(ContextCompression {
+        digest,
+        usage: Some(result.usage),
+    })
 }
 
-fn compression_request(model: &str, context: &ReviewContext) -> AgentRequest {
+fn compression_request(context: &ReviewContext) -> (RunConfig, String) {
     let input = serde_json::to_string_pretty(&context.compression_input())
         .expect("serializing review context compression input cannot fail");
-    AgentRequest {
-        model: model.to_string(),
-        conversation: vec![
-            ConversationTurn::System(SYSTEM_PROMPT.to_string()),
-            ConversationTurn::User(format!("Compress this review context:\n{input}")),
-        ],
-        tools: Vec::new(),
-        terminal_tools: vec![submit_review_context_digest()],
-    }
+    (
+        RunConfig {
+            tool_contract_digest: tool_contract_digest(),
+            operation: Operation::ReviewContext,
+            system_prompt: SYSTEM_PROMPT.to_string(),
+            read_tools: Vec::new(),
+            terminal_tools: vec![TerminalTool::SubmitReviewContextDigest],
+            max_turns: CONTEXT_COMPRESSION_MAX_ITERATIONS,
+        },
+        format!("Compress this review context:\n{input}"),
+    )
 }
 
 #[derive(Debug)]
 pub enum ContextCompressionError {
     Config(PeerError),
-    Provider(ProviderCreationError),
-    LlmCall { source: LlmCallError },
-    InvalidArguments { source: serde_json::Error },
-    InvalidDigest { source: DigestValidationError },
-    UnexpectedTerminalTool { name: String },
+    CacheKey(CacheKeyError),
+    InvalidModel(ModelRefError),
+    Pi(PiRunError),
+    InvalidOutcome(serde_json::Error),
+    InvalidDigest {
+        source: DigestValidationError,
+    },
+    #[expect(dead_code)]
+    LlmCall {
+        source: LlmCallError,
+    },
+    #[expect(dead_code)]
+    InvalidArguments {
+        source: serde_json::Error,
+    },
+    #[expect(dead_code)]
+    UnexpectedTerminalTool {
+        name: String,
+    },
 }
 
 impl fmt::Display for ContextCompressionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Config(source) => source.fmt(f),
-            Self::Provider(source) => source.fmt(f),
+            Self::CacheKey(source) => write!(f, "cannot build Pi session cache key: {source}"),
+            Self::InvalidModel(source) => write!(f, "invalid Pi model: {source}"),
+            Self::Pi(source) => write!(f, "failed to compress review context: {source}"),
+            Self::InvalidOutcome(source) => {
+                write!(f, "invalid review context outcome from Pi: {source}")
+            }
+            Self::InvalidDigest { source, .. } => {
+                write!(f, "invalid review context digest: {source}")
+            }
             Self::LlmCall { source, .. } => {
                 write!(f, "failed to compress review context: {source}")
             }
@@ -230,9 +276,6 @@ impl fmt::Display for ContextCompressionError {
                     f,
                     "invalid submit_review_context_digest arguments: {source}"
                 )
-            }
-            Self::InvalidDigest { source, .. } => {
-                write!(f, "invalid review context digest: {source}")
             }
             Self::UnexpectedTerminalTool { name, .. } => {
                 write!(f, "unexpected review context terminal tool: {name}")
@@ -245,12 +288,39 @@ impl std::error::Error for ContextCompressionError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
             Self::Config(source) => Some(source),
-            Self::Provider(source) => Some(source),
+            Self::CacheKey(source) => Some(source),
+            Self::InvalidModel(source) => Some(source),
+            Self::Pi(source) => Some(source),
+            Self::InvalidOutcome(source) => Some(source),
+            Self::InvalidDigest { source, .. } => Some(source),
             Self::LlmCall { source, .. } => Some(source),
             Self::InvalidArguments { source, .. } => Some(source),
-            Self::InvalidDigest { source, .. } => Some(source),
             Self::UnexpectedTerminalTool { .. } => None,
         }
+    }
+}
+
+impl From<CacheKeyError> for ContextCompressionError {
+    fn from(error: CacheKeyError) -> Self {
+        Self::CacheKey(error)
+    }
+}
+
+impl From<ModelRefError> for ContextCompressionError {
+    fn from(error: ModelRefError) -> Self {
+        Self::InvalidModel(error)
+    }
+}
+
+impl From<PiRunError> for ContextCompressionError {
+    fn from(error: PiRunError) -> Self {
+        Self::Pi(error)
+    }
+}
+
+impl From<serde_json::Error> for ContextCompressionError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::InvalidOutcome(error)
     }
 }
 
@@ -258,38 +328,7 @@ impl std::error::Error for ContextCompressionError {
 mod tests {
     use super::*;
 
-    use std::assert_matches;
-    use std::collections::VecDeque;
-    use std::sync::Mutex;
-
-    use reqwest::StatusCode;
-    use serde_json::json;
-
-    use crate::llm::{LlmCallResult, LlmResponse, MockProvider, Request, Response, ToolCall};
-
     use super::super::{ReviewContextItem, ReviewContextItemKind};
-
-    struct TestTransport {
-        responses: Mutex<VecDeque<Result<Response, LlmCallError>>>,
-    }
-
-    impl TestTransport {
-        fn new(responses: impl IntoIterator<Item = Result<Response, LlmCallError>>) -> Self {
-            Self {
-                responses: Mutex::new(responses.into_iter().collect()),
-            }
-        }
-    }
-
-    impl LlmTransport for TestTransport {
-        async fn send(&self, _request: Request) -> Result<Response, LlmCallError> {
-            self.responses
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| panic!("TestTransport has no queued response"))
-        }
-    }
 
     fn context() -> ReviewContext {
         ReviewContext {
@@ -299,97 +338,48 @@ mod tests {
         }
     }
 
-    fn response() -> Response {
-        Response {
-            status: StatusCode::OK,
-            body: serde_json::Value::Null,
-        }
-    }
+    #[test]
+    fn builds_a_terminal_only_compression_request_with_source_ids() {
+        let (config, prompt) = compression_request(&context());
 
-    fn terminal_result(arguments: serde_json::Value) -> LlmCallResult {
-        LlmCallResult {
-            response: LlmResponse::ToolCalls(vec![ToolCall {
-                id: "call-digest".to_string(),
-                name: submit_review_context_digest().name,
-                arguments,
-                provider_state: None,
-            }]),
-            usage: RawUsage {
-                input_tokens: 50,
-                output_tokens: 20,
-            },
-        }
+        assert!(config.read_tools.is_empty());
+        assert_eq!(
+            config.terminal_tools,
+            [TerminalTool::SubmitReviewContextDigest]
+        );
+        assert!(prompt.contains(r#""source": "title""#));
+        assert!(prompt.contains(r#""source": "body""#));
     }
 
     #[test]
-    fn builds_a_one_tool_compression_request_with_source_ids() {
-        let request = compression_request("test-model", &context());
+    fn parses_the_review_context_outcome() {
+        let outcome: ContextOutcome = serde_json::from_value(serde_json::json!({
+            "type": "review_context",
+            "digest": {
+                "overview": "Preserve review decisions.",
+                "items": [],
+                "missing_context": []
+            }
+        }))
+        .unwrap();
 
-        assert!(request.tools.is_empty());
-        assert_eq!(
-            request
-                .terminal_tools
-                .iter()
-                .map(|tool| tool.name.as_str())
-                .collect::<Vec<_>>(),
-            ["submit_review_context_digest"]
-        );
-        let ConversationTurn::User(input) = &request.conversation[1] else {
-            panic!("expected review context input");
-        };
-        assert!(input.contains(r#""source": "title""#));
-        assert!(input.contains(r#""source": "body""#));
+        let ContextOutcome::ReviewContext { digest } = outcome;
+        assert_eq!(digest.overview, "Preserve review decisions.");
     }
 
     #[tokio::test]
-    async fn compresses_and_validates_review_context() {
-        let provider = MockProvider::new([Ok(terminal_result(json!({
-            "overview": "Preserve review decisions.",
-            "items": [{
-                "kind": "requirement",
-                "text": "Keep decisions and open questions.",
-                "sources": ["body"]
-            }],
-            "missing_context": []
-        })))]);
-        let transport = TestTransport::new([Ok(response())]);
-        let compressor =
-            ReviewContextCompressor::new(provider, transport, "test-model", Console::default());
-
-        let result = compressor.compress(&context()).await.unwrap();
-
-        assert_eq!(result.digest.items.len(), 1);
-        assert_eq!(result.usage.unwrap().input_tokens, 50);
-    }
-
-    #[tokio::test]
-    async fn skips_empty_review_context_without_a_call() {
-        let compressor = ReviewContextCompressor::new(
-            MockProvider::default(),
-            TestTransport::new([]),
-            "test-model",
-            Console::default(),
-        );
-
-        let result = compressor
-            .compress(&ReviewContext::default())
-            .await
-            .unwrap();
-
-        assert_eq!(result.digest, ReviewContextDigest::default());
-        assert_eq!(result.usage, None);
-    }
-
-    #[tokio::test]
-    async fn configured_compression_skips_empty_context_before_provider_creation() {
+    async fn skips_empty_context_without_starting_pi() {
         let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
         let directory = tempfile::tempdir().unwrap();
         let cache = CacheStore::new(directory.path(), Console::default());
+        let mut runtime = PiRuntime::new(directory.path(), cache.clone(), Console::default());
 
         let result = compress_review_context(
             &ReviewContext::default(),
             &config,
             &cache,
+            &mut runtime,
+            true,
             Console::default(),
         )
         .await
@@ -400,20 +390,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn configured_compression_uses_cache_before_provider_creation() {
-        let mut config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
+    async fn uses_cache_without_starting_pi() {
+        let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
         let (provider_name, model_name) = {
             let (provider, model) = config.resolve_provider(None, None).unwrap();
             (provider.name.clone(), model.name.clone())
         };
-        config
-            .providers
-            .iter_mut()
-            .find(|provider| provider.name == provider_name)
-            .unwrap()
-            .api_key_env = "PEER_TEST_MISSING_CACHE_API_KEY".to_string();
         let directory = tempfile::tempdir().unwrap();
         let cache = CacheStore::new(directory.path(), Console::default());
+        let mut runtime = PiRuntime::new(directory.path(), cache.clone(), Console::default());
         let context = context();
         let key = CacheKey::from_params(
             CONTEXT_CACHE_NAMESPACE,
@@ -433,32 +418,18 @@ mod tests {
         };
         cache.write_json(&key, &digest).unwrap();
 
-        let result = compress_review_context(&context, &config, &cache, Console::default())
-            .await
-            .unwrap();
+        let result = compress_review_context(
+            &context,
+            &config,
+            &cache,
+            &mut runtime,
+            true,
+            Console::default(),
+        )
+        .await
+        .unwrap();
 
         assert_eq!(result.digest, digest);
         assert_eq!(result.usage, None);
-    }
-
-    #[tokio::test]
-    async fn rejects_unknown_digest_sources() {
-        let provider = MockProvider::new([Ok(terminal_result(json!({
-            "overview": "Preserve review decisions.",
-            "items": [{
-                "kind": "requirement",
-                "text": "Keep decisions.",
-                "sources": ["thread:9"]
-            }],
-            "missing_context": []
-        })))]);
-        let transport = TestTransport::new([Ok(response())]);
-        let compressor =
-            ReviewContextCompressor::new(provider, transport, "test-model", Console::default());
-
-        let error = compressor.compress(&context()).await.unwrap_err();
-
-        assert_matches!(error, ContextCompressionError::InvalidDigest { .. });
-        assert!(error.to_string().contains("unknown source thread:9"));
     }
 }
