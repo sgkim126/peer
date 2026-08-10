@@ -12,7 +12,6 @@ mod llm;
 mod pi;
 mod render;
 mod review;
-mod secret;
 
 use std::io::Read;
 use std::process::ExitCode;
