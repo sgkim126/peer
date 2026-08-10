@@ -247,13 +247,13 @@ mod tests {
     fn failed_results_render_the_failure_and_usage() {
         let mut result = result();
         result.findings.clear();
-        result.error = Some(CheckError::Agent {
-            reason: "transient LLM call failure: request timed out".into(),
+        result.error = Some(CheckError::ClarificationRequired {
+            questions: vec!["Which deployment policy applies?".into()],
         });
         let output = render(&result.into());
 
         assert!(output.contains("- **Status:** failed"));
-        assert!(output.contains("> transient LLM call failure: request timed out"));
+        assert!(output.contains("> Which deployment policy applies?"));
         assert!(output.contains("- **Input tokens:** 100"));
     }
 

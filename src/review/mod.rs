@@ -549,8 +549,8 @@ mod tests {
     fn review_succeeds_only_when_all_checks_succeed() {
         assert!(review_result(None).is_success());
         assert!(
-            !review_result(Some(CheckError::Agent {
-                reason: "provider failed".to_string(),
+            !review_result(Some(CheckError::ClarificationRequired {
+                questions: vec!["Which deployment policy applies?".to_string()],
             }))
             .is_success()
         );

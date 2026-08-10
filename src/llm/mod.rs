@@ -23,12 +23,8 @@ pub use self::provider::{
     ConversationTurn, LlmCallError, LlmProvider, LlmResponse, LlmTransport, ProviderCreationError,
     ProviderKind, ProviderRuntime, RawUsage, ToolCall, ToolSpec,
 };
-#[expect(
-    unused_imports,
-    reason = "the legacy harness is removed in a later commit"
-)]
 pub use self::result::{
-    CheckError, CheckOutput, CheckResult, CheckTarget, Finding, LlmModelUsage, LlmUsage, Severity,
+    CheckError, CheckResult, CheckTarget, Finding, LlmModelUsage, LlmUsage, Severity,
 };
 #[expect(
     unused_imports,
