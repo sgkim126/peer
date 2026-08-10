@@ -1,5 +1,4 @@
 use std::fmt;
-use std::str::FromStr;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ModelRef {
@@ -8,36 +7,35 @@ pub struct ModelRef {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ModelRefError;
+pub enum ModelRefError {
+    InvalidProvider(String),
+    InvalidModel(String),
+}
 
 impl ModelRef {
+    pub fn try_new(
+        provider: impl Into<String>,
+        model: impl Into<String>,
+    ) -> Result<Self, ModelRefError> {
+        let provider = provider.into();
+        if provider.is_empty() || provider.trim() != provider {
+            return Err(ModelRefError::InvalidProvider(provider));
+        }
+
+        let model = model.into();
+        if model.is_empty() || model.trim() != model {
+            return Err(ModelRefError::InvalidModel(model));
+        }
+
+        Ok(Self { provider, model })
+    }
+
     pub fn provider(&self) -> &str {
         &self.provider
     }
 
     pub fn model(&self) -> &str {
         &self.model
-    }
-}
-
-impl FromStr for ModelRef {
-    type Err = ModelRefError;
-
-    fn from_str(value: &str) -> Result<Self, Self::Err> {
-        let Some((provider, model)) = value.split_once('/') else {
-            return Err(ModelRefError);
-        };
-        if provider.is_empty()
-            || model.is_empty()
-            || provider.trim() != provider
-            || model.trim() != model
-        {
-            return Err(ModelRefError);
-        }
-        Ok(Self {
-            provider: provider.to_string(),
-            model: model.to_string(),
-        })
     }
 }
 
@@ -49,7 +47,16 @@ impl fmt::Display for ModelRef {
 
 impl fmt::Display for ModelRefError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("model must use provider/model format")
+        match self {
+            Self::InvalidProvider(provider) => write!(
+                f,
+                "Pi provider {provider} must not be empty or have surrounding whitespace"
+            ),
+            Self::InvalidModel(model) => write!(
+                f,
+                "Pi model {model} must not be empty or have surrounding whitespace"
+            ),
+        }
     }
 }
 
@@ -60,36 +67,32 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_provider_and_model() {
-        let model: ModelRef = "mistral/mistral-medium-3-5".parse().unwrap();
-        assert_eq!(model.provider(), "mistral");
-        assert_eq!(model.model(), "mistral-medium-3-5");
-        assert_eq!(model.to_string(), "mistral/mistral-medium-3-5");
-    }
-
-    #[test]
-    fn rejects_unscoped_models() {
-        assert_eq!("mistral-medium-3-5".parse::<ModelRef>(), Err(ModelRefError));
-    }
-
-    #[test]
-    fn keeps_further_segments_in_the_model_id() {
-        let model: ModelRef = "openrouter/anthropic/claude".parse().unwrap();
-        assert_eq!(model.provider(), "openrouter");
+    fn constructs_from_separate_provider_and_model_values() {
+        let model = ModelRef::try_new("openrouter/team", "anthropic/claude").unwrap();
+        assert_eq!(model.provider(), "openrouter/team");
         assert_eq!(model.model(), "anthropic/claude");
+        assert_eq!(model.to_string(), "openrouter/team/anthropic/claude");
     }
 
     #[test]
-    fn rejects_empty_and_untrimmed_parts() {
-        for value in [
-            "",
-            "/",
-            "/model",
-            "provider/",
-            " provider/model",
-            "provider/model ",
-        ] {
-            assert_eq!(value.parse::<ModelRef>(), Err(ModelRefError), "{value:?}");
+    fn rejects_empty_and_untrimmed_provider_values() {
+        for provider in ["", " provider", "provider "] {
+            assert_eq!(
+                ModelRef::try_new(provider, "model"),
+                Err(ModelRefError::InvalidProvider(provider.to_string())),
+                "{provider:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_empty_and_untrimmed_model_values() {
+        for model in ["", " model", "model "] {
+            assert_eq!(
+                ModelRef::try_new("provider", model),
+                Err(ModelRefError::InvalidModel(model.to_string())),
+                "{model:?}"
+            );
         }
     }
 }

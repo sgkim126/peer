@@ -97,7 +97,7 @@ pub async fn compress_review_context(
         &model_config.name,
         context,
     )?;
-    let model: ModelRef = format!("{}/{}", provider_config.name, model_config.name).parse()?;
+    let model = ModelRef::try_new(provider_config.name.as_str(), model_config.name.as_str())?;
     let result = runtime
         .run(PiRunRequest {
             session_key,
