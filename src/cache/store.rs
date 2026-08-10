@@ -1,5 +1,5 @@
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
@@ -41,13 +41,12 @@ impl CacheStore {
         }
     }
 
-    pub fn root(&self) -> &Path {
-        &self.root
+    pub fn version_root(&self) -> PathBuf {
+        self.root.join(CacheKey::version())
     }
 
     fn path_for(&self, key: &CacheKey) -> PathBuf {
-        self.root
-            .join(CacheKey::version())
+        self.version_root()
             .join(sanitize_path_segment(&key.provider))
             .join(sanitize_path_segment(&key.model))
             .join(sanitize_path_segment(&key.namespace))

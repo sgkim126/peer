@@ -196,7 +196,7 @@ impl PiRunner {
         console: Console,
     ) -> Self {
         let (child, stdin, stdout) = process.into_parts();
-        let version_root = cache.root().join(CacheKey::version());
+        let version_root = cache.version_root();
         Self {
             child,
             client: RpcClient::new(BufReader::new(stdout), stdin),

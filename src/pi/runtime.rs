@@ -28,7 +28,7 @@ impl PiRuntime {
     #[expect(dead_code)]
     pub async fn run(&self, request: PiRunRequest) -> Result<PiRunResult, PiRunError> {
         let dependency = PiDependency::discover().await?;
-        let version_root = self.cache.root().join(crate::cache::CacheKey::version());
+        let version_root = self.cache.version_root();
         let assets = materialize(&version_root)?;
         let session_dir = version_root.join("pi-sessions");
         let agent_dir = version_root.join("pi-agent");
