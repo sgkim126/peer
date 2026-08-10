@@ -30,7 +30,7 @@ pub enum CheckRunError {
     CacheKey(CacheKeyError),
     InvalidModel(ModelRefError),
     InvalidRequest(String),
-    InvalidOutput(String),
+    InvalidOutput(serde_json::Error),
     InvalidFinding(String),
     InvalidQuestion(String),
 }
@@ -57,7 +57,7 @@ impl std::error::Error for CheckRunError {
             Self::CacheKey(error) => Some(error),
             Self::InvalidModel(error) => Some(error),
             Self::InvalidRequest(_) => None,
-            Self::InvalidOutput(_) => None,
+            Self::InvalidOutput(error) => Some(error),
             Self::InvalidFinding(_) => None,
             Self::InvalidQuestion(_) => None,
         }
@@ -79,6 +79,12 @@ impl From<ModelRefError> for CheckRunError {
 impl From<ExtractError> for CheckRunError {
     fn from(error: ExtractError) -> Self {
         Self::Preparation(error)
+    }
+}
+
+impl From<serde_json::Error> for CheckRunError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::InvalidOutput(error)
     }
 }
 
@@ -155,8 +161,7 @@ impl Checker {
             }
             Err(error) => return Err(CheckRunError::Pi(error)),
         };
-        let outcome: CheckOutcome = serde_json::from_value(result.outcome)
-            .map_err(|error| CheckRunError::InvalidOutput(error.to_string()))?;
+        let outcome: CheckOutcome = serde_json::from_value(result.outcome)?;
         match outcome {
             CheckOutcome::CheckResult { summary, findings } => {
                 if let Some(finding) = findings.iter().find(|finding| {
