@@ -6,10 +6,7 @@ use crate::cache::{CacheKey, CacheKeyError, CacheStore};
 use crate::config::Config;
 use crate::console::Console;
 use crate::error::PeerError;
-use crate::llm::{
-    Agent, AgentOutcome, AgentRequest, ConversationTurn, LlmCallError, LlmProvider, LlmTransport,
-    LlmUsage, NoToolExecutor, RawUsage, submit_review_context_digest,
-};
+use crate::llm::LlmUsage;
 use crate::pi::{
     ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig,
     TerminalTool, tool_contract_digest,
@@ -34,91 +31,6 @@ duplicate items, and keep the digest concise."#;
 pub struct ContextCompression {
     pub digest: ReviewContextDigest,
     pub usage: Option<LlmUsage>,
-}
-
-#[derive(Debug)]
-#[expect(dead_code)]
-struct RawContextCompression {
-    digest: ReviewContextDigest,
-    usage: Option<RawUsage>,
-}
-
-#[expect(dead_code)]
-struct ReviewContextCompressor<P, T>
-where
-    P: LlmProvider,
-    T: LlmTransport,
-{
-    provider: P,
-    transport: T,
-    model: String,
-    console: Console,
-}
-
-#[expect(dead_code)]
-impl<P, T> ReviewContextCompressor<P, T>
-where
-    P: LlmProvider,
-    T: LlmTransport,
-{
-    fn new(provider: P, transport: T, model: impl Into<String>, console: Console) -> Self {
-        Self {
-            provider,
-            transport,
-            model: model.into(),
-            console,
-        }
-    }
-
-    async fn compress(
-        self,
-        context: &ReviewContext,
-    ) -> Result<RawContextCompression, ContextCompressionError> {
-        if context.is_empty() {
-            return Ok(RawContextCompression {
-                digest: ReviewContextDigest::default(),
-                usage: None,
-            });
-        }
-
-        let (run_config, prompt) = compression_request(context);
-        let request = AgentRequest {
-            model: self.model,
-            conversation: vec![
-                ConversationTurn::System(run_config.system_prompt),
-                ConversationTurn::User(prompt),
-            ],
-            tools: Vec::new(),
-            terminal_tools: vec![submit_review_context_digest()],
-        };
-        let agent = Agent::new(self.provider, self.transport, NoToolExecutor, self.console);
-        match agent
-            .run_loop(request, CONTEXT_COMPRESSION_MAX_ITERATIONS, None)
-            .await
-        {
-            AgentOutcome::Terminal(terminal) => {
-                let expected_tool = submit_review_context_digest().name;
-                if terminal.call.name != expected_tool {
-                    return Err(ContextCompressionError::UnexpectedTerminalTool {
-                        name: terminal.call.name,
-                    });
-                }
-                let digest: ReviewContextDigest =
-                    serde_json::from_value(terminal.call.arguments)
-                        .map_err(|source| ContextCompressionError::InvalidArguments { source })?;
-                digest
-                    .validate(context)
-                    .map_err(|source| ContextCompressionError::InvalidDigest { source })?;
-                Ok(RawContextCompression {
-                    digest,
-                    usage: Some(terminal.usage),
-                })
-            }
-            AgentOutcome::Error(failure) => Err(ContextCompressionError::LlmCall {
-                source: failure.error,
-            }),
-        }
-    }
 }
 
 #[derive(Deserialize)]
@@ -238,21 +150,7 @@ pub enum ContextCompressionError {
     InvalidModel(ModelRefError),
     Pi(PiRunError),
     InvalidOutcome(serde_json::Error),
-    InvalidDigest {
-        source: DigestValidationError,
-    },
-    #[expect(dead_code)]
-    LlmCall {
-        source: LlmCallError,
-    },
-    #[expect(dead_code)]
-    InvalidArguments {
-        source: serde_json::Error,
-    },
-    #[expect(dead_code)]
-    UnexpectedTerminalTool {
-        name: String,
-    },
+    InvalidDigest { source: DigestValidationError },
 }
 
 impl fmt::Display for ContextCompressionError {
@@ -268,18 +166,6 @@ impl fmt::Display for ContextCompressionError {
             Self::InvalidDigest { source, .. } => {
                 write!(f, "invalid review context digest: {source}")
             }
-            Self::LlmCall { source, .. } => {
-                write!(f, "failed to compress review context: {source}")
-            }
-            Self::InvalidArguments { source, .. } => {
-                write!(
-                    f,
-                    "invalid submit_review_context_digest arguments: {source}"
-                )
-            }
-            Self::UnexpectedTerminalTool { name, .. } => {
-                write!(f, "unexpected review context terminal tool: {name}")
-            }
         }
     }
 }
@@ -293,9 +179,6 @@ impl std::error::Error for ContextCompressionError {
             Self::Pi(source) => Some(source),
             Self::InvalidOutcome(source) => Some(source),
             Self::InvalidDigest { source, .. } => Some(source),
-            Self::LlmCall { source, .. } => Some(source),
-            Self::InvalidArguments { source, .. } => Some(source),
-            Self::UnexpectedTerminalTool { .. } => None,
         }
     }
 }
