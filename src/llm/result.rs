@@ -1,9 +1,7 @@
 use std::fmt;
-use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
-use crate::console::Console;
 use crate::git::CommitHash;
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -134,65 +132,6 @@ impl CheckResult {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
-async fn validate_per_commit_targets(
-    findings: &[Finding],
-    target: &CommitHash,
-    dir: &Path,
-    console: Console,
-) -> Result<(), String> {
-    for finding in findings {
-        let commit = CommitHash::resolve(finding.commit.as_ref(), dir, console)
-            .await
-            .map_err(|err| {
-                console.debug(format_args!(
-                    "cannot find commit {}: {err:?}",
-                    finding.commit
-                ));
-                format!(
-                    "finding commit {} does not match target {target}",
-                    finding.commit
-                )
-            })?;
-        if &commit != target {
-            return Err(format!(
-                "finding commit {} does not match target {target}",
-                finding.commit
-            ));
-        }
-    }
-    Ok(())
-}
-
-#[cfg_attr(not(test), expect(dead_code))]
-async fn validate_range_targets(
-    findings: &[Finding],
-    commits: &[CommitHash],
-    dir: &Path,
-    console: Console,
-) -> Result<(), String> {
-    for finding in findings {
-        // TODO: Resolve finding commits concurrently if range validation
-        // becomes a performance bottleneck.
-        let commit = CommitHash::resolve(finding.commit.as_ref(), dir, console)
-            .await
-            .map_err(|err| {
-                console.debug(format_args!(
-                    "cannot find commit {}: {err:?}",
-                    finding.commit
-                ));
-                format!("finding commit {} is not in range commits", finding.commit)
-            })?;
-        if !commits.contains(&commit) {
-            return Err(format!(
-                "finding commit {} is not in range commits",
-                finding.commit
-            ));
-        }
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,91 +145,6 @@ mod tests {
             message: "test finding".to_string(),
             location: None,
         }
-    }
-
-    async fn create_repo_with_commit() -> (tempfile::TempDir, CommitHash) {
-        let dir = tempfile::tempdir().unwrap();
-        let console = Console::default();
-
-        crate::git::run_git(&["init"], dir.path(), console)
-            .await
-            .unwrap();
-        crate::git::run_git(
-            &["config", "user.email", "test@example.com"],
-            dir.path(),
-            console,
-        )
-        .await
-        .unwrap();
-        crate::git::run_git(&["config", "user.name", "Test User"], dir.path(), console)
-            .await
-            .unwrap();
-        crate::git::run_git(
-            &["commit", "--allow-empty", "-m", "initial commit"],
-            dir.path(),
-            console,
-        )
-        .await
-        .unwrap();
-
-        let commit = CommitHash::resolve("HEAD", dir.path(), console)
-            .await
-            .unwrap();
-        (dir, commit)
-    }
-
-    #[tokio::test]
-    async fn per_commit_findings_resolve_abbreviated_hashes() {
-        let (dir, target) = create_repo_with_commit().await;
-        let abbreviated = target.as_ref()[..7].to_string();
-
-        assert!(
-            validate_per_commit_targets(
-                &[finding(&abbreviated, Severity::Info)],
-                &target,
-                dir.path(),
-                Console::default(),
-            )
-            .await
-            .is_ok()
-        );
-        assert!(
-            validate_per_commit_targets(
-                &[finding("def5678", Severity::Info)],
-                &target,
-                dir.path(),
-                Console::default(),
-            )
-            .await
-            .is_err()
-        );
-    }
-
-    #[tokio::test]
-    async fn range_findings_resolve_abbreviated_hashes() {
-        let (dir, target) = create_repo_with_commit().await;
-        let abbreviated = target.as_ref()[..7].to_string();
-
-        assert!(
-            validate_range_targets(
-                &[finding(&abbreviated, Severity::Low)],
-                std::slice::from_ref(&target),
-                dir.path(),
-                Console::default(),
-            )
-            .await
-            .is_ok()
-        );
-        assert!(
-            validate_range_targets(
-                &[finding("def5678", Severity::Low)],
-                &[target],
-                dir.path(),
-                Console::default(),
-            )
-            .await
-            .is_err()
-        );
     }
 
     #[test]

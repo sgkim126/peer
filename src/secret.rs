@@ -1,3 +1,4 @@
+#![expect(dead_code, reason = "removed in the next commit")]
 use std::fmt;
 
 /// A secret value whose current string buffer is zeroed when it is dropped.
