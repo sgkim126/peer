@@ -5,7 +5,6 @@ use crate::git::{CommitHash, run_git};
 use super::{ExtractError, Extractor};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct RangeDiff {
     pub from: CommitHash,
     pub to: CommitHash,
@@ -13,7 +12,6 @@ pub struct RangeDiff {
 }
 
 impl Extractor {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn range_diff(
         &self,
         from_revision: &str,

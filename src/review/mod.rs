@@ -14,6 +14,8 @@ use crate::git::{CommitHash, GitError, run_git};
 use crate::llm::LlmUsage;
 use crate::pi::PiRuntime;
 
+mod input;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {
     Commit(CommitHash),
