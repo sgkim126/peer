@@ -23,8 +23,7 @@ use crate::cli::{Cli, Command};
 use crate::config::{Config, discover, discover_peer_root};
 use crate::console::Console;
 use crate::error::PeerError;
-use crate::llm::ProviderKind;
-use crate::pi::PiRuntime;
+use crate::pi::{ModelRef, PiRuntime};
 
 #[tokio::main]
 async fn main() -> ExitCode {
@@ -472,25 +471,15 @@ async fn main() -> ExitCode {
 
 fn apply_llm_overrides(
     config: &mut Config,
-    provider: Option<ProviderKind>,
+    provider: Option<String>,
     model: Option<String>,
 ) -> Result<(), PeerError> {
-    let (provider_name, model_name) = {
-        let (provider, model_config) = config.resolve_provider(provider, model.as_deref())?;
-        (provider.name.clone(), model_config.name.clone())
-    };
-
-    config.llm.default_provider = provider_name.clone();
-    if model.is_some() {
-        let provider = config
-            .providers
-            .iter_mut()
-            .find(|provider| provider.name == provider_name)
-            .ok_or_else(|| {
-                PeerError::invalid_config(format!("provider '{provider_name}' not found in config"))
-            })?;
-        provider.default_model = model_name;
-    }
+    let provider = provider.unwrap_or_else(|| config.llm.default_provider.clone());
+    let model = model.unwrap_or_else(|| config.llm.default_model.clone());
+    let model = ModelRef::try_new(provider, model)
+        .map_err(|error| PeerError::invalid_config(error.to_string()))?;
+    config.llm.default_provider = model.provider().to_string();
+    config.llm.default_model = model.model().to_string();
     Ok(())
 }
 
@@ -498,79 +487,80 @@ fn apply_llm_overrides(
 mod tests {
     use super::*;
 
+    use std::assert_matches;
+
     use crate::config::DEFAULT_CONFIG_TOML;
 
     #[test]
-    fn provider_override_uses_the_selected_providers_default_model() {
+    fn absent_overrides_keep_both_defaults() {
         let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
 
-        apply_llm_overrides(&mut config, Some(ProviderKind::OpenAi), None).unwrap();
+        apply_llm_overrides(&mut config, None, None).unwrap();
 
-        let (provider, model) = config.resolve_provider(None, None).unwrap();
-        assert_eq!(provider.name, "openai");
-        assert_eq!(model.name, "gpt-5.6-luna");
+        assert_eq!(config.llm.default_provider, "mistral");
+        assert_eq!(config.llm.default_model, "mistral-medium-3.5");
     }
 
     #[test]
-    fn model_override_replaces_the_selected_providers_default_model() {
+    fn provider_and_model_overrides_are_applied_separately() {
         let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
 
         apply_llm_overrides(
             &mut config,
-            Some(ProviderKind::OpenAi),
+            Some("openai".into()),
             Some("gpt-5.6-terra".into()),
         )
         .unwrap();
 
-        let (provider, model) = config.resolve_provider(None, None).unwrap();
-        assert_eq!(provider.name, "openai");
-        assert_eq!(model.name, "gpt-5.6-terra");
+        assert_eq!(config.llm.default_provider, "openai");
+        assert_eq!(config.llm.default_model, "gpt-5.6-terra");
     }
 
     #[test]
-    fn rejects_an_unconfigured_provider_without_mutating_config() {
+    fn overrides_accept_names_outside_any_catalog() {
         let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
-        config
-            .providers
-            .retain(|provider| provider.name != "openai");
-        let original_provider = config.llm.default_provider.clone();
 
-        let error = apply_llm_overrides(&mut config, Some(ProviderKind::OpenAi), None).unwrap_err();
-
-        assert_eq!(error.to_string(), "provider 'openai' not found in config");
-        assert_eq!(config.llm.default_provider, original_provider);
-    }
-
-    #[test]
-    fn rejects_an_unconfigured_model_without_mutating_config() {
-        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
-        let original_model = config
-            .providers
-            .iter()
-            .find(|provider| provider.name == "openai")
-            .unwrap()
-            .default_model
-            .clone();
-
-        let error = apply_llm_overrides(
+        apply_llm_overrides(
             &mut config,
-            Some(ProviderKind::OpenAi),
-            Some("unknown".into()),
+            Some("custom".into()),
+            Some("namespace/new-model".into()),
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert_eq!(
-            error.to_string(),
-            "model 'unknown' not found in provider 'openai'"
+        assert_eq!(config.llm.default_provider, "custom");
+        assert_eq!(config.llm.default_model, "namespace/new-model");
+    }
+
+    #[test]
+    fn overrides_reject_empty_name() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+
+        assert_matches!(
+            apply_llm_overrides(&mut config, Some(String::new()), None),
+            Err(PeerError::InvalidConfig { .. })
         );
-        assert_eq!(
-            config
-                .providers
-                .iter()
-                .find(|provider| provider.name == "openai")
-                .unwrap()
-                .default_model,
-            original_model
+    }
+
+    #[test]
+    fn overrides_reject_padded_name() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+
+        assert_matches!(
+            apply_llm_overrides(&mut config, None, Some(" padded".into())),
+            Err(PeerError::InvalidConfig { .. })
         );
+    }
+
+    #[test]
+    fn individual_overrides_keep_the_other_default() {
+        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+
+        apply_llm_overrides(&mut config, Some("openai".into()), None).unwrap();
+        assert_eq!(config.llm.default_provider, "openai");
+        assert_eq!(config.llm.default_model, "mistral-medium-3.5");
+
+        apply_llm_overrides(&mut config, None, Some("gpt-5.6-terra".into())).unwrap();
+        assert_eq!(config.llm.default_provider, "openai");
+        assert_eq!(config.llm.default_model, "gpt-5.6-terra");
     }
 }

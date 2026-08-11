@@ -98,26 +98,15 @@ fn init_fails_when_peer_already_exists() {
 }
 
 #[test]
-fn default_config_contains_provider_examples_and_pricing() {
+fn default_config_contains_only_pi_model_defaults() {
     let (mut cmd, tmp) = peer_in_tmp();
     git_init(tmp.path());
     cmd.arg("init").output().unwrap().assert_success();
 
     let content = std::fs::read_to_string(tmp.path().join(".peer").join("config.toml")).unwrap();
-    assert!(content.contains("mistral"), "mistral provider missing");
-    assert!(content.contains("openai"), "openai provider missing");
-    assert!(content.contains("anthropic"), "anthropic provider missing");
-    assert!(content.contains("gemini"), "gemini provider missing");
-    assert!(
-        content.contains("mistral-large-2512"),
-        "mistral-large-2512 model missing"
-    );
-    assert!(
-        content.contains("input_per_1m_usd"),
-        "input pricing missing"
-    );
-    assert!(
-        content.contains("output_per_1m_usd"),
-        "output pricing missing"
-    );
+    assert!(content.contains("version = 2"));
+    assert!(content.contains("default_provider = \"mistral\""));
+    assert!(content.contains("default_model = \"mistral-medium-3.5\""));
+    assert!(!content.contains("[[providers]]"));
+    assert!(!content.contains("per_1m_usd"));
 }
