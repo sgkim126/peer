@@ -20,7 +20,6 @@ pub enum StageKind {
 }
 
 impl StageKind {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReviewContext => "review_context",
@@ -64,7 +63,6 @@ pub enum StageOutcome<R> {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[expect(dead_code)]
 pub struct StageRun<R> {
     pub stage: StageKind,
     pub target: StageTarget,
