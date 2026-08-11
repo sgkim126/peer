@@ -4,8 +4,9 @@ use std::fmt::{self, Write};
 use owo_colors::Style;
 
 #[cfg(test)]
-use crate::llm::CheckResult;
-use crate::llm::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
+use crate::check::CheckResult;
+use crate::check::{CheckError, CheckTarget, Finding, Severity};
+use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
 
 use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_terminal};
@@ -242,8 +243,8 @@ fn finding_context(finding: &Finding) -> String {
 mod tests {
     use super::*;
 
+    use crate::check::FileLocation;
     use crate::git::CommitHash;
-    use crate::llm::FileLocation;
 
     fn result() -> CheckResult {
         CheckResult {

@@ -229,7 +229,7 @@ mod tests {
     fn builds_a_terminal_only_compression_request_with_source_ids() {
         let (config, prompt) = compression_request(&context());
 
-        assert!(config.read_tools.is_empty());
+        assert_eq!(config.read_tools, vec![]);
         assert_eq!(
             config.terminal_tools,
             [TerminalTool::SubmitReviewContextDigest]

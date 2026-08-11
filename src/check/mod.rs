@@ -1,9 +1,15 @@
 mod coherence;
 mod intent;
 mod quality;
+mod result;
 mod runner;
 mod security;
 mod size;
+
+pub use self::result::{CheckError, CheckResult, CheckTarget, Finding, Severity};
+
+#[cfg(test)]
+pub use self::result::FileLocation;
 
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -17,7 +23,7 @@ use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::{CheckResult, CheckTarget, Finding, LlmUsage};
+use crate::llm::LlmUsage;
 use crate::pi::{ModelRef, ModelRefError, PiRuntime, ReadTool, TerminalTool};
 
 use self::coherence::CoherenceCheck;
@@ -414,8 +420,6 @@ mod tests {
     use super::*;
 
     use std::assert_matches;
-
-    use crate::llm::CheckError;
 
     fn result(error: Option<CheckError>) -> CheckResult {
         let commit = CommitHash::new("abc1234").unwrap();

@@ -6,13 +6,13 @@ use crate::cache::{CacheKey, CacheKeyError};
 use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
-use crate::llm::{CheckError, CheckResult, CheckTarget, Finding, LlmUsage};
+use crate::llm::LlmUsage;
 use crate::pi::{
     CheckKind, ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig,
     tool_contract_digest,
 };
 
-use super::CheckDefinition;
+use super::{CheckDefinition, CheckError, CheckResult, CheckTarget, Finding};
 
 pub struct CheckRunConfig {
     pub model: ModelRef,

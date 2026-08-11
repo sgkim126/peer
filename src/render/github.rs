@@ -2,8 +2,9 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 #[cfg(test)]
-use crate::llm::CheckResult;
-use crate::llm::{CheckError, CheckTarget, Finding, LlmUsage, Severity};
+use crate::check::CheckResult;
+use crate::check::{CheckError, CheckTarget, Finding, Severity};
+use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
 
 use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_html, escape_markdown};
@@ -257,8 +258,8 @@ fn neutralize_mentions(value: &str) -> String {
 mod tests {
     use super::*;
 
+    use crate::check::FileLocation;
     use crate::git::CommitHash;
-    use crate::llm::FileLocation;
 
     fn result() -> CheckResult {
         CheckResult {

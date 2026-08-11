@@ -8,9 +8,10 @@ use std::io::IsTerminal;
 
 use serde::{Deserialize, Serialize};
 
+use crate::check::{CheckError, CheckResult, CheckTarget, Finding, Severity};
 use crate::cli::OutputFormat;
 use crate::git::CommitHash;
-use crate::llm::{CheckError, CheckResult, CheckTarget, Finding, LlmUsage, Severity};
+use crate::llm::LlmUsage;
 use crate::review::{ReviewCheck, ReviewCheckError, ReviewResult, ReviewSummary};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -405,9 +406,7 @@ impl RenderOptions {
 pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
     let counts = review_counts(&document);
     match options.format {
-        RenderFormat::Json => {
-            serde_json::to_string_pretty(&document).map_err(RenderError::Serialization)
-        }
+        RenderFormat::Json => Ok(serde_json::to_string_pretty(&document)?),
         RenderFormat::Terminal => {
             let use_color = std::io::stdout().is_terminal();
             let checks = document
@@ -559,6 +558,12 @@ pub enum RenderError {
     Serialization(serde_json::Error),
 }
 
+impl From<serde_json::Error> for RenderError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialization(error)
+    }
+}
+
 impl fmt::Display for RenderError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -602,7 +607,7 @@ mod tests {
 
     use std::assert_matches;
 
-    use crate::llm::FileLocation;
+    use crate::check::FileLocation;
 
     fn result() -> CheckResult {
         CheckResult {
@@ -716,7 +721,7 @@ mod tests {
         assert_eq!(value["summary"]["peer_version"], "0.1.0");
         assert_eq!(value["summary"]["provider"], "test-provider");
         assert_eq!(value["summary"]["model"], "test-model");
-        assert!(value["summary"].get("usage_by_model").is_none());
+        assert_eq!(value["summary"].get("usage_by_model"), None);
         assert_eq!(value["checks"].as_array().unwrap().len(), 2);
         assert_eq!(value["checks"][0]["check"], "security");
         assert_eq!(
@@ -783,7 +788,7 @@ mod tests {
         assert_eq!(value["context_usage"]["input_tokens"], 40);
         assert_eq!(value["context_usage"]["output_tokens"], 10);
         assert_eq!(value["context_usage"]["model"], "test-model");
-        assert!(value["checks"][0].get("context_usage").is_none());
+        assert_eq!(value["checks"][0].get("context_usage"), None);
     }
 
     #[test]
@@ -843,7 +848,7 @@ mod tests {
 
         let document = RenderDocument::from(check);
 
-        assert!(document.summary.is_none());
+        assert_eq!(document.summary, None);
         assert_eq!(document.context_usage, Some(review_context_usage()));
         assert_eq!(document.ordered_commits, ordered_commits);
         assert_eq!(document.checks.len(), 1);
@@ -862,8 +867,8 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&encoded).unwrap();
 
         assert_eq!(decoded, document);
-        assert!(value.get("summary").is_none());
-        assert!(value.get("context_usage").is_none());
+        assert_eq!(value.get("summary"), None);
+        assert_eq!(value.get("context_usage"), None);
     }
 
     #[test]

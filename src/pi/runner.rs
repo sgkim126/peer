@@ -739,6 +739,9 @@ mod tests {
             validate_relative_path(Path::new("../outside.jsonl")),
             Err(PiRunError::UnsafeSessionPath(_))
         );
-        assert!(validate_relative_path(Path::new("pi-sessions/session.jsonl")).is_ok());
+        assert_matches!(
+            validate_relative_path(Path::new("pi-sessions/session.jsonl")),
+            Ok(_)
+        );
     }
 }

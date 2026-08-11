@@ -1,10 +1,9 @@
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::CheckTarget;
 use crate::pi::ReadTool;
 
-use super::{CheckDefinition, CheckRequest};
+use super::{CheckDefinition, CheckRequest, CheckTarget};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for general code quality.
 
