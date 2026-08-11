@@ -4,7 +4,7 @@ use crate::git::CommitHash;
 
 const TOOL_CONTRACT: &str = include_str!(concat!(
     env!("CARGO_MANIFEST_DIR"),
-    "/resources/pi/tool-contract-v1.json"
+    "/resources/pi/tool-contract-v2.json"
 ));
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -15,6 +15,18 @@ pub enum CheckKind {
     Quality,
     Security,
     Coherence,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum StageKind {
+    ReviewContext,
+    CommitScope,
+    CommitSequence,
+    Size,
+    Intent,
+    Quality,
+    Security,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -36,6 +48,13 @@ pub enum TerminalTool {
     SubmitCheckResult,
     RequestClarification,
     SubmitReviewContextDigest,
+    SubmitReviewContext,
+    SubmitCommitScope,
+    SubmitCommitSequence,
+    SubmitSize,
+    SubmitIntent,
+    SubmitQuality,
+    SubmitSecurity,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -44,6 +63,11 @@ pub enum Operation {
     ReviewContext,
     Check {
         check: CheckKind,
+        target: String,
+        expected_commits: Vec<CommitHash>,
+    },
+    Stage {
+        stage: StageKind,
         target: String,
         expected_commits: Vec<CommitHash>,
     },
@@ -111,6 +135,13 @@ mod tests {
             TerminalTool::SubmitCheckResult,
             TerminalTool::RequestClarification,
             TerminalTool::SubmitReviewContextDigest,
+            TerminalTool::SubmitReviewContext,
+            TerminalTool::SubmitCommitScope,
+            TerminalTool::SubmitCommitSequence,
+            TerminalTool::SubmitSize,
+            TerminalTool::SubmitIntent,
+            TerminalTool::SubmitQuality,
+            TerminalTool::SubmitSecurity,
         ];
 
         assert_eq!(
@@ -148,5 +179,19 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("unknown field `extra_field`"));
+    }
+
+    #[test]
+    fn stage_operation_serializes_its_kind() {
+        let operation = Operation::Stage {
+            stage: StageKind::ReviewContext,
+            target: "abc1234..def5678".to_string(),
+            expected_commits: vec![CommitHash::new("def5678").unwrap()],
+        };
+
+        let value = serde_json::to_value(operation).unwrap();
+
+        assert_eq!(value["type"], "stage");
+        assert_eq!(value["stage"], "review_context");
     }
 }
