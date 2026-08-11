@@ -26,7 +26,6 @@ pub struct LlmUsage {
 }
 
 impl LlmUsage {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn zero(model: impl Into<String>) -> Self {
         Self {
             input_tokens: 0,

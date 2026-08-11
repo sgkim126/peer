@@ -5,6 +5,7 @@ mod intent;
 mod quality;
 mod result;
 mod review_context;
+mod runner;
 mod security;
 mod size;
 
