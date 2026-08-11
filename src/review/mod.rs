@@ -5,13 +5,13 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::cache::CacheStore;
-use crate::check::{self, CheckCommandError};
+use crate::check::{self, CheckCommandError, CheckResult};
 use crate::cli::CheckCommand;
 use crate::config::Config;
 use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::git::{CommitHash, GitError, run_git};
-use crate::llm::{CheckResult, LlmUsage};
+use crate::llm::LlmUsage;
 use crate::pi::PiRuntime;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -465,7 +465,7 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::llm::{CheckError, CheckTarget};
+    use crate::check::{CheckError, CheckTarget};
 
     struct Repo {
         _tmp: TempDir,

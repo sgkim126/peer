@@ -8,9 +8,10 @@ use std::io::IsTerminal;
 
 use serde::{Deserialize, Serialize};
 
+use crate::check::{CheckError, CheckResult, CheckTarget, Finding, Severity};
 use crate::cli::OutputFormat;
 use crate::git::CommitHash;
-use crate::llm::{CheckError, CheckResult, CheckTarget, Finding, LlmUsage, Severity};
+use crate::llm::LlmUsage;
 use crate::review::{ReviewCheck, ReviewCheckError, ReviewResult, ReviewSummary};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -606,7 +607,7 @@ mod tests {
 
     use std::assert_matches;
 
-    use crate::llm::FileLocation;
+    use crate::check::FileLocation;
 
     fn result() -> CheckResult {
         CheckResult {
