@@ -216,15 +216,12 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
     pi.registerTool({
         name: "request_clarification",
         label: "Request Clarification",
-        description: "Request facts necessary to assess a concrete potential finding.",
+        description: "Request facts necessary to complete the active review stage.",
         parameters: Type.Object({
-            questions: Type.Array(Type.Union([
-                Type.String({ minLength: 1 }),
-                Type.Object({
-                    question: Type.String({ minLength: 1 }),
-                    reason: Type.String({ minLength: 1 }),
-                }),
-            ]), {
+            questions: Type.Array(Type.Object({
+                question: Type.String({ minLength: 1 }),
+                reason: Type.String({ minLength: 1 }),
+            }), {
                 minItems: 1
             }),
         }),
