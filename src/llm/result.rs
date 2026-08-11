@@ -152,8 +152,8 @@ mod tests {
         let value = serde_json::to_value(finding("abc1234", Severity::Info)).unwrap();
 
         assert_eq!(value["severity"], "info");
-        assert!(value.get("file").is_none());
-        assert!(value.get("line").is_none());
+        assert_eq!(value.get("file"), None);
+        assert_eq!(value.get("line"), None);
     }
 
     #[test]
@@ -301,11 +301,9 @@ mod tests {
             reason: "iteration limit reached".to_string(),
         });
         assert!(!result.is_success());
-        assert!(
-            serde_json::to_value(result)
-                .unwrap()
-                .get("context_usage")
-                .is_none()
+        assert_eq!(
+            serde_json::to_value(result).unwrap().get("context_usage"),
+            None
         );
     }
 }

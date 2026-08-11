@@ -64,6 +64,7 @@ impl From<GitError> for PeerError {
 mod tests {
     use super::*;
 
+    use std::assert_matches;
     use std::error::Error;
 
     #[test]
@@ -72,13 +73,13 @@ mod tests {
             message: "invalid config".into(),
             source: Some(Box::new(std::io::Error::other("underlying cause"))),
         };
-        assert!(e.source().is_some());
+        assert_matches!(e.source(), Some(_));
     }
 
     #[test]
     fn config_error_without_source_has_no_chain() {
         let e = PeerError::invalid_config("not found");
 
-        assert!(e.source().is_none());
+        assert_matches!(e.source(), None);
     }
 }

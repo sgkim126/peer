@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(threads[0].location.as_ref().unwrap().line, None);
         let value = serde_json::to_value(&threads).unwrap();
         assert_eq!(value[0]["location"]["path"], "src/lib.rs");
-        assert!(value[0]["location"].get("line").is_none());
+        assert_eq!(value[0]["location"].get("line"), None);
     }
 
     #[test]

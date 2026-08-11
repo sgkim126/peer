@@ -276,7 +276,7 @@ mod tests {
     fn review_with_github_format_requires_repo() {
         let result = Cli::try_parse_from(["peer", "review", "HEAD", "--format", "github"]);
 
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
     }
 
     #[test]
@@ -459,14 +459,14 @@ mod tests {
             "security",
         ]);
 
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
     }
 
     #[test]
     fn review_rejects_only_check_without_a_value() {
         let result = Cli::try_parse_from(["peer", "review", "HEAD", "--only-check"]);
 
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
     }
 
     #[test]
@@ -649,7 +649,7 @@ mod tests {
             "0",
         ]);
 
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
     }
 
     #[test]
@@ -875,7 +875,7 @@ mod tests {
     fn render_with_github_format_requires_repo() {
         let result = Cli::try_parse_from(["peer", "render", "--format", "github"]);
 
-        assert!(result.is_err());
+        assert_matches!(result, Err(_));
     }
 
     #[test]

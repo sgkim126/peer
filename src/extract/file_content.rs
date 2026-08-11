@@ -364,7 +364,7 @@ mod tests {
             serde_json::json!({ "start_line": 1, "end_line": 0 }),
             serde_json::json!({ "start_line": 2, "end_line": 1 }),
         ] {
-            assert!(serde_json::from_value::<FileContentRange>(value).is_err());
+            assert_matches!(serde_json::from_value::<FileContentRange>(value), Err(_));
         }
     }
 }
