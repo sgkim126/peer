@@ -405,9 +405,7 @@ impl RenderOptions {
 pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
     let counts = review_counts(&document);
     match options.format {
-        RenderFormat::Json => {
-            serde_json::to_string_pretty(&document).map_err(RenderError::Serialization)
-        }
+        RenderFormat::Json => Ok(serde_json::to_string_pretty(&document)?),
         RenderFormat::Terminal => {
             let use_color = std::io::stdout().is_terminal();
             let checks = document
@@ -557,6 +555,12 @@ fn is_github_repo_char(ch: char) -> bool {
 #[derive(Debug)]
 pub enum RenderError {
     Serialization(serde_json::Error),
+}
+
+impl From<serde_json::Error> for RenderError {
+    fn from(error: serde_json::Error) -> Self {
+        Self::Serialization(error)
+    }
 }
 
 impl fmt::Display for RenderError {
