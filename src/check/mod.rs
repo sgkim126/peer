@@ -112,7 +112,7 @@ impl From<ModelRefError> for CheckCommandError {
 
 impl From<ExtractError> for CheckCommandError {
     fn from(error: ExtractError) -> Self {
-        Self::Run(CheckRunError::Preparation(error))
+        Self::Run(error.into())
     }
 }
 
