@@ -1,3 +1,4 @@
+mod commit_scope;
 mod contract;
 mod result;
 mod review_context;
