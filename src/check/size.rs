@@ -1,12 +1,10 @@
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::{
-    AgentRequest, CheckTarget, ConversationTurn, get_file_content, request_clarification,
-    submit_check_result,
-};
+use crate::llm::CheckTarget;
+use crate::pi::ReadTool;
 
-use super::CheckDefinition;
+use super::{CheckDefinition, CheckRequest};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a single commit for scope and atomicity.
 
@@ -45,12 +43,11 @@ impl CheckDefinition for SizeCheck {
         std::slice::from_ref(&self.commit)
     }
 
-    async fn agent_request(
+    async fn request(
         &self,
         extractor: &Extractor,
-        model: &str,
         review_context: &ReviewContextDigest,
-    ) -> Result<AgentRequest, ExtractError> {
+    ) -> Result<CheckRequest, ExtractError> {
         let diff = extractor.commit_diff(self.commit.as_ref()).await?;
         let files = extractor.commit_files(self.commit.as_ref()).await?;
         let input = serde_json::json!({
@@ -58,21 +55,14 @@ impl CheckDefinition for SizeCheck {
             "changed_files": files.files,
             "diff": diff.diff,
         });
-        let mut request = AgentRequest {
-            model: model.to_string(),
-            conversation: vec![
-                ConversationTurn::System(SYSTEM_PROMPT.to_string()),
-                ConversationTurn::User(format!(
-                    "Review the following required commit data:\n{}",
-                    serde_json::to_string_pretty(&input).expect("size check input serializes")
-                )),
-            ],
-            tools: vec![get_file_content()],
-            terminal_tools: vec![request_clarification(), submit_check_result()],
-        };
-        if let Some(prompt) = review_context.to_prompt() {
-            request.conversation.push(ConversationTurn::User(prompt));
-        }
-        Ok(request)
+        Ok(CheckRequest::new(
+            SYSTEM_PROMPT,
+            format!(
+                "Review the following required commit data:\n{}",
+                serde_json::to_string_pretty(&input).expect("size check input serializes")
+            ),
+            vec![ReadTool::GetFileContent],
+            review_context,
+        ))
     }
 }

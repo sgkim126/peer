@@ -1,12 +1,10 @@
 use crate::context::ReviewContextDigest;
 use crate::extract::{CommitList, ExtractError, Extractor};
 use crate::git::CommitHash;
-use crate::llm::{
-    AgentRequest, CheckTarget, ConversationTurn, get_changed_files, get_commit_diff,
-    request_clarification, submit_check_result,
-};
+use crate::llm::CheckTarget;
+use crate::pi::ReadTool;
 
-use super::CheckDefinition;
+use super::{CheckDefinition, CheckRequest};
 
 const SYSTEM_PROMPT: &str = r#"You are reviewing a commit series for coherence.
 
@@ -48,12 +46,11 @@ impl CheckDefinition for CoherenceCheck {
         &self.commits.commits
     }
 
-    async fn agent_request(
+    async fn request(
         &self,
         extractor: &Extractor,
-        model: &str,
         review_context: &ReviewContextDigest,
-    ) -> Result<AgentRequest, ExtractError> {
+    ) -> Result<CheckRequest, ExtractError> {
         let mut entries = Vec::with_capacity(self.commits.commits.len());
         for (index, commit) in self.commits.commits.iter().enumerate() {
             let message = extractor.commit_message(commit.as_ref()).await?;
@@ -64,23 +61,16 @@ impl CheckDefinition for CoherenceCheck {
                 indent(&message.message)
             ));
         }
-        let mut request = AgentRequest {
-            model: model.to_string(),
-            conversation: vec![
-                ConversationTurn::System(SYSTEM_PROMPT.to_string()),
-                ConversationTurn::User(format!(
-                    "Review range {}.\n\nCommits (oldest to newest):\n{}",
-                    self.commits.range,
-                    entries.join("\n\n")
-                )),
-            ],
-            tools: vec![get_commit_diff(), get_changed_files()],
-            terminal_tools: vec![request_clarification(), submit_check_result()],
-        };
-        if let Some(prompt) = review_context.to_prompt() {
-            request.conversation.push(ConversationTurn::User(prompt));
-        }
-        Ok(request)
+        Ok(CheckRequest::new(
+            SYSTEM_PROMPT,
+            format!(
+                "Review range {}.\n\nCommits (oldest to newest):\n{}",
+                self.commits.range,
+                entries.join("\n\n")
+            ),
+            vec![ReadTool::GetCommitDiff, ReadTool::GetChangedFiles],
+            review_context,
+        ))
     }
 }
 

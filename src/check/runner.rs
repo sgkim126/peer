@@ -6,10 +6,10 @@ use crate::cache::{CacheKey, CacheKeyError};
 use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
-use crate::llm::{CheckError, CheckResult, CheckTarget, ConversationTurn, Finding, LlmUsage};
+use crate::llm::{CheckError, CheckResult, CheckTarget, Finding, LlmUsage};
 use crate::pi::{
-    CheckKind, ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, ReadTool,
-    RunConfig, TerminalTool, tool_contract_digest,
+    CheckKind, ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig,
+    tool_contract_digest,
 };
 
 use super::CheckDefinition;
@@ -103,24 +103,13 @@ impl Checker {
         C: CheckDefinition,
     {
         let request = check
-            .agent_request(&self.extractor, self.config.model.model(), review_context)
+            .request(&self.extractor, review_context)
             .await
             .map_err(CheckRunError::Preparation)?;
         let target = check.target();
         self.config
             .console
             .debug(format_args!("check {} for {target}", check.name()));
-        let (system_prompt, prompt) = prompts(request.conversation)?;
-        let read_tools = request
-            .tools
-            .into_iter()
-            .map(|tool| read_tool(&tool.name))
-            .collect::<Result<Vec<_>, _>>()?;
-        let terminal_tools = request
-            .terminal_tools
-            .into_iter()
-            .map(|tool| terminal_tool(&tool.name))
-            .collect::<Result<Vec<_>, _>>()?;
         let result = runtime
             .run(PiRunRequest {
                 session_key: self.config.session_key.clone(),
@@ -131,13 +120,13 @@ impl Checker {
                         target: target.to_string(),
                         expected_commits: check.expected_commits().to_vec(),
                     },
-                    system_prompt,
-                    read_tools,
-                    terminal_tools,
+                    system_prompt: request.system_prompt,
+                    read_tools: request.read_tools,
+                    terminal_tools: request.terminal_tools,
                     max_turns: self.config.max_iterations,
                 },
                 model: self.config.model.clone(),
-                prompt,
+                prompt: request.prompt,
                 resume: self.config.resume,
             })
             .await;
@@ -233,38 +222,6 @@ impl Checker {
     }
 }
 
-fn prompts(conversation: Vec<ConversationTurn>) -> Result<(String, String), CheckRunError> {
-    let mut system_prompt = None;
-    let mut user_prompts = Vec::new();
-    for turn in conversation {
-        match turn {
-            ConversationTurn::System(prompt) if system_prompt.is_none() => {
-                system_prompt = Some(prompt);
-            }
-            ConversationTurn::User(prompt) => user_prompts.push(prompt),
-            ConversationTurn::System(_) => {
-                return Err(CheckRunError::InvalidRequest(
-                    "multiple system prompts".to_string(),
-                ));
-            }
-            ConversationTurn::AssistantToolCalls(_) | ConversationTurn::ToolResult { .. } => {
-                return Err(CheckRunError::InvalidRequest(
-                    "tool history is not supported".to_string(),
-                ));
-            }
-        }
-    }
-    let system_prompt = system_prompt
-        .filter(|prompt| !prompt.trim().is_empty())
-        .ok_or_else(|| CheckRunError::InvalidRequest("missing system prompt".to_string()))?;
-    if user_prompts.is_empty() {
-        return Err(CheckRunError::InvalidRequest(
-            "missing user prompt".to_string(),
-        ));
-    }
-    Ok((system_prompt, user_prompts.join("\n\n")))
-}
-
 fn validate_questions(questions: &[String]) -> Result<(), String> {
     if questions.is_empty() {
         return Err("clarification questions must not be empty".to_string());
@@ -288,32 +245,6 @@ fn check_kind(name: &str) -> Result<CheckKind, CheckRunError> {
     }
 }
 
-fn read_tool(name: &str) -> Result<ReadTool, CheckRunError> {
-    match name {
-        "get_commit_message" => Ok(ReadTool::GetCommitMessage),
-        "get_commit_diff" => Ok(ReadTool::GetCommitDiff),
-        "get_changed_files" => Ok(ReadTool::GetChangedFiles),
-        "get_commits_in_range" => Ok(ReadTool::GetCommitsInRange),
-        "get_file_content" => Ok(ReadTool::GetFileContent),
-        "get_file_diff" => Ok(ReadTool::GetFileDiff),
-        "list_tree" => Ok(ReadTool::ListTree),
-        "grep" => Ok(ReadTool::Grep),
-        _ => Err(CheckRunError::InvalidRequest(format!(
-            "unknown read tool: {name}"
-        ))),
-    }
-}
-
-fn terminal_tool(name: &str) -> Result<TerminalTool, CheckRunError> {
-    match name {
-        "submit_check_result" => Ok(TerminalTool::SubmitCheckResult),
-        "request_clarification" => Ok(TerminalTool::RequestClarification),
-        _ => Err(CheckRunError::InvalidRequest(format!(
-            "unknown terminal tool: {name}"
-        ))),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -321,42 +252,9 @@ mod tests {
     use std::assert_matches;
 
     #[test]
-    fn separates_the_system_prompt_from_user_input() {
-        let (system, prompt) = prompts(vec![
-            ConversationTurn::System("Review code.".to_string()),
-            ConversationTurn::User("Input".to_string()),
-            ConversationTurn::User("Context".to_string()),
-        ])
-        .unwrap();
-
-        assert_eq!(system, "Review code.");
-        assert_eq!(prompt, "Input\n\nContext");
-    }
-
-    #[test]
-    fn rejects_invalid_requests() {
-        let Err(CheckRunError::InvalidRequest(message)) =
-            prompts(vec![ConversationTurn::User("Input".to_string())])
-        else {
-            panic!("missing system prompt must be rejected");
-        };
-
-        assert_eq!(message, "missing system prompt");
-    }
-
-    #[test]
     fn validates_clarification_questions() {
         assert_matches!(validate_questions(&["Which behavior?".to_string()]), Ok(_));
         assert_matches!(validate_questions(&[]), Err(_));
         assert_matches!(validate_questions(&["  ".to_string()]), Err(_));
-    }
-
-    #[test]
-    fn maps_prepared_tool_names_to_the_protocol() {
-        assert_eq!(read_tool("grep").unwrap(), ReadTool::Grep);
-        assert_eq!(
-            terminal_tool("submit_check_result").unwrap(),
-            TerminalTool::SubmitCheckResult
-        );
     }
 }
