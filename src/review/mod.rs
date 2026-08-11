@@ -16,9 +16,7 @@ use crate::pi::PiRuntime;
 
 mod input;
 
-#[cfg(test)]
-pub use self::input::ReviewCommitInput;
-pub use self::input::ReviewInput;
+pub use self::input::{ReviewCommitInput, ReviewInput};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {
