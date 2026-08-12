@@ -8,13 +8,15 @@ default_provider = "mistral"
 default_model = "mistral-medium-3.5"
 max_iterations = 3
 
-# Per-check overrides. Any omitted check uses `[llm].max_iterations`.
-# The coherence limit also applies to the commit-scope and commit-sequence stages.
-[checks.quality]
+# Per-stage overrides. Any omitted stage uses `[llm].max_iterations`.
+[stages.quality]
 max_iterations = 10
 
-[checks.security]
+[stages.security]
 max_iterations = 5
 
-[checks.coherence]
+[stages.commit_scope]
+max_iterations = 10
+
+[stages.commit_sequence]
 max_iterations = 10
