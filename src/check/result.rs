@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::git::CommitHash;
 use crate::llm::LlmUsage;
+pub use crate::stage::{FileLocation, Finding, Severity, StageTarget as CheckTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -17,48 +18,6 @@ impl fmt::Display for CheckError {
         match self {
             Self::Exhausted { reason } => f.write_str(reason),
             Self::ClarificationRequired { .. } => f.write_str("clarification required"),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize, Serialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Severity {
-    Info,
-    Low,
-    Medium,
-    High,
-    Critical,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-pub struct FileLocation {
-    pub file: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub line: Option<u32>,
-}
-
-#[derive(Debug, Clone, PartialEq, Deserialize, Serialize)]
-pub struct Finding {
-    pub commit: CommitHash,
-    pub severity: Severity,
-    pub message: String,
-    #[serde(flatten)]
-    pub location: Option<FileLocation>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(untagged)]
-pub enum CheckTarget {
-    Commit(CommitHash),
-    Range { from: CommitHash, to: CommitHash },
-}
-
-impl fmt::Display for CheckTarget {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Commit(commit) => commit.fmt(f),
-            Self::Range { from, to } => write!(f, "{from}..{to}"),
         }
     }
 }

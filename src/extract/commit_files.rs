@@ -18,7 +18,7 @@ pub enum FileStatus {
     TypeChanged,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FileEntry {
     pub path: String,
     pub status: FileStatus,
@@ -27,7 +27,7 @@ pub struct FileEntry {
     pub is_binary: bool,
 }
 
-#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct CommitFiles {
     pub hash: CommitHash,
     pub files: Vec<FileEntry>,

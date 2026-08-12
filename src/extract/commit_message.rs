@@ -4,7 +4,7 @@ use crate::git::{CommitHash, run_git};
 
 use super::{ExtractError, Extractor};
 
-#[derive(Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct CommitMessage {
     pub hash: CommitHash,
     pub message: String,

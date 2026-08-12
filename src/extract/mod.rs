@@ -7,6 +7,7 @@ mod file_content;
 mod file_diff;
 mod grep;
 mod list_tree;
+mod range_diff;
 
 use std::path::{Component, Path, PathBuf};
 
