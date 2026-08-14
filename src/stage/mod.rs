@@ -9,7 +9,7 @@ mod runner;
 mod security;
 mod size;
 
-pub use self::commit_scope::{CommitScopeReport, CommitScopeStage};
+pub use self::commit_scope::{CommitScopeReport, CommitScopeStage, ScopeDisposition};
 pub use self::commit_sequence::{CommitSequenceReport, CommitSequenceStage};
 pub use self::contract::{ReviewStage, StageKind, StageOutcome, StageRun};
 pub use self::intent::{IntentReport, IntentStage};

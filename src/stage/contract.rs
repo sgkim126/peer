@@ -73,7 +73,6 @@ pub struct StageRun<R> {
 }
 
 impl<R> StageRun<R> {
-    #[expect(dead_code)]
     pub fn run_commit(&self) -> &CommitHash {
         match &self.target {
             StageTarget::Commit(commit) => commit,

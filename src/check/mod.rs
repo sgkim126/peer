@@ -8,7 +8,6 @@ mod size;
 
 pub use self::result::{CheckError, CheckResult, CheckTarget, Finding, Severity};
 
-#[cfg_attr(not(test), expect(unused_imports))]
 pub use self::result::FileLocation;
 
 use std::fmt;
