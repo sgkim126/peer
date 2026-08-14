@@ -55,6 +55,10 @@ export type CheckTerminalTool = (typeof CHECK_TERMINAL_TOOLS)[number];
 export type StageTerminalTool = (typeof STAGE_TERMINAL_TOOLS)[number];
 export type ReviewContextTerminalTool =
     (typeof REVIEW_CONTEXT_TERMINAL_TOOLS)[number];
+export type TerminalTool =
+    | CheckTerminalTool
+    | StageTerminalTool
+    | ReviewContextTerminalTool;
 
 const STAGE_SUBMISSION_TOOLS: Record<StageKind, StageTerminalTool> = {
     review_context: "submit_review_context",
@@ -113,6 +117,15 @@ export type RunConfig =
 export interface ConfigureEnvelope {
     digest: string;
     config: RunConfig;
+}
+
+export function requireConfiguredTerminalTool(
+    envelope: ConfigureEnvelope,
+    tool: TerminalTool,
+): void {
+    if (!envelope.config.terminal_tools.some((configured) => configured === tool)) {
+        throw new Error(`terminal tool is not configured for the active operation: ${tool}`);
+    }
 }
 
 function isStringArray(value: unknown): value is string[] {

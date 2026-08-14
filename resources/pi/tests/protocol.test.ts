@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { decodeConfigureEnvelope } from "../extension/protocol.ts";
+import {
+    decodeConfigureEnvelope,
+    requireConfiguredTerminalTool,
+} from "../extension/protocol.ts";
 
 function encode(value: unknown): string {
     return Buffer.from(JSON.stringify(value), "utf8").toString("base64url");
@@ -47,6 +50,30 @@ test("decodes a typed review stage configuration", () => {
     };
 
     assert.deepEqual(decodeConfigureEnvelope(encode(envelope)), envelope);
+});
+
+test("rejects clarification when a stage configuration omits the tool", () => {
+    const envelope = decodeConfigureEnvelope(encode({
+        digest: "a".repeat(64),
+        config: {
+            tool_contract_digest: "b".repeat(64),
+            operation: {
+                type: "stage",
+                stage: "quality",
+                target: "abc1234",
+                expected_commits: ["abc1234"],
+            },
+            system_prompt: "Assess quality.",
+            read_tools: ["get_commit_diff"],
+            terminal_tools: ["submit_quality"],
+            max_turns: 3,
+        },
+    }));
+
+    assert.throws(
+        () => requireConfiguredTerminalTool(envelope, "request_clarification"),
+        /terminal tool is not configured for the active operation/,
+    );
 });
 
 test("rejects a stage configuration without its submission tool", () => {

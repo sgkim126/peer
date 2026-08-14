@@ -1,7 +1,11 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-import type { ConfigureEnvelope } from "../protocol.ts";
+import {
+    type ConfigureEnvelope,
+    type TerminalTool,
+    requireConfiguredTerminalTool,
+} from "../protocol.ts";
 
 type GetConfig = () => ConfigureEnvelope | undefined;
 
@@ -139,16 +143,21 @@ const SecurityFinding = Type.Intersect([
     }),
 ]);
 
-function requireOperation(getConfig: GetConfig, type: "check" | "review_context" | "stage") {
+function requireOperation(
+    getConfig: GetConfig,
+    type: "check" | "review_context" | "stage",
+    tool: TerminalTool,
+) {
     const envelope = getConfig();
     if (envelope?.config.operation.type !== type) {
         throw new Error(`terminal tool is not valid for the active ${type} operation`);
     }
+    requireConfiguredTerminalTool(envelope, tool);
     return envelope;
 }
 
-function requireStage(getConfig: GetConfig, stage: string) {
-    const envelope = requireOperation(getConfig, "stage");
+function requireStage(getConfig: GetConfig, stage: string, tool: TerminalTool) {
+    const envelope = requireOperation(getConfig, "stage", tool);
     const operation = envelope.config.operation;
     if (operation.type !== "stage" || operation.stage !== stage) {
         throw new Error(`terminal tool is not valid for the active ${stage} stage`);
@@ -187,7 +196,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             findings: Type.Array(Finding),
         }),
         async execute(_id, params) {
-            const envelope = requireOperation(getConfig, "check");
+            const envelope = requireOperation(getConfig, "check", "submit_check_result");
             const operation = envelope.config.operation;
             if (operation.type !== "check") {
                 throw new Error("check operation changed unexpectedly");
@@ -226,10 +235,12 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             }),
         }),
         async execute(_id, params) {
-            const type = getConfig()?.config.operation.type;
+            const envelope = getConfig();
+            const type = envelope?.config.operation.type;
             if (type !== "check" && type !== "stage") {
                 throw new Error("terminal tool is not valid for the active operation");
             }
+            requireConfiguredTerminalTool(envelope, "request_clarification");
             return outcome(
                 {
                     type: "clarification",
@@ -246,7 +257,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
         description: "Submit the sufficient, compressed review context.",
         parameters: ReviewContextReport,
         async execute(_id, params) {
-            requireStage(getConfig, "review_context");
+            requireStage(getConfig, "review_context", "submit_review_context");
             return completed(params, "Submitted review context.");
         },
     });
@@ -260,7 +271,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             commits: Type.Array(CommitScopeEntry),
         }),
         async execute(_id, params) {
-            requireStage(getConfig, "commit_scope");
+            requireStage(getConfig, "commit_scope", "submit_commit_scope");
             return completed(params, "Submitted commit scope.");
         },
     });
@@ -275,7 +286,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             issues: Type.Array(SequenceIssue),
         }),
         async execute(_id, params) {
-            requireStage(getConfig, "commit_sequence");
+            requireStage(getConfig, "commit_sequence", "submit_commit_sequence");
             return completed(params, "Submitted commit sequence.");
         },
     });
@@ -289,7 +300,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             issues: Type.Array(SizeIssue),
         }),
         async execute(_id, params) {
-            requireStage(getConfig, "size");
+            requireStage(getConfig, "size", "submit_size");
             return completed(params, "Submitted size stage.");
         },
     });
@@ -303,7 +314,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             issues: Type.Array(IntentIssue),
         }),
         async execute(_id, params) {
-            requireStage(getConfig, "intent");
+            requireStage(getConfig, "intent", "submit_intent");
             return completed(params, "Submitted intent stage.");
         },
     });
@@ -317,7 +328,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             findings: Type.Array(Finding),
         }),
         async execute(_id, params) {
-            requireStage(getConfig, "quality");
+            requireStage(getConfig, "quality", "submit_quality");
             return completed(params, "Submitted quality stage.");
         },
     });
@@ -331,7 +342,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             findings: Type.Array(SecurityFinding),
         }),
         async execute(_id, params) {
-            requireStage(getConfig, "security");
+            requireStage(getConfig, "security", "submit_security");
             return completed(params, "Submitted security stage.");
         },
     });
@@ -348,7 +359,11 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             missing_context: Type.Array(MissingContext),
         }),
         async execute(_id, params) {
-            requireOperation(getConfig, "review_context");
+            requireOperation(
+                getConfig,
+                "review_context",
+                "submit_review_context_digest",
+            );
             return outcome({
                 type: "review_context",
                 digest: params,
