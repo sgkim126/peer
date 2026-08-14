@@ -679,6 +679,17 @@ pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String
     }
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn render_pipeline(
+    review: PipelineReviewResult,
+    options: RenderOptions,
+) -> Result<String, RenderError> {
+    if matches!(&options.format, RenderFormat::Json) {
+        return Ok(serde_json::to_string_pretty(&review)?);
+    }
+    render(review.into(), options)
+}
+
 fn review_counts(document: &RenderDocument) -> ReviewCounts {
     let mut counts = ReviewCounts::default();
     for check in &document.checks {
@@ -1468,5 +1479,116 @@ mod tests {
             RenderOptions::from_cli(OutputFormat::Github, None),
             Err(RenderOptionsError::GithubRepoRequired)
         );
+    }
+
+    #[test]
+    fn pipeline_json_preserves_typed_stage_envelope() {
+        use crate::stage::StageKind;
+
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let ordered_commits = vec![first.clone(), second.clone()];
+        let range = CheckTarget::Range {
+            from: first.clone(),
+            to: second.clone(),
+        };
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: ordered_commits.clone(),
+            stages: vec![
+                PipelineStageResult::ReviewContext(exhausted_stage_run(
+                    StageKind::ReviewContext,
+                    range.clone(),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::CommitScope(exhausted_stage_run(
+                    StageKind::CommitScope,
+                    range.clone(),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::CommitSequence(exhausted_stage_run(
+                    StageKind::CommitSequence,
+                    range,
+                    &ordered_commits,
+                )),
+                PipelineStageResult::Size(exhausted_stage_run(
+                    StageKind::Size,
+                    CheckTarget::Commit(first.clone()),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::Intent(exhausted_stage_run(
+                    StageKind::Intent,
+                    CheckTarget::Commit(first.clone()),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::Quality(exhausted_stage_run(
+                    StageKind::Quality,
+                    CheckTarget::Commit(second.clone()),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::Security(exhausted_stage_run(
+                    StageKind::Security,
+                    CheckTarget::Commit(second),
+                    &ordered_commits,
+                )),
+            ],
+            errors: Vec::new(),
+        };
+
+        let output = render_pipeline(
+            review,
+            RenderOptions::from_cli(OutputFormat::Json, None).unwrap(),
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let stages = value["stages"].as_array().unwrap();
+
+        assert_eq!(value["ordered_commits"][0], "abc1234");
+        assert_eq!(
+            stages
+                .iter()
+                .map(|stage| stage["stage"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "review_context",
+                "commit_scope",
+                "commit_sequence",
+                "size",
+                "intent",
+                "quality",
+                "security",
+            ]
+        );
+        assert_eq!(stages.len(), 7);
+        for stage in stages {
+            let result = &stage["result"];
+            assert_eq!(result["outcome"]["status"], "exhausted");
+            assert_eq!(result["outcome"]["reason"], "iteration limit reached");
+            assert_eq!(result["iterations"], 3);
+        }
+    }
+
+    #[test]
+    fn pipeline_renders_human_readable_formats_through_the_document() {
+        let commit = CommitHash::new("abc1234").unwrap();
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: vec![commit.clone()],
+            stages: vec![PipelineStageResult::ReviewContext(exhausted_stage_run(
+                crate::stage::StageKind::ReviewContext,
+                CheckTarget::Commit(commit),
+                &[],
+            ))],
+            errors: Vec::new(),
+        };
+
+        let output = render_pipeline(
+            review,
+            RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
+        )
+        .unwrap();
+
+        assert!(output.contains("review\\_context"));
+        assert!(output.contains("iteration limit reached"));
     }
 }
