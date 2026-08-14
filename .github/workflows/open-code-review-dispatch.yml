@@ -244,6 +244,21 @@ jobs:
               catch (error) { core.warning(`Could not read ${path}: ${error.message}`); return ''; }
             };
             const escape = (value) => String(value ?? '').replace(/`/g, '\\`');
+            const formatWarning = (warning) => {
+              if (warning == null) return '';
+              if (typeof warning === 'string') return warning;
+              if (typeof warning !== 'object') return String(warning);
+
+              const context = [
+                warning.file ? `\`${escape(warning.file)}\`` : '',
+                warning.type ? `(\`${escape(warning.type)}\`)` : '',
+              ].filter(Boolean).join(' ');
+              const message = warning.message == null ? '' : String(warning.message);
+              if (context && message) return `${context}: ${message}`;
+              if (context || message) return context || message;
+              try { return JSON.stringify(warning); }
+              catch { return String(warning); }
+            };
             let review = '';
             try {
               const result = JSON.parse(read(process.env.RESULT_PATH));
@@ -257,7 +272,10 @@ jobs:
                 ? `### Findings (${findings.length})\n\n${findings.join('\n')}`
                 : `### Findings\n\n${result.message || 'No comments generated. Looks good to me.'}`;
               if (Array.isArray(result.warnings) && result.warnings.length) {
-                review += `\n\n### Warnings\n\n${result.warnings.map((warning) => `- ${warning}`).join('\n')}`;
+                const warnings = result.warnings.map(formatWarning).filter(Boolean);
+                if (warnings.length) {
+                  review += `\n\n### Warnings\n\n${warnings.map((warning) => `- ${warning}`).join('\n')}`;
+                }
               }
             } catch (error) {
               const stderr = read(process.env.STDERR_PATH);
