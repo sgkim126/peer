@@ -132,6 +132,19 @@ jobs:
           ref: refs/pull/${{ steps.review.outputs.pr-number }}/head
           fetch-depth: 0
 
+      - name: Compute pull request merge base
+        id: range
+        env:
+          BASE_SHA: ${{ steps.review.outputs.base-sha }}
+          HEAD_SHA: ${{ steps.review.outputs.head-sha }}
+        run: |
+          set -euo pipefail
+          if ! merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"; then
+            echo "Could not find a merge base between $BASE_SHA and $HEAD_SHA." >&2
+            exit 1
+          fi
+          echo "base-sha=$merge_base" >> "$GITHUB_OUTPUT"
+
       - name: Install Open Code Review
         run: |
           npm install --global @alibaba-group/open-code-review@latest
@@ -164,7 +177,7 @@ jobs:
             exit 1
           fi
           set +e
-          ocr review --repo "$GITHUB_WORKSPACE" --from '${{ steps.review.outputs.base-sha }}' --to '${{ steps.review.outputs.head-sha }}' --concurrency 1 --format json \
+          ocr review --repo "$GITHUB_WORKSPACE" --from '${{ steps.range.outputs.base-sha }}' --to '${{ steps.review.outputs.head-sha }}' --concurrency 1 --format json \
             > >(tee "$result") \
             2> >(tee "$stderr" >&2)
           code=$?
