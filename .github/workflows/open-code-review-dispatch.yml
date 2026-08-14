@@ -49,12 +49,12 @@ jobs:
                 outputRate: 7.5,
               },
               openai: {
-                model: 'gpt-5.4-mini',
+                model: 'gpt-5.6-terra',
                 url: 'https://api.openai.com/v1/chat/completions',
                 useAnthropic: 'false',
                 secret: 'OCR_OPENAI_API_KEY',
-                inputRate: 0.75,
-                outputRate: 4.5,
+                inputRate: 2.5,
+                outputRate: 15,
               },
               anthropic: {
                 model: 'claude-sonnet-5',
