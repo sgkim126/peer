@@ -72,6 +72,16 @@ pub struct StageRun<R> {
     pub usage: LlmUsage,
 }
 
+impl<R> StageRun<R> {
+    #[expect(dead_code)]
+    pub fn run_commit(&self) -> &CommitHash {
+        match &self.target {
+            StageTarget::Commit(commit) => commit,
+            StageTarget::Range { to, .. } => to,
+        }
+    }
+}
+
 #[expect(dead_code)]
 pub trait ReviewStage {
     type Report: Serialize + DeserializeOwned;
