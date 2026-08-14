@@ -182,7 +182,7 @@ where
                 cache,
                 &cache_key,
                 &CachedReport {
-                    report: report.clone(),
+                    report: &report,
                     iterations: result.iterations,
                 },
                 config.console,

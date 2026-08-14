@@ -76,7 +76,7 @@ pub struct StageRun<R> {
 
 #[expect(dead_code)]
 pub trait ReviewStage {
-    type Report: Clone + Serialize + DeserializeOwned;
+    type Report: Serialize + DeserializeOwned;
 
     fn kind(&self) -> StageKind;
     fn target(&self) -> StageTarget;
