@@ -39,10 +39,10 @@ const ASSETS: &[(&str, &[u8])] = &[
         )),
     ),
     (
-        "tool-contract-v1.json",
+        "tool-contract-v2.json",
         include_bytes!(concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/resources/pi/tool-contract-v1.json"
+            "/resources/pi/tool-contract-v2.json"
         )),
     ),
 ];

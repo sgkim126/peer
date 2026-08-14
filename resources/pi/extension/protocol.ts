@@ -6,6 +6,16 @@ const CHECK_KINDS = [
     "coherence",
 ] as const;
 
+const STAGE_KINDS = [
+    "review_context",
+    "commit_scope",
+    "commit_sequence",
+    "size",
+    "intent",
+    "quality",
+    "security",
+] as const;
+
 const READ_TOOLS = [
     "get_commit_message",
     "get_commit_diff",
@@ -22,16 +32,43 @@ const CHECK_TERMINAL_TOOLS = [
     "request_clarification",
 ] as const;
 
+const STAGE_TERMINAL_TOOLS = [
+    "request_clarification",
+    "submit_review_context",
+    "submit_commit_scope",
+    "submit_commit_sequence",
+    "submit_size",
+    "submit_intent",
+    "submit_quality",
+    "submit_security",
+] as const;
+
 const REVIEW_CONTEXT_TERMINAL_TOOLS = [
     "submit_review_context_digest",
 ] as const;
 
 
 export type CheckKind = (typeof CHECK_KINDS)[number];
+export type StageKind = (typeof STAGE_KINDS)[number];
 export type ReadTool = (typeof READ_TOOLS)[number];
 export type CheckTerminalTool = (typeof CHECK_TERMINAL_TOOLS)[number];
+export type StageTerminalTool = (typeof STAGE_TERMINAL_TOOLS)[number];
 export type ReviewContextTerminalTool =
     (typeof REVIEW_CONTEXT_TERMINAL_TOOLS)[number];
+export type TerminalTool =
+    | CheckTerminalTool
+    | StageTerminalTool
+    | ReviewContextTerminalTool;
+
+const STAGE_SUBMISSION_TOOLS: Record<StageKind, StageTerminalTool> = {
+    review_context: "submit_review_context",
+    commit_scope: "submit_commit_scope",
+    commit_sequence: "submit_commit_sequence",
+    size: "submit_size",
+    intent: "submit_intent",
+    quality: "submit_quality",
+    security: "submit_security",
+};
 
 export interface ReviewContextOperation {
     type: "review_context";
@@ -40,6 +77,13 @@ export interface ReviewContextOperation {
 export interface CheckOperation {
     type: "check";
     check: CheckKind;
+    target: string;
+    expected_commits: string[];
+}
+
+export interface StageOperation {
+    type: "stage";
+    stage: StageKind;
     target: string;
     expected_commits: string[];
 }
@@ -60,11 +104,28 @@ export type RunConfig =
         read_tools: ReadTool[];
         terminal_tools: CheckTerminalTool[];
         max_turns: number;
+    }
+    | {
+        tool_contract_digest: string;
+        operation: StageOperation;
+        system_prompt: string;
+        read_tools: ReadTool[];
+        terminal_tools: StageTerminalTool[];
+        max_turns: number;
     };
 
 export interface ConfigureEnvelope {
     digest: string;
     config: RunConfig;
+}
+
+export function requireConfiguredTerminalTool(
+    envelope: ConfigureEnvelope,
+    tool: TerminalTool,
+): void {
+    if (!envelope.config.terminal_tools.some((configured) => configured === tool)) {
+        throw new Error(`terminal tool is not configured for the active operation: ${tool}`);
+    }
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -76,6 +137,10 @@ function isStringArray(value: unknown): value is string[] {
 
 function isCheckKind(value: unknown): value is CheckKind {
     return CHECK_KINDS.some((kind) => kind === value);
+}
+
+function isStageKind(value: unknown): value is StageKind {
+    return STAGE_KINDS.some((kind) => kind === value);
 }
 
 function isArrayOf<T extends string>(
@@ -96,6 +161,21 @@ function isCheckTerminalToolArray(value: unknown): value is CheckTerminalTool[] 
     return isArrayOf(value, CHECK_TERMINAL_TOOLS);
 }
 
+function isStageTerminalToolArray(value: unknown): value is StageTerminalTool[] {
+    return isArrayOf(value, STAGE_TERMINAL_TOOLS);
+}
+
+function hasValidStageSubmissionTools(
+    stage: StageKind,
+    terminalTools: StageTerminalTool[],
+): boolean {
+    const submissionTool = STAGE_SUBMISSION_TOOLS[stage];
+    return terminalTools.includes(submissionTool)
+        && terminalTools.every((tool) =>
+            tool === submissionTool || tool === "request_clarification"
+        );
+}
+
 function isReviewContextTerminalToolArray(value: unknown): value is ReviewContextTerminalTool[] {
     return isArrayOf(value, REVIEW_CONTEXT_TERMINAL_TOOLS);
 }
@@ -112,7 +192,15 @@ function isOperation(value: unknown): value is RunConfig["operation"] {
     }
     if (value.type === "check") {
         return "check" in value && isCheckKind(value.check)
-            && "target" in value && typeof value.target === "string"
+            && "target" in value && typeof value.target === "string" && value.target.length > 0
+            && "expected_commits" in value
+            && isStringArray(value.expected_commits)
+            && value.expected_commits.length > 0
+            && value.expected_commits.every((commit) => commit.length > 0);
+    }
+    if (value.type === "stage") {
+        return "stage" in value && isStageKind(value.stage)
+            && "target" in value && typeof value.target === "string" && value.target.length > 0
             && "expected_commits" in value
             && isStringArray(value.expected_commits)
             && value.expected_commits.length > 0
@@ -176,7 +264,7 @@ export function decodeConfigureEnvelope(encoded: string): ConfigureEnvelope {
         if (config.terminal_tools.length === 0) {
             throw new Error("peer review context operation requires at least one terminal tool");
         }
-    } else {
+    } else if (config.operation.type === "check") {
         if (!isReadToolArray(config.read_tools)) {
             throw new Error("invalid read tools for peer check operation");
         }
@@ -185,6 +273,19 @@ export function decodeConfigureEnvelope(encoded: string): ConfigureEnvelope {
         }
         if (config.terminal_tools.length === 0) {
             throw new Error("peer check operation requires at least one terminal tool");
+        }
+    } else {
+        if (!isReadToolArray(config.read_tools)) {
+            throw new Error("invalid read tools for peer stage operation");
+        }
+        if (!isStageTerminalToolArray(config.terminal_tools)) {
+            throw new Error("invalid terminal tools for peer stage operation");
+        }
+        if (config.terminal_tools.length === 0) {
+            throw new Error("peer stage operation requires at least one terminal tool");
+        }
+        if (!hasValidStageSubmissionTools(config.operation.stage, config.terminal_tools)) {
+            throw new Error("invalid terminal tools for peer stage operation");
         }
     }
     return value as ConfigureEnvelope;

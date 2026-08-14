@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "read_tools": [
     "get_commit_message",
     "get_commit_diff",
@@ -13,6 +13,13 @@
   "terminal_tools": [
     "submit_check_result",
     "request_clarification",
-    "submit_review_context_digest"
+    "submit_review_context_digest",
+    "submit_review_context",
+    "submit_commit_scope",
+    "submit_commit_sequence",
+    "submit_size",
+    "submit_intent",
+    "submit_quality",
+    "submit_security"
   ]
 }

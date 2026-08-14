@@ -26,6 +26,18 @@ pub struct LlmUsage {
 }
 
 impl LlmUsage {
+    pub fn zero(model: impl Into<String>) -> Self {
+        Self {
+            input_tokens: 0,
+            output_tokens: 0,
+            cache_read_tokens: 0,
+            cache_write_tokens: 0,
+            cost_usd: 0.0,
+            model: model.into(),
+            models: Vec::new(),
+        }
+    }
+
     pub fn from_pi_models(models: Vec<LlmModelUsage>) -> Self {
         let input_tokens = models.iter().map(|usage| usage.input_tokens).sum();
         let output_tokens = models.iter().map(|usage| usage.output_tokens).sum();
@@ -52,6 +64,19 @@ impl LlmUsage {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn zero_usage_preserves_the_model_name() {
+        let usage = LlmUsage::zero("mistral/mistral-medium-3-5");
+
+        assert_eq!(usage.input_tokens, 0);
+        assert_eq!(usage.output_tokens, 0);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_write_tokens, 0);
+        assert_eq!(usage.cost_usd, 0.0);
+        assert_eq!(usage.model, "mistral/mistral-medium-3-5");
+        assert_eq!(usage.models, vec![]);
+    }
 
     #[test]
     fn pi_usage_preserves_cache_tokens_and_model_costs() {
