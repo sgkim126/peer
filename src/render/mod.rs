@@ -16,7 +16,7 @@ use crate::review::{
     PipelineExecutionError, PipelineReviewResult, PipelineStageResult, ReviewCheck,
     ReviewCheckError, ReviewResult, ReviewSummary,
 };
-use crate::stage::{ScopeDisposition, StageOutcome, StageRun};
+use crate::stage::{ScopeDisposition, StageKind, StageOutcome, StageRun};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct RenderDocument {
@@ -476,17 +476,27 @@ impl From<ReviewCheckError> for RenderCheck {
 }
 
 fn render_check_order(check: &RenderCheck, ordered_commits: &[CommitHash]) -> (usize, usize) {
-    let check_order = match check.check.as_str() {
-        "review_context" => 0,
-        "commit_scope" => 1,
-        "commit_sequence" => 2,
-        "size" => 3,
-        "intent" => 4,
-        "quality" => 5,
-        "security" => 6,
-        "coherence" => 7,
-        _ => usize::MAX,
-    };
+    const STAGE_COUNT: usize = 7;
+
+    fn stage_rank(stage: StageKind) -> usize {
+        match stage {
+            StageKind::ReviewContext => 0,
+            StageKind::CommitScope => 1,
+            StageKind::CommitSequence => 2,
+            StageKind::Size => 3,
+            StageKind::Intent => 4,
+            StageKind::Quality => 5,
+            StageKind::Security => 6,
+        }
+    }
+
+    let check_order = check
+        .check
+        .parse::<StageKind>()
+        .ok()
+        .map(stage_rank)
+        .or_else(|| (check.check == "coherence").then_some(STAGE_COUNT))
+        .unwrap_or(usize::MAX);
     let commit_order = match &check.target {
         CheckTarget::Commit(target) => ordered_commits
             .iter()

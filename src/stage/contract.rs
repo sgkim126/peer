@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 use crate::git::CommitHash;
 use crate::llm::LlmUsage;
@@ -29,6 +30,23 @@ impl StageKind {
             Self::Intent => "intent",
             Self::Quality => "quality",
             Self::Security => "security",
+        }
+    }
+}
+
+impl FromStr for StageKind {
+    type Err = ();
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "review_context" => Ok(Self::ReviewContext),
+            "commit_scope" => Ok(Self::CommitScope),
+            "commit_sequence" => Ok(Self::CommitSequence),
+            "size" => Ok(Self::Size),
+            "intent" => Ok(Self::Intent),
+            "quality" => Ok(Self::Quality),
+            "security" => Ok(Self::Security),
+            _ => Err(()),
         }
     }
 }
