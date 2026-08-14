@@ -43,6 +43,7 @@ jobs:
               mistral: {
                 model: 'mistral-medium-3-5',
                 url: 'https://api.mistral.ai/v1/chat/completions',
+                protocol: 'openai',
                 useAnthropic: 'false',
                 secret: 'OCR_MISTRAL_API_KEY',
                 inputRate: 1.5,
@@ -50,7 +51,8 @@ jobs:
               },
               openai: {
                 model: 'gpt-5.6-terra',
-                url: 'https://api.openai.com/v1/chat/completions',
+                url: 'https://api.openai.com/v1/responses',
+                protocol: 'openai-responses',
                 useAnthropic: 'false',
                 secret: 'OCR_OPENAI_API_KEY',
                 inputRate: 2.5,
@@ -59,6 +61,7 @@ jobs:
               anthropic: {
                 model: 'claude-sonnet-5',
                 url: 'https://api.anthropic.com/v1/messages',
+                protocol: 'anthropic',
                 useAnthropic: 'true',
                 authHeader: 'x-api-key',
                 secret: 'OCR_ANTHROPIC_API_KEY',
@@ -83,6 +86,7 @@ jobs:
             core.setOutput('provider', provider);
             core.setOutput('model', config.model);
             core.setOutput('url', config.url);
+            core.setOutput('protocol', config.protocol);
             core.setOutput('use-anthropic', config.useAnthropic);
             core.setOutput('auth-header', config.authHeader ?? '');
             core.setOutput('secret-name', config.secret);
@@ -146,6 +150,7 @@ jobs:
         env:
           OCR_LLM_URL: ${{ steps.review.outputs.url }}
           OCR_LLM_MODEL: ${{ steps.review.outputs.model }}
+          OCR_LLM_PROTOCOL: ${{ steps.review.outputs.protocol }}
           OCR_USE_ANTHROPIC: ${{ steps.review.outputs.use-anthropic }}
           OCR_LLM_AUTH_HEADER: ${{ steps.review.outputs.auth-header }}
           OCR_LLM_TOKEN: ${{ steps.review.outputs.provider == 'mistral' && secrets.OCR_MISTRAL_API_KEY || steps.review.outputs.provider == 'openai' && secrets.OCR_OPENAI_API_KEY || steps.review.outputs.provider == 'anthropic' && secrets.OCR_ANTHROPIC_API_KEY || '' }}
