@@ -15,7 +15,6 @@ on:
           - mistral
           - openai
           - anthropic
-          - gemini
 
 permissions:
   contents: read
@@ -65,14 +64,6 @@ jobs:
                 secret: 'OCR_ANTHROPIC_API_KEY',
                 inputRate: 2,
                 outputRate: 10,
-              },
-              gemini: {
-                model: 'gemini-3.5-flash',
-                url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions',
-                useAnthropic: 'false',
-                secret: 'OCR_GEMINI_API_KEY',
-                inputRate: 1.5,
-                outputRate: 9,
               },
             };
             const config = providers[provider];
@@ -157,7 +148,7 @@ jobs:
           OCR_LLM_MODEL: ${{ steps.review.outputs.model }}
           OCR_USE_ANTHROPIC: ${{ steps.review.outputs.use-anthropic }}
           OCR_LLM_AUTH_HEADER: ${{ steps.review.outputs.auth-header }}
-          OCR_LLM_TOKEN: ${{ steps.review.outputs.provider == 'mistral' && secrets.OCR_MISTRAL_API_KEY || steps.review.outputs.provider == 'openai' && secrets.OCR_OPENAI_API_KEY || steps.review.outputs.provider == 'anthropic' && secrets.OCR_ANTHROPIC_API_KEY || secrets.OCR_GEMINI_API_KEY }}
+          OCR_LLM_TOKEN: ${{ steps.review.outputs.provider == 'mistral' && secrets.OCR_MISTRAL_API_KEY || steps.review.outputs.provider == 'openai' && secrets.OCR_OPENAI_API_KEY || steps.review.outputs.provider == 'anthropic' && secrets.OCR_ANTHROPIC_API_KEY || '' }}
         run: |
           set -u
           if [ -z "${OCR_LLM_TOKEN:-}" ]; then
