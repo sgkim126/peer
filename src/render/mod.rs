@@ -12,7 +12,11 @@ use crate::check::{CheckError, CheckResult, CheckTarget, Finding, Severity};
 use crate::cli::OutputFormat;
 use crate::git::CommitHash;
 use crate::llm::LlmUsage;
-use crate::review::{ReviewCheck, ReviewCheckError, ReviewResult, ReviewSummary};
+use crate::review::{
+    PipelineExecutionError, PipelineReviewResult, PipelineStageResult, ReviewCheck,
+    ReviewCheckError, ReviewResult, ReviewSummary,
+};
+use crate::stage::{ScopeDisposition, StageKind, StageOutcome, StageRun};
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct RenderDocument {
@@ -209,6 +213,187 @@ impl From<ReviewResult> for RenderDocument {
     }
 }
 
+impl From<PipelineReviewResult> for RenderDocument {
+    fn from(review: PipelineReviewResult) -> Self {
+        let mut checks = review
+            .stages
+            .into_iter()
+            .map(RenderCheck::from)
+            .chain(review.errors.into_iter().map(RenderCheck::from))
+            .collect::<Vec<_>>();
+        checks.sort_by_key(|check| render_check_order(check, &review.ordered_commits));
+        Self {
+            summary: Some(review.summary),
+            context_usage: None,
+            ordered_commits: review.ordered_commits,
+            checks,
+        }
+    }
+}
+
+impl From<PipelineStageResult> for RenderCheck {
+    fn from(stage: PipelineStageResult) -> Self {
+        match stage {
+            PipelineStageResult::ReviewContext(run) => {
+                render_typed_run(run, |report| (report.summary, Vec::new()))
+            }
+            PipelineStageResult::CommitScope(run) => render_typed_run(run, |report| {
+                let findings = report
+                    .commits
+                    .into_iter()
+                    .filter(|entry| entry.disposition != ScopeDisposition::Keep)
+                    .map(|entry| Finding {
+                        commit: entry.commit,
+                        severity: Severity::Info,
+                        message: format!("{}: {}", entry.purpose, entry.rationale),
+                        location: None,
+                    })
+                    .collect();
+                (report.summary, findings)
+            }),
+            PipelineStageResult::CommitSequence(run) => render_typed_run(run, |report| {
+                let findings = report
+                    .issues
+                    .into_iter()
+                    .flat_map(|issue| {
+                        issue.commits.into_iter().map(move |commit| Finding {
+                            commit,
+                            severity: Severity::Info,
+                            message: issue.message.clone(),
+                            location: None,
+                        })
+                    })
+                    .collect();
+                (report.summary, findings)
+            }),
+            PipelineStageResult::Size(run) => {
+                let target = run.run_commit().clone();
+                render_typed_run(run, |report| {
+                    let findings = report
+                        .issues
+                        .iter()
+                        .map(|issue| Finding {
+                            commit: target.clone(),
+                            severity: Severity::Info,
+                            message: issue.message.clone(),
+                            location: None,
+                        })
+                        .collect();
+                    (report.summary, findings)
+                })
+            }
+            PipelineStageResult::Intent(run) => render_typed_run(run, |report| {
+                let findings = report
+                    .issues
+                    .iter()
+                    .map(|issue| Finding {
+                        commit: issue.commit.clone(),
+                        severity: Severity::Info,
+                        message: issue.message.clone(),
+                        location: issue.location.clone().map(|location| {
+                            crate::check::FileLocation {
+                                file: location.file,
+                                line: location.line,
+                            }
+                        }),
+                    })
+                    .collect();
+                (report.summary, findings)
+            }),
+            PipelineStageResult::Quality(run) => {
+                render_typed_run(run, |report| (report.summary, report.findings))
+            }
+            PipelineStageResult::Security(run) => render_typed_run(run, |report| {
+                let findings = report
+                    .findings
+                    .into_iter()
+                    .map(|finding| Finding {
+                        commit: finding.commit,
+                        severity: finding.severity,
+                        message: finding.message,
+                        location: finding.location,
+                    })
+                    .collect();
+                (report.summary, findings)
+            }),
+        }
+    }
+}
+
+impl From<PipelineExecutionError> for RenderCheck {
+    fn from(error: PipelineExecutionError) -> Self {
+        Self {
+            check: error.stage.as_str().to_string(),
+            target: error.target,
+            outcome: RenderCheckOutcome::Failed {
+                failure: RenderCheckFailure::Execution {
+                    reason: error.reason,
+                },
+            },
+        }
+    }
+}
+
+fn render_typed_run<R>(
+    run: StageRun<R>,
+    completed: impl FnOnce(R) -> (String, Vec<Finding>),
+) -> RenderCheck {
+    let StageRun {
+        stage,
+        target,
+        ordered_commits,
+        outcome,
+        iterations,
+        usage,
+    } = run;
+    let outcome = match outcome {
+        StageOutcome::Completed { report } => {
+            let (summary, mut findings) = completed(report);
+            sort_findings_by_commit(&mut findings, &ordered_commits);
+            if findings.is_empty() {
+                RenderCheckOutcome::Clean {
+                    summary,
+                    iterations,
+                    usage,
+                }
+            } else {
+                RenderCheckOutcome::Issues {
+                    summary,
+                    findings,
+                    iterations,
+                    usage,
+                }
+            }
+        }
+        StageOutcome::Blocked { questions } => RenderCheckOutcome::Failed {
+            failure: RenderCheckFailure::Check {
+                summary: "Additional review information is required.".to_string(),
+                findings: Vec::new(),
+                error: CheckError::ClarificationRequired {
+                    questions: questions
+                        .into_iter()
+                        .map(|question| format!("{} ({})", question.question, question.reason))
+                        .collect(),
+                },
+                iterations,
+                usage,
+            },
+        },
+        StageOutcome::Exhausted { reason } => RenderCheckOutcome::Exhausted {
+            summary: format!("Stage did not complete: {reason}"),
+            findings: Vec::new(),
+            reason,
+            iterations,
+            usage,
+        },
+    };
+    RenderCheck {
+        check: stage.as_str().to_string(),
+        target,
+        outcome,
+    }
+}
+
 impl From<CheckResult> for RenderCheck {
     fn from(result: CheckResult) -> Self {
         let CheckResult {
@@ -222,12 +407,7 @@ impl From<CheckResult> for RenderCheck {
             context_usage: _,
             usage,
         } = result;
-        findings.sort_by_key(|finding| {
-            ordered_commits
-                .iter()
-                .position(|commit| commit.matches(&finding.commit))
-                .unwrap_or(usize::MAX)
-        });
+        sort_findings_by_commit(&mut findings, &ordered_commits);
         let outcome = match error {
             None if findings.is_empty() => RenderCheckOutcome::Clean {
                 summary,
@@ -265,6 +445,15 @@ impl From<CheckResult> for RenderCheck {
     }
 }
 
+fn sort_findings_by_commit(findings: &mut [Finding], ordered_commits: &[CommitHash]) {
+    findings.sort_by_key(|finding| {
+        ordered_commits
+            .iter()
+            .position(|commit| commit.matches(&finding.commit))
+            .unwrap_or(usize::MAX)
+    });
+}
+
 impl From<ReviewCheckError> for RenderCheck {
     fn from(failure: ReviewCheckError) -> Self {
         let (check, target) = match failure.check {
@@ -287,14 +476,27 @@ impl From<ReviewCheckError> for RenderCheck {
 }
 
 fn render_check_order(check: &RenderCheck, ordered_commits: &[CommitHash]) -> (usize, usize) {
-    let check_order = match check.check.as_str() {
-        "size" => 0,
-        "intent" => 1,
-        "quality" => 2,
-        "security" => 3,
-        "coherence" => 4,
-        _ => usize::MAX,
-    };
+    const STAGE_COUNT: usize = 7;
+
+    fn stage_rank(stage: StageKind) -> usize {
+        match stage {
+            StageKind::ReviewContext => 0,
+            StageKind::CommitScope => 1,
+            StageKind::CommitSequence => 2,
+            StageKind::Size => 3,
+            StageKind::Intent => 4,
+            StageKind::Quality => 5,
+            StageKind::Security => 6,
+        }
+    }
+
+    let check_order = check
+        .check
+        .parse::<StageKind>()
+        .ok()
+        .map(stage_rank)
+        .or_else(|| (check.check == "coherence").then_some(STAGE_COUNT))
+        .unwrap_or(usize::MAX);
     let commit_order = match &check.target {
         CheckTarget::Commit(target) => ordered_commits
             .iter()
@@ -485,6 +687,17 @@ pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String
             ))
         }
     }
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn render_pipeline(
+    review: PipelineReviewResult,
+    options: RenderOptions,
+) -> Result<String, RenderError> {
+    if matches!(&options.format, RenderFormat::Json) {
+        return Ok(serde_json::to_string_pretty(&review)?);
+    }
+    render(review.into(), options)
 }
 
 fn review_counts(document: &RenderDocument) -> ReviewCounts {
@@ -680,6 +893,34 @@ mod tests {
         ]
     }
 
+    fn exhausted_stage_run<R>(
+        stage: crate::stage::StageKind,
+        target: CheckTarget,
+        ordered_commits: &[CommitHash],
+    ) -> StageRun<R> {
+        StageRun {
+            stage,
+            target,
+            ordered_commits: ordered_commits.to_vec(),
+            outcome: StageOutcome::Exhausted {
+                reason: "iteration limit reached".to_string(),
+            },
+            iterations: 3,
+            usage: result().usage,
+        }
+    }
+
+    fn pipeline_error(
+        stage: crate::stage::StageKind,
+        target: CheckTarget,
+    ) -> PipelineExecutionError {
+        PipelineExecutionError {
+            stage,
+            target,
+            reason: "stage execution failed".to_string(),
+        }
+    }
+
     #[test]
     fn orders_findings_with_abbreviated_commit_hashes() {
         let mut result = result();
@@ -691,6 +932,186 @@ mod tests {
         let result = RenderCheck::from(result);
         assert_eq!(result.findings()[0].commit.as_ref(), "abc1234");
         assert_eq!(result.findings()[1].commit.as_ref(), "def5678");
+    }
+
+    #[test]
+    fn pipeline_preserves_sequence_issue_commits_and_orders_findings() {
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let report =
+            serde_json::from_value::<crate::stage::CommitSequenceReport>(serde_json::json!({
+                "summary": "Found sequence issues.",
+                "progression": [],
+                "issues": [
+                    {
+                        "kind": "reorder",
+                        "commits": [second, first],
+                        "message": "Cross-commit issue."
+                    }
+                ]
+            }))
+            .unwrap();
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: vec![first.clone(), second.clone()],
+            stages: vec![PipelineStageResult::CommitSequence(StageRun {
+                stage: crate::stage::StageKind::CommitSequence,
+                target: CheckTarget::Range {
+                    from: first,
+                    to: second,
+                },
+                ordered_commits: vec![
+                    CommitHash::new("abc1234").unwrap(),
+                    CommitHash::new("def5678").unwrap(),
+                ],
+                outcome: StageOutcome::Completed { report },
+                iterations: 1,
+                usage: result().usage,
+            })],
+            errors: Vec::new(),
+        };
+
+        let document = RenderDocument::from(review);
+
+        assert_matches!(
+            &document.checks[0].outcome,
+            RenderCheckOutcome::Issues { .. }
+        );
+        assert_eq!(
+            document.checks[0]
+                .findings()
+                .iter()
+                .map(|finding| finding.commit.as_ref())
+                .collect::<Vec<_>>(),
+            ["abc1234", "def5678"]
+        );
+        assert!(
+            document.checks[0]
+                .findings()
+                .iter()
+                .all(|finding| finding.message == "Cross-commit issue.")
+        );
+    }
+
+    #[test]
+    fn pipeline_stage_outcomes_convert_to_render_outcomes() {
+        let commit = CommitHash::new("abc1234").unwrap();
+        let target = CheckTarget::Commit(commit.clone());
+        let ordered_commits = vec![commit];
+        let clean = PipelineStageResult::ReviewContext(StageRun {
+            stage: crate::stage::StageKind::ReviewContext,
+            target: target.clone(),
+            ordered_commits: ordered_commits.clone(),
+            outcome: StageOutcome::Completed {
+                report: crate::stage::ReviewContextReport {
+                    summary: "Context is sufficient.".to_string(),
+                    objectives: Vec::new(),
+                    expected_behavior: Vec::new(),
+                    scope: Vec::new(),
+                    constraints: Vec::new(),
+                    implementation: Vec::new(),
+                    verification: Vec::new(),
+                    unresolved: Vec::new(),
+                },
+            },
+            iterations: 1,
+            usage: result().usage,
+        });
+        let blocked_outcome = serde_json::from_value::<
+            StageOutcome<crate::stage::ReviewContextReport>,
+        >(serde_json::json!({
+            "status": "blocked",
+            "questions": [{
+                "question": "Which policy applies?",
+                "reason": "The requirements conflict."
+            }]
+        }))
+        .unwrap();
+        let blocked = PipelineStageResult::ReviewContext(StageRun {
+            stage: crate::stage::StageKind::ReviewContext,
+            target: target.clone(),
+            ordered_commits: ordered_commits.clone(),
+            outcome: blocked_outcome,
+            iterations: 2,
+            usage: result().usage,
+        });
+        let exhausted = PipelineStageResult::ReviewContext(exhausted_stage_run(
+            crate::stage::StageKind::ReviewContext,
+            target,
+            &ordered_commits,
+        ));
+
+        assert_matches!(
+            RenderCheck::from(clean).outcome,
+            RenderCheckOutcome::Clean { summary, .. } if summary == "Context is sufficient."
+        );
+        assert_matches!(
+            RenderCheck::from(blocked).outcome,
+            RenderCheckOutcome::Failed {
+                failure: RenderCheckFailure::Check {
+                    error: CheckError::ClarificationRequired { questions },
+                    ..
+                }
+            } if questions == ["Which policy applies? (The requirements conflict.)"]
+        );
+        assert_matches!(
+            RenderCheck::from(exhausted).outcome,
+            RenderCheckOutcome::Exhausted { reason, .. }
+                if reason == "iteration limit reached"
+        );
+    }
+
+    #[test]
+    fn pipeline_stages_and_errors_sort_by_stage_then_commit() {
+        use crate::stage::StageKind;
+
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let ordered_commits = vec![first.clone(), second.clone()];
+        let range = CheckTarget::Range {
+            from: first.clone(),
+            to: second.clone(),
+        };
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: ordered_commits.clone(),
+            stages: vec![PipelineStageResult::ReviewContext(exhausted_stage_run(
+                StageKind::ReviewContext,
+                range.clone(),
+                &ordered_commits,
+            ))],
+            errors: vec![
+                pipeline_error(StageKind::Security, CheckTarget::Commit(second.clone())),
+                pipeline_error(StageKind::Size, CheckTarget::Commit(second.clone())),
+                pipeline_error(StageKind::CommitSequence, range.clone()),
+                pipeline_error(StageKind::Quality, CheckTarget::Commit(first.clone())),
+                pipeline_error(StageKind::Intent, CheckTarget::Commit(second.clone())),
+                pipeline_error(StageKind::CommitScope, range.clone()),
+                pipeline_error(StageKind::Size, CheckTarget::Commit(first.clone())),
+                pipeline_error(StageKind::Security, CheckTarget::Commit(first.clone())),
+            ],
+        };
+
+        let document = RenderDocument::from(review);
+
+        assert_eq!(
+            document
+                .checks
+                .iter()
+                .map(|check| (check.check.as_str(), check.target.to_string()))
+                .collect::<Vec<_>>(),
+            [
+                ("review_context", "abc1234..def5678".to_string()),
+                ("commit_scope", "abc1234..def5678".to_string()),
+                ("commit_sequence", "abc1234..def5678".to_string()),
+                ("size", "abc1234".to_string()),
+                ("size", "def5678".to_string()),
+                ("intent", "def5678".to_string()),
+                ("quality", "abc1234".to_string()),
+                ("security", "abc1234".to_string()),
+                ("security", "def5678".to_string()),
+            ]
+        );
     }
 
     #[test]
@@ -1068,5 +1489,116 @@ mod tests {
             RenderOptions::from_cli(OutputFormat::Github, None),
             Err(RenderOptionsError::GithubRepoRequired)
         );
+    }
+
+    #[test]
+    fn pipeline_json_preserves_typed_stage_envelope() {
+        use crate::stage::StageKind;
+
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let ordered_commits = vec![first.clone(), second.clone()];
+        let range = CheckTarget::Range {
+            from: first.clone(),
+            to: second.clone(),
+        };
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: ordered_commits.clone(),
+            stages: vec![
+                PipelineStageResult::ReviewContext(exhausted_stage_run(
+                    StageKind::ReviewContext,
+                    range.clone(),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::CommitScope(exhausted_stage_run(
+                    StageKind::CommitScope,
+                    range.clone(),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::CommitSequence(exhausted_stage_run(
+                    StageKind::CommitSequence,
+                    range,
+                    &ordered_commits,
+                )),
+                PipelineStageResult::Size(exhausted_stage_run(
+                    StageKind::Size,
+                    CheckTarget::Commit(first.clone()),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::Intent(exhausted_stage_run(
+                    StageKind::Intent,
+                    CheckTarget::Commit(first.clone()),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::Quality(exhausted_stage_run(
+                    StageKind::Quality,
+                    CheckTarget::Commit(second.clone()),
+                    &ordered_commits,
+                )),
+                PipelineStageResult::Security(exhausted_stage_run(
+                    StageKind::Security,
+                    CheckTarget::Commit(second),
+                    &ordered_commits,
+                )),
+            ],
+            errors: Vec::new(),
+        };
+
+        let output = render_pipeline(
+            review,
+            RenderOptions::from_cli(OutputFormat::Json, None).unwrap(),
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&output).unwrap();
+        let stages = value["stages"].as_array().unwrap();
+
+        assert_eq!(value["ordered_commits"][0], "abc1234");
+        assert_eq!(
+            stages
+                .iter()
+                .map(|stage| stage["stage"].as_str().unwrap())
+                .collect::<Vec<_>>(),
+            [
+                "review_context",
+                "commit_scope",
+                "commit_sequence",
+                "size",
+                "intent",
+                "quality",
+                "security",
+            ]
+        );
+        assert_eq!(stages.len(), 7);
+        for stage in stages {
+            let result = &stage["result"];
+            assert_eq!(result["outcome"]["status"], "exhausted");
+            assert_eq!(result["outcome"]["reason"], "iteration limit reached");
+            assert_eq!(result["iterations"], 3);
+        }
+    }
+
+    #[test]
+    fn pipeline_renders_human_readable_formats_through_the_document() {
+        let commit = CommitHash::new("abc1234").unwrap();
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: vec![commit.clone()],
+            stages: vec![PipelineStageResult::ReviewContext(exhausted_stage_run(
+                crate::stage::StageKind::ReviewContext,
+                CheckTarget::Commit(commit),
+                &[],
+            ))],
+            errors: Vec::new(),
+        };
+
+        let output = render_pipeline(
+            review,
+            RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
+        )
+        .unwrap();
+
+        assert!(output.contains("review\\_context"));
+        assert!(output.contains("iteration limit reached"));
     }
 }

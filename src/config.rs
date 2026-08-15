@@ -62,7 +62,12 @@ impl Config {
             "intent" => self.checks.intent.max_iterations,
             "quality" => self.checks.quality.max_iterations,
             "security" => self.checks.security.max_iterations,
-            "coherence" => self.checks.coherence.max_iterations,
+            // The commit-scope and commit-sequence stages share the coherence limit.
+            "coherence" | "commit_scope" | "commit_sequence" => {
+                self.checks.coherence.max_iterations
+            }
+            // Review context has no per-check override and uses the `[llm]` limit.
+            "review_context" => None,
             _ => None,
         };
 

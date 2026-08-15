@@ -15,8 +15,10 @@ use crate::llm::LlmUsage;
 use crate::pi::PiRuntime;
 
 mod input;
+mod pipeline;
 
 pub use self::input::{ReviewCommitInput, ReviewInput};
+pub use self::pipeline::{PipelineExecutionError, PipelineReviewResult, PipelineStageResult};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {

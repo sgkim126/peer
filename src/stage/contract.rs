@@ -1,5 +1,6 @@
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 use crate::git::CommitHash;
 use crate::llm::LlmUsage;
@@ -20,7 +21,6 @@ pub enum StageKind {
 }
 
 impl StageKind {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReviewContext => "review_context",
@@ -30,6 +30,23 @@ impl StageKind {
             Self::Intent => "intent",
             Self::Quality => "quality",
             Self::Security => "security",
+        }
+    }
+}
+
+impl FromStr for StageKind {
+    type Err = ();
+
+    fn from_str(name: &str) -> Result<Self, Self::Err> {
+        match name {
+            "review_context" => Ok(Self::ReviewContext),
+            "commit_scope" => Ok(Self::CommitScope),
+            "commit_sequence" => Ok(Self::CommitSequence),
+            "size" => Ok(Self::Size),
+            "intent" => Ok(Self::Intent),
+            "quality" => Ok(Self::Quality),
+            "security" => Ok(Self::Security),
+            _ => Err(()),
         }
     }
 }
@@ -64,7 +81,6 @@ pub enum StageOutcome<R> {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[expect(dead_code)]
 pub struct StageRun<R> {
     pub stage: StageKind,
     pub target: StageTarget,
@@ -72,6 +88,15 @@ pub struct StageRun<R> {
     pub outcome: StageOutcome<R>,
     pub iterations: u32,
     pub usage: LlmUsage,
+}
+
+impl<R> StageRun<R> {
+    pub fn run_commit(&self) -> &CommitHash {
+        match &self.target {
+            StageTarget::Commit(commit) => commit,
+            StageTarget::Range { to, .. } => to,
+        }
+    }
 }
 
 #[expect(dead_code)]
