@@ -41,6 +41,7 @@ pub struct MissingContext {
 }
 
 impl ReviewContextDigest {
+    #[cfg_attr(not(test), allow(dead_code))]
     pub fn validate(&self, context: &ReviewContext) -> Result<(), DigestValidationError> {
         if self.overview.trim().is_empty() {
             return Err(DigestValidationError::EmptyOverview);

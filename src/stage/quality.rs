@@ -39,7 +39,6 @@ pub struct QualityStage {
 }
 
 impl QualityStage {
-    #[expect(dead_code)]
     pub fn new(
         commit: ReviewCommitInput,
         review_head: CommitHash,

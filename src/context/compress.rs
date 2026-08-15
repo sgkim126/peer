@@ -38,6 +38,7 @@ enum ContextOutcome {
     ReviewContext { digest: ReviewContextDigest },
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 pub async fn compress_review_context(
     context: &ReviewContext,
     config: &Config,
@@ -142,6 +143,7 @@ fn compression_request(context: &ReviewContext) -> (RunConfig, String) {
 }
 
 #[derive(Debug)]
+#[cfg_attr(not(test), allow(dead_code))]
 pub enum ContextCompressionError {
     CacheKey(CacheKeyError),
     InvalidModel(ModelRefError),
@@ -157,6 +159,7 @@ pub enum ContextCompressionError {
 }
 
 impl ContextCompressionError {
+    #[allow(dead_code)]
     pub fn usage(&self) -> Option<&LlmUsage> {
         match self {
             Self::InvalidOutcome { usage, .. } | Self::InvalidDigest { usage, .. } => Some(usage),

@@ -24,7 +24,6 @@ pub struct ReviewInput {
 }
 
 impl ReviewInput {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn collect(
         target: &ReviewTarget,
         context: ReviewContext,

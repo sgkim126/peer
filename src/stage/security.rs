@@ -51,7 +51,6 @@ pub struct SecurityStage {
 }
 
 impl SecurityStage {
-    #[expect(dead_code)]
     pub fn new(
         commit: ReviewCommitInput,
         review_head: CommitHash,

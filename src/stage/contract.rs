@@ -99,7 +99,6 @@ impl<R> StageRun<R> {
     }
 }
 
-#[expect(dead_code)]
 pub trait ReviewStage {
     type Report: Serialize + DeserializeOwned;
 

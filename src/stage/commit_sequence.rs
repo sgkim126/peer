@@ -69,7 +69,6 @@ pub struct CommitSequenceStage {
 }
 
 impl CommitSequenceStage {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn new(input: ReviewInput, context: ReviewContextReport, scope: CommitScopeReport) -> Self {
         let scope_matches_input = input.commits.iter().all(|commit| {
             scope

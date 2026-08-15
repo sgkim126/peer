@@ -21,7 +21,6 @@ pub struct StageRunConfig {
 }
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum StageRunError {
     CacheKey(CacheKeyError),
     Pi(Box<PiRunFailure>),
@@ -40,7 +39,6 @@ pub enum StageRunError {
 }
 
 impl StageRunError {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn usage(&self) -> Option<&LlmUsage> {
         match self {
             Self::CacheKey(_) => None,
@@ -120,7 +118,6 @@ enum WireOutcome<R> {
     },
 }
 
-#[expect(dead_code)]
 pub async fn run<C>(
     runtime: &mut PiRuntime,
     cache: &CacheStore,
