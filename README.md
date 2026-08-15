@@ -31,25 +31,51 @@ It is not a replacement for SAST, dependency scanning, secret scanning, or other
 
 ## Features
 
-`peer` reviews a commit with four complementary checks:
+Every review starts with three mandatory stages:
+
+- `review_context` assesses whether the title, description, commit messages, and cumulative diff provide enough information to review the change. If essential facts are missing, it requests them before continuing; otherwise it produces a source-backed summary for later stages.
+
+- `commit_scope` classifies each commit as primary, supporting, prerequisite, or unrelated to the pull request's purpose and recommends whether it belongs in the same PR.
+
+- `commit_sequence` explains the order and direction of the commits and reports ordering or dependency problems.
+
+After those prerequisites complete, `peer` reviews each commit with four complementary stages:
 
 - `size` considers whether the commit is structurally coherent and can be reviewed or reverted as one atomic change.
 
 - `intent` considers whether the implementation matches the stated purpose of the change.
 
-- `quality` considers correctness, maintainability, and design concerns that require contextual judgment.
+- `quality` considers non-security correctness, maintainability, and design concerns that require contextual judgment.
 
-- `security` considers contextual security risks that deterministic tooling may not capture.
+- `security` considers contextual security risks with a credible attacker-controlled path, sensitive operation, and impact.
 
-When the review target is a commit range, `peer` also runs a `coherence` check that considers whether the commits form a clear and consistent sequence.
+The scope and sequence stages deliberately do not decide whether commits should be split, moved, merged, or squashed. The per-commit `size` stage owns those atomicity decisions. `quality` and `security` remain separate so ordinary correctness findings do not dilute security's adversarial threat model.
 
-`peer` supports Mistral, OpenAI, Anthropic, and Gemini models.
+`peer review` runs the complete stage pipeline for every target. After the context, scope, and sequence stages complete, it runs the size stage for every commit, then does the same for intent, quality, and security.
+
+`peer` uses the models and providers supported by Pi.
 A review can incorporate its title, body, and existing comment threads so that feedback is grounded in the discussion surrounding the change. Results can be rendered for a terminal, as JSON or Markdown, or with GitHub links.
-The rendered result also reports check status, token usage, and estimated model cost.
+The rendered result also reports stage status, token usage, and estimated model cost.
 
 ## Requirements and installation
 
-Running `peer` requires Git, network access to the selected model provider, and an API key for that provider.
+Running `peer` requires the following tools:
+
+| Tool | Required version |
+| --- | --- |
+| Git | 2.30.0 or later |
+| Node.js | 22.19.0 or later |
+| Pi | Exactly 0.83.0 |
+
+You also need network access to the selected model provider and credentials for that provider.
+
+Install [Node.js 22.19.0 or later](https://nodejs.org/en/download), then install the required version of Pi with npm:
+
+```bash
+npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.83.0
+```
+
+See the [Pi quickstart](https://github.com/earendil-works/pi/blob/v0.83.0/packages/coding-agent/docs/quickstart.md) for other installation and authentication options.
 
 Building `peer` from source requires Rust 1.96.0 or later.
 The release binary and the bundled GitHub Action currently support Linux x86-64.
@@ -69,8 +95,8 @@ The resulting executable is available at `target/release/peer`.
 ## Quick start
 
 Run `peer init` from the root of the Git repository that you want to review.
-The command creates `.peer/config.toml` and `.peer/.gitignore`.
-Reviews create and use `.peer/cache` as needed.
+The command adds a `.peer` directory and its configuration to the repository.
+Reviews use subdirectories beneath `.peer` to cache their work as needed.
 
 Set the API key expected by the default provider, then review a commit or a commit range:
 
@@ -81,7 +107,7 @@ peer review main..HEAD
 ```
 
 A single revision such as `HEAD` reviews one commit.
-A two-dot range such as `main..HEAD` reviews each commit in the range and also considers the coherence of the complete sequence.
+A two-dot range such as `main..HEAD` reviews the pull request's scope and sequence before reviewing each commit.
 Three-dot ranges are not supported.
 Review targets must not contain merge commits.
 The default configuration accepts at most ten commits in one review.
@@ -89,7 +115,7 @@ The default configuration accepts at most ten commits in one review.
 ## Review context
 
 The title, body, and existing discussion explain why a change exists and which constraints shaped it.
-Passing that information gives each check access to the requirements, constraints, decisions, and unresolved discussions surrounding the change instead of limiting the review to the diff in isolation.
+Passing that information lets the first stage determine whether the requirements, constraints, decisions, and unresolved discussions are sufficient for review. Missing metadata is not assumed to be an error by itself: the stage considers it together with all commit messages and the cumulative diff, and asks focused questions only when an essential fact cannot be inferred safely.
 
 Use `--title` for the review title, `--body-file` for a file containing the description, and `--comments-file` for a JSON file containing comment threads.
 
@@ -128,22 +154,10 @@ Every thread contains comments and may identify a commit and source location.
 The `commit` and `location` fields are optional.
 Each comment must contain an `author` and a `body`.
 
-## Review checks
-
-By default, `peer` runs every check that applies to the selected target.
-Use `--only-check` to run a subset or `--skip-check` to exclude a subset.
-
-```bash
-peer review main..HEAD --only-check quality,security
-peer review main..HEAD --skip-check size
-```
-
-The two filtering options are mutually exclusive, and a filter must leave at least one applicable check.
-
 ## Providers and configuration
 
-`peer init` copies the default configuration to `.peer/config.toml`.
-The configuration selects the default provider and model, limits the number of commits and model iterations, and records model prices used to estimate review cost.
+`peer` uses the providers and authentication methods supported by Pi.
+The default configuration includes the following common API-key providers as examples:
 
 | Provider | API key environment variable |
 | --- | --- |
@@ -151,6 +165,11 @@ The configuration selects the default provider and model, limits the number of c
 | OpenAI | `OPENAI_API_KEY` |
 | Anthropic | `ANTHROPIC_API_KEY` |
 | Gemini | `GEMINI_API_KEY` |
+
+See [Pi's provider documentation](https://github.com/earendil-works/pi/blob/v0.83.0/packages/coding-agent/docs/providers.md) for the complete list of supported providers and authentication methods.
+
+`peer init` copies the default configuration to `.peer/config.toml`.
+The configuration selects the default provider and model, limits the number of commits and model iterations, and records model prices used to estimate review cost.
 
 Use `--provider` or `--model` to override the configured defaults for one review.
 
@@ -174,11 +193,13 @@ peer review main..HEAD --format github --repo owner/repository
 ```
 
 The GitHub format requires `--repo` so that findings can link to repository files.
-Every rendered review includes its findings, individual check statuses, and a summary of the peer version, provider, model, token usage, and estimated cost.
+Every rendered review includes its findings and individual stage statuses. When a review summary is available, it reports the peer version, provider, model, token usage, and estimated cost.
 
-`peer review` exits with status `0` when every planned check completes without an execution error, even if findings are reported.
-It exits with a non-zero status when a check fails, exhausts its allowed iterations, or the review cannot be completed or rendered.
+`peer review` exits with status `0` when every planned stage completes without an execution error, even if a scope, sequence, atomicity, intent, quality, or security issue is reported.
+It exits with a non-zero status when a stage needs clarification, fails, exhausts its allowed iterations, or the review cannot be completed or rendered.
 CI jobs should use this status to decide whether the review succeeded.
+
+The selected model receives the review metadata, commit messages, changed-file summaries, and diffs needed by these stages. During a stage it may also request repository content through the configured read-only tools. Avoid supplying secrets or other material that should not be sent to the model provider.
 
 ## GitHub Actions
 
@@ -208,7 +229,7 @@ jobs:
       - id: peer
         uses: sgkim126/peer/.github/actions/peer-review@main
         with:
-          version: "0.11.0"
+          version: "0.12.0"
           provider: mistral
           target: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
           repo: ${{ github.repository }}
@@ -229,7 +250,7 @@ The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml
 ## Privacy and cost
 
 `peer` sends the reviewed code and any supplied review context to the selected model provider.
-Do not review material that the provider is not permitted to receive, and provide API keys through environment variables instead of storing them in `.peer/config.toml`.
+Do not review material that the provider is not permitted to receive, and make sure commits submitted for review do not contain passwords, API tokens, or other secrets that must not be disclosed.
 
 The reported cost is an estimate calculated from token usage and the prices in the local configuration.
 Actual billing may differ.
@@ -239,37 +260,16 @@ Review findings are also nondeterministic and can be incomplete, so they do not 
 
 Review results are stored under `.peer/cache`.
 The cache avoids repeating model work when the relevant inputs have not changed.
-If a check exhausts its iteration budget or stops because of a transient provider error, `peer`
-stores the completed conversation and resumes it the next time the same check runs.
-Pass `--no-resume` to `peer review` or `peer check` to ignore resumable checkpoints for that run.
+If a stage exhausts its iteration budget or stops because of a transient provider error, `peer`
+stores the completed conversation and resumes it the next time the same stage runs.
+Pass `--no-resume` to `peer review` to ignore resumable checkpoints for that run.
 
 `peer prune` removes cache data belonging to older `peer` versions while preserving data for the current version.
 `peer prune --all` removes every cache entry, including entries for the current version.
 
-## Advanced usage
-
-The `check` command runs an individual review check.
-The `extract` command reads repository data through the same constrained operations available to the review agents.
-The `render` command renders a JSON review result read from standard input.
-
-Use the built-in help for the complete command and option reference.
-
-```bash
-peer --help
-peer review --help
-peer check --help
-peer extract --help
-peer render --help
-```
-
-Use `--verbose` to report model usage while commands run.
-Use `--debug` when diagnosing execution errors.
-
 ## Development
 
-Development requires Cargo 1.96.0 or later. Running the Pi TypeScript tests also
-requires Node.js 22.18.0 or later on the Node.js 22 release line, or Node.js
-23.6.0 or later.
+Development requires Cargo 1.96.0 or later and Node.js 22.19.0 or later.
 
 Run the test suite, lints, and formatting check before submitting a change.
 
