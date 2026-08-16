@@ -43,6 +43,42 @@ impl PipelineStageResult {
             Self::Security(run) => is_complete(run),
         }
     }
+
+    pub fn stage(&self) -> StageKind {
+        match self {
+            Self::ReviewContext(run) => run.stage,
+            Self::CommitScope(run) => run.stage,
+            Self::CommitSequence(run) => run.stage,
+            Self::Size(run) => run.stage,
+            Self::Intent(run) => run.stage,
+            Self::Quality(run) => run.stage,
+            Self::Security(run) => run.stage,
+        }
+    }
+
+    pub fn target(&self) -> &StageTarget {
+        match self {
+            Self::ReviewContext(run) => &run.target,
+            Self::CommitScope(run) => &run.target,
+            Self::CommitSequence(run) => &run.target,
+            Self::Size(run) => &run.target,
+            Self::Intent(run) => &run.target,
+            Self::Quality(run) => &run.target,
+            Self::Security(run) => &run.target,
+        }
+    }
+
+    pub fn usage(&self) -> &crate::llm::LlmUsage {
+        match self {
+            Self::ReviewContext(run) => &run.usage,
+            Self::CommitScope(run) => &run.usage,
+            Self::CommitSequence(run) => &run.usage,
+            Self::Size(run) => &run.usage,
+            Self::Intent(run) => &run.usage,
+            Self::Quality(run) => &run.usage,
+            Self::Security(run) => &run.usage,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -50,6 +86,8 @@ pub struct PipelineExecutionError {
     pub stage: StageKind,
     pub target: StageTarget,
     pub reason: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<crate::llm::LlmUsage>,
 }
 
 impl fmt::Display for PipelineExecutionError {
@@ -73,7 +111,6 @@ pub struct PipelineReviewResult {
 }
 
 impl PipelineReviewResult {
-    #[expect(dead_code)]
     pub fn is_success(&self) -> bool {
         self.errors.is_empty() && self.stages.iter().all(PipelineStageResult::is_success)
     }
@@ -116,7 +153,6 @@ impl From<ModelRefError> for PipelineRunError {
 }
 
 #[allow(clippy::too_many_arguments)]
-#[expect(dead_code)]
 pub async fn run_pipeline(
     target: &ReviewTarget,
     context: ReviewContext,
@@ -334,9 +370,11 @@ fn push_error<C>(result: &mut PipelineReviewResult, stage: &C, error: StageRunEr
 where
     C: ReviewStage,
 {
+    let usage = error.usage().cloned();
     result.errors.push(PipelineExecutionError {
         stage: stage.kind(),
         target: stage.target(),
         reason: error.to_string(),
+        usage,
     });
 }

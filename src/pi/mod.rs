@@ -12,5 +12,5 @@ pub use model::{ModelRef, ModelRefError};
 pub use protocol::{
     CheckKind, Operation, ReadTool, RunConfig, StageKind, TerminalTool, tool_contract_digest,
 };
-pub use runner::{PiRunError, PiRunRequest};
+pub use runner::{PiRunError, PiRunFailure, PiRunRequest};
 pub use runtime::PiRuntime;

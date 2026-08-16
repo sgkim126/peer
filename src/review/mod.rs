@@ -1,3 +1,5 @@
+#![expect(dead_code)]
+
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
@@ -18,7 +20,9 @@ mod input;
 mod pipeline;
 
 pub use self::input::{ReviewCommitInput, ReviewInput};
-pub use self::pipeline::{PipelineExecutionError, PipelineReviewResult, PipelineStageResult};
+pub use self::pipeline::{
+    PipelineExecutionError, PipelineReviewResult, PipelineStageResult, run_pipeline,
+};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ReviewTarget {

@@ -53,7 +53,6 @@ pub struct IntentStage {
 }
 
 impl IntentStage {
-    #[expect(dead_code)]
     pub fn new(
         commit: ReviewCommitInput,
         context: ReviewContextReport,

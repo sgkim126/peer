@@ -60,7 +60,6 @@ pub struct CommitScopeReport {
     pub commits: Vec<CommitScopeEntry>,
 }
 
-#[expect(dead_code, reason = "activated by the review pipeline cutover")]
 pub struct CommitScopeStage {
     input: ReviewInput,
     context: ReviewContextReport,
@@ -69,10 +68,6 @@ pub struct CommitScopeStage {
 }
 
 impl CommitScopeStage {
-    #[cfg_attr(
-        not(test),
-        expect(dead_code, reason = "activated by the review pipeline cutover")
-    )]
     pub fn new(input: ReviewInput, context: ReviewContextReport) -> Self {
         let commits = input
             .commits

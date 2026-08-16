@@ -40,6 +40,36 @@ pub struct PiRunResult {
 }
 
 #[derive(Debug)]
+pub struct PiRunFailure {
+    pub error: PiRunError,
+    pub usage: Option<LlmUsage>,
+}
+
+impl From<PiRunError> for PiRunFailure {
+    fn from(error: PiRunError) -> Self {
+        Self { error, usage: None }
+    }
+}
+
+impl From<RpcError> for PiRunFailure {
+    fn from(error: RpcError) -> Self {
+        PiRunError::from(error).into()
+    }
+}
+
+impl fmt::Display for PiRunFailure {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.error.fmt(f)
+    }
+}
+
+impl std::error::Error for PiRunFailure {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+#[derive(Debug)]
 pub enum PiRunError {
     Dependency(DependencyError),
     Assets(AssetError),
@@ -50,7 +80,7 @@ pub enum PiRunError {
     CacheWrite(CacheWriteError),
     UnsafeSessionPath(PathBuf),
     InvalidState(String),
-    Exhausted { turns: u32, usage: LlmUsage },
+    Exhausted { turns: u32 },
 }
 
 impl PiRunError {
@@ -205,12 +235,12 @@ impl PiRunner {
         }
     }
 
-    pub async fn run(&mut self, request: PiRunRequest) -> Result<PiRunResult, PiRunError> {
+    pub async fn run(&mut self, request: PiRunRequest) -> Result<PiRunResult, PiRunFailure> {
         let existing = if request.resume {
             match self.cache.read_json(&request.session_key) {
                 Ok(record) => record,
                 Err(CacheReadError::Deserialize { .. }) => None,
-                Err(error) => return Err(error.into()),
+                Err(error) => return Err(PiRunError::from(error).into()),
             }
         } else {
             None
@@ -225,7 +255,7 @@ impl PiRunner {
                             "cannot persist Pi session state: {write_error}"
                         ));
                     }
-                    return Err(error);
+                    return Err(error.into());
                 }
                 (record, true)
             }
@@ -246,9 +276,10 @@ impl PiRunner {
         let result = self
             .run_configured(&request, &mut record, continuation)
             .await;
-        record.status = result
-            .as_ref()
-            .map_or_else(PiRunError::session_status, |_| SessionStatus::Completed);
+        record.status = result.as_ref().map_or_else(
+            |failure| failure.error.session_status(),
+            |_| SessionStatus::Completed,
+        );
         if let Err(error) = self.write_session(&request.session_key, &record) {
             self.console
                 .debug(format_args!("cannot persist Pi session state: {error}"));
@@ -327,7 +358,7 @@ impl PiRunner {
         request: &PiRunRequest,
         record: &mut SessionRecord,
         continuation: bool,
-    ) -> Result<PiRunResult, PiRunError> {
+    ) -> Result<PiRunResult, PiRunFailure> {
         let config_bytes = serde_json::to_vec(&request.config)
             .map_err(|error| PiRunError::InvalidState(error.to_string()))?;
         let digest = blake3::hash(&config_bytes).to_hex().to_string();
@@ -367,9 +398,58 @@ impl PiRunner {
             }))
             .await?;
 
-        let outcome = self
+        let outcome = match self
             .wait_for_outcome(&digest, request.config.max_turns)
-            .await?;
+            .await
+        {
+            Ok(outcome) => outcome,
+            Err(error) => {
+                if matches!(&error, PiRunError::Rpc(_)) {
+                    // Do not request usage over a failed RPC connection
+                    return Err(error.into());
+                }
+                let usage = self.read_usage(record).await.ok();
+                return Err(PiRunFailure { error, usage });
+            }
+        };
+        match outcome {
+            WaitOutcome::Completed {
+                outcome,
+                iterations,
+            } => {
+                let usage = match self.read_usage(record).await {
+                    Ok(usage) => usage,
+                    Err(error) => {
+                        self.console
+                            .debug(format_args!("cannot read Pi usage: {error}"));
+                        LlmUsage::zero(request.model.to_string())
+                    }
+                };
+                Ok(PiRunResult {
+                    outcome,
+                    iterations,
+                    usage,
+                    session_id: record.session_id.clone(),
+                })
+            }
+            WaitOutcome::Exhausted { turns } => {
+                let usage = match self.read_usage(record).await {
+                    Ok(usage) => usage,
+                    Err(error) => {
+                        self.console
+                            .debug(format_args!("cannot read Pi usage: {error}"));
+                        LlmUsage::zero(request.model.to_string())
+                    }
+                };
+                Err(PiRunFailure {
+                    error: PiRunError::Exhausted { turns },
+                    usage: Some(usage),
+                })
+            }
+        }
+    }
+
+    async fn read_usage(&mut self, record: &mut SessionRecord) -> Result<LlmUsage, PiRunError> {
         let entries_command = match &record.last_usage_entry_id {
             Some(entry_id) => json!({
                 "type": "get_entries",
@@ -389,18 +469,7 @@ impl PiRunner {
         if let Some(leaf_id) = leaf_id {
             record.last_usage_entry_id = Some(leaf_id);
         }
-        match outcome {
-            WaitOutcome::Completed {
-                outcome,
-                iterations,
-            } => Ok(PiRunResult {
-                outcome,
-                iterations,
-                usage,
-                session_id: record.session_id.clone(),
-            }),
-            WaitOutcome::Exhausted { turns } => Err(PiRunError::Exhausted { turns, usage }),
-        }
+        Ok(usage)
     }
 
     async fn wait_for_outcome(

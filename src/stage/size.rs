@@ -55,7 +55,6 @@ pub struct SizeStage {
 }
 
 impl SizeStage {
-    #[expect(dead_code)]
     pub fn new(
         commit: ReviewCommitInput,
         review_commits: Vec<CommitHash>,

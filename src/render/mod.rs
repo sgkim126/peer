@@ -73,6 +73,8 @@ pub enum RenderCheckFailure {
     },
     Execution {
         reason: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<LlmUsage>,
     },
 }
 
@@ -154,8 +156,8 @@ impl RenderCheck {
                 failure: RenderCheckFailure::Check { usage, .. },
             } => Some(usage),
             RenderCheckOutcome::Failed {
-                failure: RenderCheckFailure::Execution { .. },
-            } => None,
+                failure: RenderCheckFailure::Execution { usage, .. },
+            } => usage.as_ref(),
         }
     }
 
@@ -168,7 +170,7 @@ impl RenderCheck {
                 failure: RenderCheckFailure::Check { error, .. },
             } => Some(RenderCheckErrorRef::Check(error)),
             RenderCheckOutcome::Failed {
-                failure: RenderCheckFailure::Execution { reason },
+                failure: RenderCheckFailure::Execution { reason, .. },
             } => Some(RenderCheckErrorRef::Execution(reason)),
             RenderCheckOutcome::Clean { .. } => None,
             RenderCheckOutcome::Issues { .. } => None,
@@ -328,6 +330,7 @@ impl From<PipelineExecutionError> for RenderCheck {
             outcome: RenderCheckOutcome::Failed {
                 failure: RenderCheckFailure::Execution {
                     reason: error.reason,
+                    usage: error.usage,
                 },
             },
         }
@@ -469,6 +472,7 @@ impl From<ReviewCheckError> for RenderCheck {
             outcome: RenderCheckOutcome::Failed {
                 failure: RenderCheckFailure::Execution {
                     reason: failure.error.to_string(),
+                    usage: None,
                 },
             },
         }
@@ -689,7 +693,6 @@ pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn render_pipeline(
     review: PipelineReviewResult,
     options: RenderOptions,
@@ -918,7 +921,36 @@ mod tests {
             stage,
             target,
             reason: "stage execution failed".to_string(),
+            usage: None,
         }
+    }
+
+    #[test]
+    fn pipeline_execution_failure_usage_is_included_in_totals() {
+        let usage = result().usage;
+        let expected = usage.clone();
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: review_ordered_commits(),
+            stages: Vec::new(),
+            errors: vec![PipelineExecutionError {
+                stage: crate::stage::StageKind::Quality,
+                target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
+                reason: "invalid typed stage report".to_string(),
+                usage: Some(usage),
+            }],
+        };
+
+        let document = RenderDocument::from(review);
+        let totals = usage_by_model(&document);
+
+        assert_eq!(document.checks[0].usage(), Some(&expected));
+        assert_eq!(totals[&expected.model].input_tokens, expected.input_tokens);
+        assert_eq!(
+            totals[&expected.model].output_tokens,
+            expected.output_tokens
+        );
+        assert_eq!(totals[&expected.model].cost_usd, expected.cost_usd);
     }
 
     #[test]
@@ -1300,12 +1332,45 @@ mod tests {
             outcome: RenderCheckOutcome::Failed {
                 failure: RenderCheckFailure::Execution {
                     reason: "provider unavailable".into(),
+                    usage: None,
                 },
             },
         };
 
         assert!(!markdown::render(&check).contains("### Metadata"));
         assert!(!github::render(&check, "owner/repo").contains("### Metadata"));
+    }
+
+    #[test]
+    fn markdown_renders_metadata_for_execution_failures_with_usage() {
+        let check = RenderCheck {
+            check: "quality".into(),
+            target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            outcome: RenderCheckOutcome::Failed {
+                failure: RenderCheckFailure::Execution {
+                    reason: "invalid typed stage report".into(),
+                    usage: Some(result().usage),
+                },
+            },
+        };
+
+        assert!(markdown::render(&check).contains("### Metadata"));
+    }
+
+    #[test]
+    fn github_renders_metadata_for_execution_failures_with_usage() {
+        let check = RenderCheck {
+            check: "quality".into(),
+            target: CheckTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            outcome: RenderCheckOutcome::Failed {
+                failure: RenderCheckFailure::Execution {
+                    reason: "invalid typed stage report".into(),
+                    usage: Some(result().usage),
+                },
+            },
+        };
+
+        assert!(github::render(&check, "owner/repo").contains("### Metadata"));
     }
 
     #[test]
@@ -1478,7 +1543,7 @@ mod tests {
         assert_matches!(
             &document.checks[1].outcome,
             RenderCheckOutcome::Failed {
-                failure: RenderCheckFailure::Execution { reason }
+                failure: RenderCheckFailure::Execution { reason, .. }
             } if reason == "missing api key"
         );
     }

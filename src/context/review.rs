@@ -54,6 +54,7 @@ impl ReviewContext {
         })
     }
 
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn is_empty(&self) -> bool {
         matches!(
             (
@@ -65,6 +66,7 @@ impl ReviewContext {
         )
     }
 
+    #[cfg_attr(not(test), expect(dead_code))]
     pub fn compression_input(&self) -> Value {
         let mut input = Map::new();
         if let Some(title) = self.title.as_ref().filter(|value| !value.is_empty()) {

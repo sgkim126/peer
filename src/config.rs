@@ -15,7 +15,7 @@ pub struct Config {
     pub review: ReviewConfig,
     pub llm: LlmConfig,
     #[serde(default)]
-    pub checks: ChecksConfig,
+    pub stages: StagesConfig,
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -32,42 +32,43 @@ pub struct LlmConfig {
     pub max_iterations: NonZeroU32,
 }
 
-/// Per-check settings. Values omitted here fall back to `[llm]` settings.
+/// Per-stage settings. Values omitted here fall back to `[llm]` settings.
 #[derive(Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ChecksConfig {
+pub struct StagesConfig {
     #[serde(default)]
-    pub size: CheckConfig,
+    pub review_context: StageConfig,
     #[serde(default)]
-    pub intent: CheckConfig,
+    pub commit_scope: StageConfig,
     #[serde(default)]
-    pub quality: CheckConfig,
+    pub commit_sequence: StageConfig,
     #[serde(default)]
-    pub security: CheckConfig,
+    pub size: StageConfig,
     #[serde(default)]
-    pub coherence: CheckConfig,
+    pub intent: StageConfig,
+    #[serde(default)]
+    pub quality: StageConfig,
+    #[serde(default)]
+    pub security: StageConfig,
 }
 
 #[derive(Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct CheckConfig {
+pub struct StageConfig {
     pub max_iterations: Option<NonZeroU32>,
 }
 
 impl Config {
-    /// Returns the configured iteration limit for a check, falling back to `[llm]`.
-    pub fn max_iterations_for(&self, check: &str) -> NonZeroU32 {
-        let override_value = match check {
-            "size" => self.checks.size.max_iterations,
-            "intent" => self.checks.intent.max_iterations,
-            "quality" => self.checks.quality.max_iterations,
-            "security" => self.checks.security.max_iterations,
-            // The commit-scope and commit-sequence stages share the coherence limit.
-            "coherence" | "commit_scope" | "commit_sequence" => {
-                self.checks.coherence.max_iterations
-            }
-            // Review context has no per-check override and uses the `[llm]` limit.
-            "review_context" => None,
+    /// Returns the configured iteration limit for a stage, falling back to `[llm]`.
+    pub fn max_iterations_for(&self, stage: &str) -> NonZeroU32 {
+        let override_value = match stage {
+            "review_context" => self.stages.review_context.max_iterations,
+            "commit_scope" => self.stages.commit_scope.max_iterations,
+            "commit_sequence" => self.stages.commit_sequence.max_iterations,
+            "size" => self.stages.size.max_iterations,
+            "intent" => self.stages.intent.max_iterations,
+            "quality" => self.stages.quality.max_iterations,
+            "security" => self.stages.security.max_iterations,
             _ => None,
         };
 
@@ -300,5 +301,29 @@ mod tests {
         assert_eq!(config.llm.default_model, "mistral-medium-3.5");
         assert_eq!(config.max_iterations_for("quality").get(), 10);
         assert_eq!(config.max_iterations_for("size").get(), 3);
+        assert_eq!(config.max_iterations_for("review_context").get(), 3);
+        assert_eq!(config.max_iterations_for("commit_scope").get(), 10);
+        assert_eq!(config.max_iterations_for("commit_sequence").get(), 10);
+    }
+
+    #[test]
+    fn stage_overrides_fall_back_to_the_shared_iteration_limit() {
+        let config: Config = toml::from_str(
+            r#"
+version = 2
+[review]
+max_commits = 10
+[llm]
+default_provider = "mistral"
+default_model = "model"
+max_iterations = 3
+[stages.commit_scope]
+max_iterations = 4
+"#,
+        )
+        .unwrap();
+
+        assert_eq!(config.max_iterations_for("commit_scope").get(), 4);
+        assert_eq!(config.max_iterations_for("commit_sequence").get(), 3);
     }
 }

@@ -81,8 +81,6 @@ async fn main() -> ExitCode {
             target,
             provider,
             model,
-            skip_checks,
-            only_checks,
             title,
             body_file,
             comments_file,
@@ -97,15 +95,6 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            if title.is_none() {
-                eprintln!("warning: review title was not provided.");
-            }
-            if body_file.is_none() {
-                eprintln!("warning: review body file was not provided.");
-            }
-            if comments_file.is_none() {
-                eprintln!("warning: review comments file was not provided.");
-            }
             let review_context = match context::ReviewContext::load(
                 title,
                 body_file.as_deref(),
@@ -167,88 +156,56 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            let plan = match review::plan_checks(&target)
-                .with_only_check(&only_checks)
-                .and_then(|plan| plan.excluding_check(&skip_checks))
-            {
-                Ok(plan) => plan,
-                Err(error) => {
-                    eprintln!("error: {error}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            console.debug(format_args!("{plan:?}"));
             let cache = CacheStore::new(project_root.join(".peer/cache"), console);
             let mut pi = PiRuntime::new(&project_root, cache.clone(), console);
-            let compression = match context::compress_review_context(
-                &review_context,
-                &config,
-                &cache,
-                &mut pi,
-                !no_resume,
-                console,
-            )
-            .await
-            {
-                Ok(compression) => compression,
-                Err(error) => {
-                    eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
-                    if let Some(usage) = error.usage() {
-                        console.verbose(format_args!(
-                            "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
-                            usage.model, usage.cost_usd, usage.input_tokens, usage.output_tokens,
-                        ));
-                    }
-                    return ExitCode::FAILURE;
-                }
-            };
-            let result = review::run(
-                plan,
+            let result = match review::run_pipeline(
+                &target,
+                review_context,
                 console,
                 &config,
                 project_root,
                 &cache,
-                &compression.digest,
-                review::ReviewOptions {
-                    context_usage: compression.usage,
-                    resume: !no_resume,
-                    runtime: &mut pi,
-                },
+                &mut pi,
+                !no_resume,
             )
-            .await;
-            if let Some(usage) = &result.context_usage {
-                console.verbose(format_args!(
-                    "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
-                    usage.model, usage.cost_usd, usage.input_tokens, usage.output_tokens,
-                ));
-            }
-            for check in &result.checks {
-                console.verbose(format_args!(
-                    "{} check for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
-                    check.check,
-                    check.target,
-                    check.usage.model,
-                    check.usage.cost_usd,
-                    check.usage.input_tokens,
-                    check.usage.output_tokens,
-                ));
-            }
-            for (model, usage) in
-                review::usage_by_model(&result.checks, result.context_usage.as_ref())
+            .await
             {
+                Ok(result) => result,
+                Err(error) => {
+                    eprintln!("error: {error}");
+                    console.debug(format_args!("{error:?}"));
+                    return ExitCode::FAILURE;
+                }
+            };
+            for stage in &result.stages {
                 console.verbose(format_args!(
-                    "{model} model total cost: ${:.6} (input {} tokens, output {} tokens)",
-                    usage.cost_usd, usage.input_tokens, usage.output_tokens,
+                    "{} stage for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
+                    stage.stage().as_str(),
+                    stage.target(),
+                    stage.usage().model,
+                    stage.usage().cost_usd,
+                    stage.usage().input_tokens,
+                    stage.usage().output_tokens,
                 ));
             }
             for error in &result.errors {
+                if let Some(usage) = &error.usage {
+                    console.verbose(format_args!(
+                        "{} stage for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
+                        error.stage.as_str(),
+                        error.target,
+                        usage.model,
+                        usage.cost_usd,
+                        usage.input_tokens,
+                        usage.output_tokens,
+                    ));
+                }
                 eprintln!("error: {error}");
                 console.debug(format_args!("{error:?}"));
             }
             let is_success = result.is_success();
 
-            match render::render(result.into(), options) {
+            match render::render_pipeline(result, options) {
                 Ok(output) => {
                     println!("{output}");
                     if is_success {
@@ -294,140 +251,6 @@ async fn main() -> ExitCode {
                 Err(err) => {
                     eprintln!("error: {err}");
                     console.debug(format_args!("{err:?}"));
-                    ExitCode::FAILURE
-                }
-            }
-        }
-        Command::Check {
-            provider,
-            model,
-            title,
-            body_file,
-            comments_file,
-            no_resume,
-            command,
-        } => {
-            if title.is_none() {
-                eprintln!("warning: review title was not provided.");
-            }
-            if body_file.is_none() {
-                eprintln!("warning: review body file was not provided.");
-            }
-            if comments_file.is_none() {
-                eprintln!("warning: review comments file was not provided.");
-            }
-            let review_context = match context::ReviewContext::load(
-                title,
-                body_file.as_deref(),
-                comments_file.as_deref(),
-            ) {
-                Ok(context) => context,
-                Err(error) => {
-                    eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
-                    return ExitCode::FAILURE;
-                }
-            };
-            let cwd = match std::env::current_dir() {
-                Ok(cwd) => cwd,
-                Err(error) => {
-                    eprintln!("cannot determine current directory: {error}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            let result = match discover(&cwd) {
-                Ok((mut config, project_root)) => {
-                    if let Err(error) = apply_llm_overrides(&mut config, provider, model) {
-                        eprintln!("error: {error}");
-                        console.debug(format_args!("{error:?}"));
-                        return ExitCode::FAILURE;
-                    }
-                    let review_head =
-                        match check::resolve_review_head(&command, &project_root, console).await {
-                            Ok(review_head) => review_head,
-                            Err(error) => {
-                                eprintln!("error: {error}");
-                                console.debug(format_args!("{error:?}"));
-                                return ExitCode::FAILURE;
-                            }
-                        };
-                    let cache = CacheStore::new(project_root.join(".peer/cache"), console);
-                    let mut pi = PiRuntime::new(&project_root, cache.clone(), console);
-                    let compression = match context::compress_review_context(
-                        &review_context,
-                        &config,
-                        &cache,
-                        &mut pi,
-                        !no_resume,
-                        console,
-                    )
-                    .await
-                    {
-                        Ok(compression) => compression,
-                        Err(error) => {
-                            eprintln!("error: {error}");
-                            console.debug(format_args!("{error:?}"));
-                            if let Some(usage) = error.usage() {
-                                console.verbose(format_args!(
-                                    "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
-                                    usage.model,
-                                    usage.cost_usd,
-                                    usage.input_tokens,
-                                    usage.output_tokens,
-                                ));
-                            }
-                            return ExitCode::FAILURE;
-                        }
-                    };
-                    check::handler(
-                        console,
-                        command,
-                        &config,
-                        project_root,
-                        &cache,
-                        &compression.digest,
-                        check::CheckOptions {
-                            context_usage: compression.usage,
-                            resume: !no_resume,
-                            review_head,
-                            runtime: &mut pi,
-                        },
-                    )
-                    .await
-                }
-                Err(error) => Err(check::CheckCommandError::Config(error)),
-            };
-            match result {
-                Ok(result) => {
-                    let is_success = result.is_success();
-                    if let Some(usage) = &result.context_usage {
-                        console.verbose(format_args!(
-                            "{} context model cost: ${:.6} (input {} tokens, output {} tokens)",
-                            usage.model, usage.cost_usd, usage.input_tokens, usage.output_tokens,
-                        ));
-                    }
-                    console.verbose(format_args!(
-                        "{} check model cost: ${:.6} (input {} tokens, output {} tokens)",
-                        result.usage.model,
-                        result.usage.cost_usd,
-                        result.usage.input_tokens,
-                        result.usage.output_tokens,
-                    ));
-                    let document = render::RenderDocument::from(result);
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&document)
-                            .expect("render document serializes")
-                    );
-                    if is_success {
-                        ExitCode::SUCCESS
-                    } else {
-                        ExitCode::FAILURE
-                    }
-                }
-                Err(error) => {
-                    eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
                     ExitCode::FAILURE
                 }
             }

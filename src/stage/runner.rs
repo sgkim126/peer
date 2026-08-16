@@ -6,8 +6,8 @@ use crate::cache::{CacheKey, CacheKeyError, CacheStore};
 use crate::console::Console;
 use crate::llm::LlmUsage;
 use crate::pi::{
-    ModelRef, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig, StageKind as PiStageKind,
-    TerminalTool, tool_contract_digest,
+    ModelRef, Operation, PiRunError, PiRunFailure, PiRunRequest, PiRuntime, RunConfig,
+    StageKind as PiStageKind, TerminalTool, tool_contract_digest,
 };
 use crate::stage::contract::{
     ClarificationQuestion, ReviewStage, StageKind, StageOutcome, StageRequest, StageRun,
@@ -23,10 +23,31 @@ pub struct StageRunConfig {
 #[derive(Debug)]
 pub enum StageRunError {
     CacheKey(CacheKeyError),
-    Pi(PiRunError),
-    InvalidOutput(serde_json::Error),
-    InvalidQuestions(String),
-    InvalidReport(String),
+    Pi(Box<PiRunFailure>),
+    InvalidOutput {
+        source: serde_json::Error,
+        usage: LlmUsage,
+    },
+    InvalidQuestions {
+        reason: String,
+        usage: LlmUsage,
+    },
+    InvalidReport {
+        reason: String,
+        usage: LlmUsage,
+    },
+}
+
+impl StageRunError {
+    pub fn usage(&self) -> Option<&LlmUsage> {
+        match self {
+            Self::CacheKey(_) => None,
+            Self::Pi(failure) => failure.usage.as_ref(),
+            Self::InvalidOutput { usage, .. } => Some(usage),
+            Self::InvalidQuestions { usage, .. } => Some(usage),
+            Self::InvalidReport { usage, .. } => Some(usage),
+        }
+    }
 }
 
 impl fmt::Display for StageRunError {
@@ -34,9 +55,15 @@ impl fmt::Display for StageRunError {
         match self {
             Self::CacheKey(error) => write!(f, "cannot build stage cache key: {error}"),
             Self::Pi(error) => error.fmt(f),
-            Self::InvalidOutput(error) => write!(f, "invalid typed stage output: {error}"),
-            Self::InvalidQuestions(error) => write!(f, "invalid clarification questions: {error}"),
-            Self::InvalidReport(error) => write!(f, "invalid typed stage report: {error}"),
+            Self::InvalidOutput { source, .. } => {
+                write!(f, "invalid typed stage output: {source}")
+            }
+            Self::InvalidQuestions { reason, .. } => {
+                write!(f, "invalid clarification questions: {reason}")
+            }
+            Self::InvalidReport { reason, .. } => {
+                write!(f, "invalid typed stage report: {reason}")
+            }
         }
     }
 }
@@ -46,9 +73,9 @@ impl std::error::Error for StageRunError {
         match self {
             Self::CacheKey(error) => Some(error),
             Self::Pi(error) => Some(error),
-            Self::InvalidOutput(error) => Some(error),
-            Self::InvalidQuestions(_) => None,
-            Self::InvalidReport(_) => None,
+            Self::InvalidOutput { source, .. } => Some(source),
+            Self::InvalidQuestions { .. } => None,
+            Self::InvalidReport { .. } => None,
         }
     }
 }
@@ -59,9 +86,9 @@ impl From<CacheKeyError> for StageRunError {
     }
 }
 
-impl From<PiRunError> for StageRunError {
-    fn from(error: PiRunError) -> Self {
-        Self::Pi(error)
+impl From<PiRunFailure> for StageRunError {
+    fn from(failure: PiRunFailure) -> Self {
+        Self::Pi(Box::new(failure))
     }
 }
 
@@ -91,7 +118,6 @@ enum WireOutcome<R> {
     },
 }
 
-#[expect(dead_code)]
 pub async fn run<C>(
     runtime: &mut PiRuntime,
     cache: &CacheStore,
@@ -159,7 +185,10 @@ where
         .await;
     let result = match result {
         Ok(result) => result,
-        Err(PiRunError::Exhausted { turns, usage }) => {
+        Err(PiRunFailure {
+            error: PiRunError::Exhausted { turns },
+            usage: Some(usage),
+        }) => {
             return Ok(StageRun {
                 stage: stage.kind(),
                 target: stage.target(),
@@ -177,7 +206,10 @@ where
         Ok(WireOutcome::Completed { report }) => {
             stage
                 .validate_report(&report)
-                .map_err(StageRunError::InvalidReport)?;
+                .map_err(|reason| StageRunError::InvalidReport {
+                    reason,
+                    usage: result.usage.clone(),
+                })?;
             update_cache(
                 cache,
                 &cache_key,
@@ -190,10 +222,18 @@ where
             StageOutcome::Completed { report }
         }
         Ok(WireOutcome::Clarification { questions }) => {
-            validate_questions(&questions)?;
+            validate_questions(&questions).map_err(|reason| StageRunError::InvalidQuestions {
+                reason,
+                usage: result.usage.clone(),
+            })?;
             StageOutcome::Blocked { questions }
         }
-        Err(error) => return Err(StageRunError::InvalidOutput(error)),
+        Err(source) => {
+            return Err(StageRunError::InvalidOutput {
+                source,
+                usage: result.usage,
+            });
+        }
     };
     Ok(StageRun {
         stage: stage.kind(),
@@ -243,19 +283,15 @@ where
     }
 }
 
-fn validate_questions(questions: &[ClarificationQuestion]) -> Result<(), StageRunError> {
+fn validate_questions(questions: &[ClarificationQuestion]) -> Result<(), String> {
     if questions.is_empty() {
-        return Err(StageRunError::InvalidQuestions(
-            "questions must not be empty".to_string(),
-        ));
+        return Err("questions must not be empty".to_string());
     }
     if questions
         .iter()
         .any(|question| question.question.trim().is_empty() || question.reason.trim().is_empty())
     {
-        return Err(StageRunError::InvalidQuestions(
-            "questions and reasons must not be blank".to_string(),
-        ));
+        return Err("questions and reasons must not be blank".to_string());
     }
     Ok(())
 }
@@ -292,11 +328,71 @@ impl From<StageKind> for TerminalTool {
 mod tests {
     use super::*;
 
-    use std::assert_matches;
+    #[test]
+    fn reports_usage_for_invalid_output_errors() {
+        let usage = LlmUsage::zero("test-model");
+        let error = StageRunError::InvalidOutput {
+            source: serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err(),
+            usage: usage.clone(),
+        };
+
+        assert_eq!(error.usage(), Some(&usage));
+    }
+
+    #[test]
+    fn reports_usage_for_invalid_question_errors() {
+        let usage = LlmUsage::zero("test-model");
+        let error = StageRunError::InvalidQuestions {
+            reason: "questions must not be empty".to_string(),
+            usage: usage.clone(),
+        };
+
+        assert_eq!(error.usage(), Some(&usage));
+    }
+
+    #[test]
+    fn reports_usage_for_invalid_report_errors() {
+        let usage = LlmUsage::zero("test-model");
+        let error = StageRunError::InvalidReport {
+            reason: "missing summary".to_string(),
+            usage: usage.clone(),
+        };
+
+        assert_eq!(error.usage(), Some(&usage));
+    }
+
+    #[test]
+    fn omits_usage_for_cache_key_errors() {
+        let error = StageRunError::CacheKey(CacheKeyError::from(
+            serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err(),
+        ));
+
+        assert_eq!(error.usage(), None);
+    }
+
+    #[test]
+    fn omits_usage_for_pi_errors_without_usage() {
+        let error = StageRunError::from(PiRunFailure::from(PiRunError::InvalidState(
+            "missing outcome".to_string(),
+        )));
+
+        assert_eq!(error.usage(), None);
+    }
+
+    #[test]
+    fn reports_usage_for_pi_failures_with_usage() {
+        let usage = LlmUsage::zero("test-model");
+        let error = StageRunError::from(PiRunFailure {
+            error: PiRunError::InvalidState("missing outcome".to_string()),
+            usage: Some(usage.clone()),
+        });
+
+        assert_eq!(error.usage(), Some(&usage));
+    }
 
     #[test]
     fn accepts_structured_questions() {
-        assert_matches!(
+        assert_eq!(
             validate_questions(&[ClarificationQuestion {
                 question: "Which behavior is intended?".to_string(),
                 reason: "The description and diff disagree.".to_string(),
@@ -307,34 +403,31 @@ mod tests {
 
     #[test]
     fn rejects_empty_questions() {
-        assert_matches!(
+        assert_eq!(
             validate_questions(&[]),
-            Err(StageRunError::InvalidQuestions(message))
-                if message == "questions must not be empty"
+            Err("questions must not be empty".to_string())
         );
     }
 
     #[test]
     fn rejects_blank_questions() {
-        assert_matches!(
+        assert_eq!(
             validate_questions(&[ClarificationQuestion {
                 question: " ".to_string(),
                 reason: "The question is required.".to_string(),
             }]),
-            Err(StageRunError::InvalidQuestions(message))
-                if message == "questions and reasons must not be blank"
+            Err("questions and reasons must not be blank".to_string())
         );
     }
 
     #[test]
     fn rejects_blank_question_reasons() {
-        assert_matches!(
+        assert_eq!(
             validate_questions(&[ClarificationQuestion {
                 question: "Question".to_string(),
                 reason: " ".to_string(),
             }]),
-            Err(StageRunError::InvalidQuestions(message))
-                if message == "questions and reasons must not be blank"
+            Err("questions and reasons must not be blank".to_string())
         );
     }
 

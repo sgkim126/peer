@@ -51,7 +51,6 @@ pub struct ReviewContextReport {
     pub unresolved: Vec<SourcedStatement>,
 }
 
-#[expect(dead_code)]
 pub struct ReviewContextStage {
     input: ReviewInput,
     commits: Vec<CommitHash>,
@@ -60,7 +59,6 @@ pub struct ReviewContextStage {
 }
 
 impl ReviewContextStage {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn new(input: ReviewInput) -> Self {
         let commits = input
             .commits
