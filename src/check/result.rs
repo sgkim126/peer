@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::git::CommitHash;
 use crate::llm::LlmUsage;
-pub use crate::stage::{FileLocation, Finding, Severity, StageTarget as CheckTarget};
+pub use crate::stage::{Finding, StageTarget as CheckTarget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -48,6 +48,8 @@ mod tests {
     use super::*;
 
     use std::assert_matches;
+
+    use crate::stage::{FileLocation, Severity};
 
     fn finding(commit: &str, severity: Severity) -> Finding {
         Finding {

@@ -70,7 +70,6 @@ impl fmt::Display for StageTarget {
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[expect(dead_code)]
 pub struct StageResult {
     pub stage: String,
     pub target: StageTarget,

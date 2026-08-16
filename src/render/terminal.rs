@@ -3,21 +3,23 @@ use std::fmt::{self, Write};
 
 use owo_colors::Style;
 
-#[cfg(test)]
-use crate::check::CheckResult;
-use crate::check::{CheckError, CheckTarget, Finding, Severity};
 use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
+#[cfg(test)]
+use crate::stage::StageResult;
+use crate::stage::{Finding, Severity, StageFailure, StageTarget};
 
-use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_terminal};
+use super::{
+    RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message, escape_terminal,
+};
 
-pub fn render(result: &RenderCheck, use_color: bool) -> String {
+pub fn render(result: &RenderStage, use_color: bool) -> String {
     let mut output = String::new();
     writeln!(
         output,
         "{} {}",
-        label("Check:", use_color),
-        bold(&escape_terminal(&result.check), use_color)
+        label("Stage:", use_color),
+        bold(&escape_terminal(&result.stage), use_color)
     )
     .unwrap();
     writeln!(
@@ -62,7 +64,7 @@ pub fn render(result: &RenderCheck, use_color: bool) -> String {
         writeln!(output, "{} {}", label("Iterations:", use_color), iterations).unwrap();
     }
     if let Some(usage) = result.usage() {
-        write_usage(&mut output, "Check usage", usage);
+        write_usage(&mut output, "Stage usage", usage);
     }
     output
 }
@@ -90,8 +92,8 @@ pub fn render_review_summary(
     writeln!(output, "- Medium findings: {}", counts.medium).unwrap();
     writeln!(output, "- High findings: {}", counts.high).unwrap();
     writeln!(output, "- Critical findings: {}", counts.critical).unwrap();
-    writeln!(output, "- Exhausted checks: {}", counts.exhausted).unwrap();
-    writeln!(output, "- Failed checks: {}", counts.failed).unwrap();
+    writeln!(output, "- Exhausted stages: {}", counts.exhausted).unwrap();
+    writeln!(output, "- Failed stages: {}", counts.failed).unwrap();
     if let Some(usage) = context_usage {
         writeln!(
             output,
@@ -200,22 +202,22 @@ fn styled(value: impl fmt::Display, style: Style, use_color: bool) -> String {
     }
 }
 
-fn display_error(error: RenderCheckErrorRef<'_>) -> String {
+fn display_error(error: RenderStageErrorRef<'_>) -> String {
     match error {
-        RenderCheckErrorRef::Exhausted(reason) | RenderCheckErrorRef::Execution(reason) => {
+        RenderStageErrorRef::Exhausted(reason) | RenderStageErrorRef::Execution(reason) => {
             reason.to_string()
         }
-        RenderCheckErrorRef::Check(CheckError::ClarificationRequired { questions }) => {
-            questions.join("; ")
+        RenderStageErrorRef::Stage(StageFailure::ClarificationRequired { questions }) => {
+            clarification_message(questions)
         }
-        RenderCheckErrorRef::Check(error) => error.to_string(),
+        RenderStageErrorRef::Stage(error) => error.to_string(),
     }
 }
 
-fn display_target(target: &CheckTarget) -> String {
+fn display_target(target: &StageTarget) -> String {
     match target {
-        CheckTarget::Commit(commit) => commit.to_string(),
-        CheckTarget::Range { from, to } => format!("{from}..{to}"),
+        StageTarget::Commit(commit) => commit.to_string(),
+        StageTarget::Range { from, to } => format!("{from}..{to}"),
     }
 }
 
@@ -243,13 +245,13 @@ fn finding_context(finding: &Finding) -> String {
 mod tests {
     use super::*;
 
-    use crate::check::FileLocation;
     use crate::git::CommitHash;
+    use crate::stage::FileLocation;
 
-    fn result() -> CheckResult {
-        CheckResult {
-            check: "security".to_string(),
-            target: CheckTarget::Range {
+    fn result() -> StageResult {
+        StageResult {
+            stage: "security".to_string(),
+            target: StageTarget::Range {
                 from: CommitHash::new("abc1234").unwrap(),
                 to: CommitHash::new("def5678").unwrap(),
             },
@@ -257,7 +259,7 @@ mod tests {
                 CommitHash::new("abc1234").unwrap(),
                 CommitHash::new("def5678").unwrap(),
             ],
-            summary: "Checked the change.".to_string(),
+            summary: "Reviewed the change.".to_string(),
             findings: vec![
                 Finding {
                     commit: CommitHash::new("def5678").unwrap(),
@@ -276,7 +278,7 @@ mod tests {
                 },
             ],
             iterations: 2,
-            error: None,
+            failure: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 100,
@@ -294,7 +296,7 @@ mod tests {
     fn has_no_ansi_codes_without_tty() {
         let output = render(&result().into(), false);
 
-        assert!(output.contains("Check usage: 100 input, 20 output, $0.001000 (test-model)"));
+        assert!(output.contains("Stage usage: 100 input, 20 output, $0.001000 (test-model)"));
         assert!(!output.contains("\u{1b}["));
     }
 
@@ -319,7 +321,7 @@ mod tests {
     #[test]
     fn escapes_control_characters_and_flattens_newlines() {
         let mut result = result();
-        result.check = "security\u{1b}[2J".to_string();
+        result.stage = "security\u{1b}[2J".to_string();
         result.summary = "Summary\nforged output\u{7}".to_string();
         result.findings[0].message = "message\u{1b}[31m\nnext line".to_string();
 

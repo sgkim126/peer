@@ -45,7 +45,7 @@ pub enum Command {
         #[arg(long)]
         comments_file: Option<PathBuf>,
 
-        /// Start resumable checks from the beginning.
+        /// Start resumable stages from the beginning.
         #[arg(long)]
         no_resume: bool,
 
