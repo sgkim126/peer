@@ -176,9 +176,8 @@ impl SessionRecord {
 
 type ProcessClient = RpcClient<BufReader<tokio::process::ChildStdout>, tokio::process::ChildStdin>;
 
-#[expect(dead_code)]
 pub struct PiRunner {
-    child: Child,
+    _child: Child,
     client: ProcessClient,
     cache: CacheStore,
     version_root: PathBuf,
@@ -196,7 +195,7 @@ impl PiRunner {
         let (child, stdin, stdout) = process.into_parts();
         let version_root = cache.version_root();
         Self {
-            child,
+            _child: child,
             client: RpcClient::new(BufReader::new(stdout), stdin),
             cache,
             version_root,
