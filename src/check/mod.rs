@@ -128,6 +128,7 @@ pub struct CheckOptions<'a> {
     pub runtime: &'a mut PiRuntime,
 }
 
+#[expect(dead_code)]
 pub async fn resolve_review_head(
     command: &CheckCommand,
     project_root: &Path,
