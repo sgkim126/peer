@@ -48,6 +48,37 @@ fn init_fails_without_git_repo() {
 
     assert!(!out.status.success());
     assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("not in a git repository"),
+        "stderr: {stderr}",
+    );
+}
+
+#[test]
+fn init_preserves_git_error_in_bare_repo() {
+    let (mut cmd, tmp) = peer_in_tmp();
+    Command::new("git")
+        .args(["init", "--bare"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap()
+        .assert_success();
+
+    let out = cmd.env("LC_ALL", "C").arg("init").output().unwrap();
+
+    assert!(!out.status.success());
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("cannot run git"), "stderr: {stderr}");
+    assert!(
+        stderr.contains("this operation must be run in a work tree"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        !stderr.contains("not in a git repository"),
+        "stderr: {stderr}"
+    );
 }
 
 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -84,6 +115,53 @@ fn init_succeeds_in_git_repo() {
         std::fs::read_to_string(tmp.path().join(".peer").join(".gitignore")).unwrap(),
         "cache/\n"
     );
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn init_succeeds_from_symlinked_repo_root() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    let repo_link = tmp.path().join("repo-link");
+    std::fs::create_dir(&repo).unwrap();
+    git_init(&repo);
+    std::os::unix::fs::symlink(&repo, &repo_link).unwrap();
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_peer"));
+    cmd.current_dir(&repo_link);
+
+    let out = cmd.arg("init").output().unwrap();
+
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(repo.join(".peer").join("config.toml").exists());
+}
+
+#[test]
+fn init_from_git_subdirectory_points_to_repo_root_without_creating_peer_dir() {
+    let (mut cmd, tmp) = peer_in_tmp();
+    git_init(tmp.path());
+    let subdirectory = tmp.path().join("src").join("nested");
+    std::fs::create_dir_all(&subdirectory).unwrap();
+    cmd.current_dir(&subdirectory);
+
+    let out = cmd.arg("init").output().unwrap();
+
+    assert!(!out.status.success());
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("peer init must be run from the repository root"),
+        "stderr: {stderr}"
+    );
+    assert!(
+        stderr.contains(&tmp.path().display().to_string()),
+        "stderr: {stderr}"
+    );
+    assert!(!tmp.path().join(".peer").exists());
+    assert!(!subdirectory.join(".peer").exists());
 }
 
 #[test]

@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use crate::config::DEFAULT_CONFIG_TOML;
 use crate::console::Console;
 use crate::error::PeerError;
-use crate::git::run_git;
+use crate::git::{GitError, run_git};
 
 const PEER_GITIGNORE: &str =
     include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/resources/gitignore"));
@@ -16,13 +16,36 @@ pub async fn handler(console: Console) -> Result<PathBuf, PeerError> {
         source: Some(Box::new(e)),
     })?;
 
-    run_git(&["--version"], &cwd, console).await?;
+    let repo_root = match run_git(&["rev-parse", "--show-toplevel"], &cwd, console).await {
+        Ok(repo_root) => repo_root,
+        Err(err @ GitError::NonZeroExit { .. }) => {
+            match run_git(&["rev-parse", "--git-dir"], &cwd, console).await {
+                Ok(_) => return Err(PeerError::Git(err)),
+                Err(GitError::NonZeroExit { .. }) => {
+                    return Err(PeerError::invalid_config("not in a git repository"));
+                }
+                Err(err) => return Err(PeerError::Git(err)),
+            }
+        }
+        Err(err) => return Err(PeerError::Git(err)),
+    };
+    let repo_root = PathBuf::from(repo_root.trim_end_matches(['\r', '\n']));
 
-    if !cwd.join(".git").exists() {
-        return Err(PeerError::InvalidConfig {
-            message: "not a git repository (no .git/ found in current directory)".into(),
-            source: None,
-        });
+    let canonical_cwd = std::fs::canonicalize(&cwd).map_err(|e| PeerError::Internal {
+        message: format!("cannot resolve {}", cwd.display()),
+        source: Box::new(e),
+    })?;
+    let canonical_repo_root =
+        std::fs::canonicalize(&repo_root).map_err(|e| PeerError::Internal {
+            message: format!("cannot resolve {}", repo_root.display()),
+            source: Box::new(e),
+        })?;
+
+    if canonical_cwd != canonical_repo_root {
+        return Err(PeerError::invalid_config(format!(
+            "peer init must be run from the repository root; run it again from {}",
+            repo_root.display()
+        )));
     }
 
     let peer_dir = cwd.join(".peer");
