@@ -6,8 +6,8 @@ use crate::cache::{CacheKey, CacheKeyError, CacheStore};
 use crate::console::Console;
 use crate::llm::LlmUsage;
 use crate::pi::{
-    ModelRef, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig, StageKind as PiStageKind,
-    TerminalTool, tool_contract_digest,
+    ModelRef, Operation, PiRunError, PiRunFailure, PiRunRequest, PiRuntime, RunConfig,
+    StageKind as PiStageKind, TerminalTool, tool_contract_digest,
 };
 use crate::stage::contract::{
     ClarificationQuestion, ReviewStage, StageKind, StageOutcome, StageRequest, StageRun,
@@ -23,7 +23,7 @@ pub struct StageRunConfig {
 #[derive(Debug)]
 pub enum StageRunError {
     CacheKey(CacheKeyError),
-    Pi(PiRunError),
+    Pi(Box<PiRunFailure>),
     InvalidOutput(serde_json::Error),
     InvalidQuestions(String),
     InvalidReport(String),
@@ -59,9 +59,9 @@ impl From<CacheKeyError> for StageRunError {
     }
 }
 
-impl From<PiRunError> for StageRunError {
-    fn from(error: PiRunError) -> Self {
-        Self::Pi(error)
+impl From<PiRunFailure> for StageRunError {
+    fn from(failure: PiRunFailure) -> Self {
+        Self::Pi(Box::new(failure))
     }
 }
 
@@ -159,7 +159,10 @@ where
         .await;
     let result = match result {
         Ok(result) => result,
-        Err(PiRunError::Exhausted { turns, usage }) => {
+        Err(PiRunFailure {
+            error: PiRunError::Exhausted { turns },
+            usage: Some(usage),
+        }) => {
             return Ok(StageRun {
                 stage: stage.kind(),
                 target: stage.target(),

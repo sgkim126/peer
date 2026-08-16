@@ -6,7 +6,7 @@ use crate::console::Console;
 use super::assets::materialize;
 use super::dependency::PiDependency;
 use super::process::{PiProcess, PiProcessOptions};
-use super::runner::{PiRunError, PiRunRequest, PiRunResult, PiRunner};
+use super::runner::{PiRunError, PiRunFailure, PiRunRequest, PiRunResult, PiRunner};
 use super::tool_server::ToolServer;
 
 pub struct PiRuntime {
@@ -26,7 +26,7 @@ impl PiRuntime {
         }
     }
 
-    pub async fn run(&mut self, request: PiRunRequest) -> Result<PiRunResult, PiRunError> {
+    pub async fn run(&mut self, request: PiRunRequest) -> Result<PiRunResult, PiRunFailure> {
         if self.runner.is_none() {
             self.runner = Some(self.start_runner().await?);
         }
@@ -36,7 +36,13 @@ impl PiRuntime {
             .expect("Pi runner was initialized")
             .run(request)
             .await;
-        if matches!(result, Err(PiRunError::Rpc(_))) {
+        if matches!(
+            result,
+            Err(PiRunFailure {
+                error: PiRunError::Rpc(_),
+                ..
+            })
+        ) {
             self.runner = None;
         }
         result

@@ -7,7 +7,7 @@ use crate::config::Config;
 use crate::console::Console;
 use crate::llm::LlmUsage;
 use crate::pi::{
-    ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig,
+    ModelRef, ModelRefError, Operation, PiRunFailure, PiRunRequest, PiRuntime, RunConfig,
     TerminalTool, tool_contract_digest,
 };
 
@@ -145,7 +145,7 @@ fn compression_request(context: &ReviewContext) -> (RunConfig, String) {
 pub enum ContextCompressionError {
     CacheKey(CacheKeyError),
     InvalidModel(ModelRefError),
-    Pi(PiRunError),
+    Pi(PiRunFailure),
     InvalidOutcome {
         source: serde_json::Error,
         usage: LlmUsage,
@@ -160,6 +160,7 @@ impl ContextCompressionError {
     pub fn usage(&self) -> Option<&LlmUsage> {
         match self {
             Self::InvalidOutcome { usage, .. } | Self::InvalidDigest { usage, .. } => Some(usage),
+            Self::Pi(failure) => failure.usage.as_ref(),
             _ => None,
         }
     }
@@ -205,9 +206,9 @@ impl From<ModelRefError> for ContextCompressionError {
     }
 }
 
-impl From<PiRunError> for ContextCompressionError {
-    fn from(error: PiRunError) -> Self {
-        Self::Pi(error)
+impl From<PiRunFailure> for ContextCompressionError {
+    fn from(failure: PiRunFailure) -> Self {
+        Self::Pi(failure)
     }
 }
 

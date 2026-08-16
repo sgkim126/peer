@@ -8,8 +8,8 @@ use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::LlmUsage;
 use crate::pi::{
-    CheckKind, ModelRef, ModelRefError, Operation, PiRunError, PiRunRequest, PiRuntime, RunConfig,
-    tool_contract_digest,
+    CheckKind, ModelRef, ModelRefError, Operation, PiRunError, PiRunFailure, PiRunRequest,
+    PiRuntime, RunConfig, tool_contract_digest,
 };
 
 use super::{CheckDefinition, CheckError, CheckResult, CheckTarget, Finding};
@@ -147,7 +147,10 @@ impl Checker {
             .await;
         let result = match result {
             Ok(result) => result,
-            Err(PiRunError::Exhausted { turns, usage }) => {
+            Err(PiRunFailure {
+                error: PiRunError::Exhausted { turns },
+                usage: Some(usage),
+            }) => {
                 let reason = format!("Pi did not submit an outcome within {turns} turns");
                 return Ok(self.build_result(
                     check,
@@ -159,7 +162,7 @@ impl Checker {
                     Some(CheckError::Exhausted { reason }),
                 ));
             }
-            Err(error) => return Err(CheckRunError::Pi(error)),
+            Err(failure) => return Err(CheckRunError::Pi(failure.error)),
         };
         let outcome: CheckOutcome = serde_json::from_value(result.outcome)?;
         match outcome {
