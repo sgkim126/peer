@@ -1,3 +1,4 @@
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -17,9 +18,7 @@ impl Extractor {
         from_revision: &str,
         to_revision: &str,
     ) -> Result<RangeDiff, ExtractError> {
-        self.console.debug(format_args!(
-            "extract range diff: {from_revision}..{to_revision}"
-        ));
+        trace!("extract range diff: {from_revision}..{to_revision}");
         let from = CommitHash::resolve(from_revision, &self.project_root, self.console).await?;
         let to = CommitHash::resolve(to_revision, &self.project_root, self.console).await?;
         let diff = run_git(

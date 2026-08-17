@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 
+use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 
 use crate::console::Console;
@@ -41,7 +42,7 @@ struct RawFileEntry {
 }
 
 /// Parses `git diff-tree --name-status -z` output.
-fn parse_name_status(output: &str, console: Console) -> Result<Vec<RawFileEntry>, ExtractError> {
+fn parse_name_status(output: &str, _console: Console) -> Result<Vec<RawFileEntry>, ExtractError> {
     let mut entries = Vec::new();
     let mut fields = output.split('\0').filter(|field| !field.is_empty());
     while let Some(code) = fields.next() {
@@ -55,7 +56,7 @@ fn parse_name_status(output: &str, console: Console) -> Result<Vec<RawFileEntry>
             Some('T') => FileStatus::TypeChanged,
             _ => {
                 let message = format!("unknown git name-status code: {code}");
-                console.debug(format_args!("{message}; output: {output:?}"));
+                debug!("{message}; output: {output:?}");
                 return Err(ExtractError::MalformedGitOutput(message));
             }
         };
@@ -68,12 +69,12 @@ fn parse_name_status(output: &str, console: Console) -> Result<Vec<RawFileEntry>
                 };
                 let Some(source_path) = fields.next() else {
                     let message = format!("incomplete git {operation} entry for status: {code}");
-                    console.debug(format_args!("{message}; output: {output:?}"));
+                    debug!("{message}; output: {output:?}");
                     return Err(ExtractError::MalformedGitOutput(message));
                 };
                 let Some(path) = fields.next() else {
                     let message = format!("incomplete git {operation} entry for status: {code}");
-                    console.debug(format_args!("{message}; output: {output:?}"));
+                    debug!("{message}; output: {output:?}");
                     return Err(ExtractError::MalformedGitOutput(message));
                 };
                 RawFileEntry {
@@ -85,7 +86,7 @@ fn parse_name_status(output: &str, console: Console) -> Result<Vec<RawFileEntry>
             _ => {
                 let Some(path) = fields.next() else {
                     let message = format!("incomplete git name-status entry for status: {code}");
-                    console.debug(format_args!("{message}; output: {output:?}"));
+                    debug!("{message}; output: {output:?}");
                     return Err(ExtractError::MalformedGitOutput(message));
                 };
                 RawFileEntry {
@@ -101,7 +102,7 @@ fn parse_name_status(output: &str, console: Console) -> Result<Vec<RawFileEntry>
 }
 
 /// Parses `git diff-tree --numstat -z` output.
-fn parse_binary_paths(numstat: &str, console: Console) -> Result<HashSet<&str>, ExtractError> {
+fn parse_binary_paths(numstat: &str, _console: Console) -> Result<HashSet<&str>, ExtractError> {
     let mut binary = HashSet::new();
     for record in numstat.split('\0') {
         if record.is_empty() {
@@ -110,17 +111,17 @@ fn parse_binary_paths(numstat: &str, console: Console) -> Result<HashSet<&str>, 
         let mut parts = record.splitn(3, '\t');
         let Some(added) = parts.next() else {
             let message = "missing added count in git numstat".to_string();
-            console.debug(format_args!("{message}; output: {numstat:?}"));
+            debug!("{message}; output: {numstat:?}");
             return Err(ExtractError::MalformedGitOutput(message));
         };
         let Some(deleted) = parts.next() else {
             let message = "missing deleted count in git numstat".to_string();
-            console.debug(format_args!("{message}; output: {numstat:?}"));
+            debug!("{message}; output: {numstat:?}");
             return Err(ExtractError::MalformedGitOutput(message));
         };
         let Some(path) = parts.next() else {
             let message = "missing path in git numstat".to_string();
-            console.debug(format_args!("{message}; output: {numstat:?}"));
+            debug!("{message}; output: {numstat:?}");
             return Err(ExtractError::MalformedGitOutput(message));
         };
         if added == "-" && deleted == "-" {
@@ -132,8 +133,7 @@ fn parse_binary_paths(numstat: &str, console: Console) -> Result<HashSet<&str>, 
 
 impl Extractor {
     pub async fn commit_files(&self, revision: &str) -> Result<CommitFiles, ExtractError> {
-        self.console
-            .debug(format_args!("extract commit files: {revision}"));
+        trace!("extract commit files: {revision}");
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
 
         let name_status_out = run_git(

@@ -11,6 +11,7 @@ pub use self::result::{CheckError, CheckResult, CheckTarget, Finding};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
+use log::debug;
 use serde::{Deserialize, Serialize};
 
 use crate::cache::{CacheKey, CacheStore};
@@ -318,13 +319,13 @@ fn check_cache_key(
     provider: &str,
     model: &str,
     review_context: &ReviewContextDigest,
-    console: Console,
+    _console: Console,
 ) -> Option<CacheKey> {
     let params = check_cache_params(check, review_context);
     match CacheKey::from_params(format!("check-{}", check.name()), provider, model, &params) {
         Ok(key) => Some(key),
         Err(error) => {
-            console.debug(format_args!("cannot build check cache key: {error:?}"));
+            debug!("cannot build check cache key: {error:?}");
             None
         }
     }
@@ -350,13 +351,13 @@ fn load_check_cache(
     check: &Check,
     model: &str,
     context_usage: Option<LlmUsage>,
-    console: Console,
+    _console: Console,
 ) -> Option<LoadedCheckCache> {
     let cached = match store.read_json::<CachedCheck>(key) {
         Ok(Some(cached)) => cached,
         Ok(None) => return None,
         Err(error) => {
-            console.debug(format_args!("ignoring check cache read error: {error:?}"));
+            debug!("ignoring check cache read error: {error:?}");
             return None;
         }
     };
@@ -371,9 +372,7 @@ fn load_check_cache(
             .iter()
             .any(|expected| expected.matches(&finding.commit))
     }) {
-        console.debug(format_args!(
-            "ignoring cached check result with finding outside the current target"
-        ));
+        debug!("ignoring cached check result with finding outside the current target");
         return None;
     }
 
@@ -398,9 +397,9 @@ fn load_check_cache(
     })))
 }
 
-fn update_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult, console: Console) {
+fn update_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult, _console: Console) {
     if result.error.is_some() {
-        console.debug(format_args!("not caching incomplete check result"));
+        debug!("not caching incomplete check result");
         return;
     }
     let cached = CachedCheck::Complete {
@@ -409,7 +408,7 @@ fn update_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult, 
         iterations: result.iterations,
     };
     if let Err(error) = store.write_json(key, &cached) {
-        console.debug(format_args!("ignoring check cache write error: {error:?}"));
+        debug!("ignoring check cache write error: {error:?}");
     }
 }
 

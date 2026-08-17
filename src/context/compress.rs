@@ -1,5 +1,6 @@
 use std::fmt;
 
+use log::debug;
 use serde::Deserialize;
 
 use crate::cache::{CacheKey, CacheKeyError, CacheStore};
@@ -45,7 +46,7 @@ pub async fn compress_review_context(
     cache: &CacheStore,
     runtime: &mut PiRuntime,
     resume: bool,
-    console: Console,
+    _console: Console,
 ) -> Result<ContextCompression, ContextCompressionError> {
     if context.is_empty() {
         return Ok(ContextCompression {
@@ -60,9 +61,7 @@ pub async fn compress_review_context(
         match CacheKey::from_params(CONTEXT_CACHE_NAMESPACE, provider, model_name, context) {
             Ok(key) => Some(key),
             Err(error) => {
-                console.debug(format_args!(
-                    "cannot build review context cache key: {error:?}"
-                ));
+                debug!("cannot build review context cache key: {error:?}");
                 None
             }
         };
@@ -75,15 +74,11 @@ pub async fn compress_review_context(
                         usage: None,
                     });
                 }
-                Err(error) => console.debug(format_args!(
-                    "ignoring invalid cached review context digest: {error:?}"
-                )),
+                Err(error) => debug!("ignoring invalid cached review context digest: {error:?}"),
             },
             Ok(None) => {}
             Err(error) => {
-                console.debug(format_args!(
-                    "ignoring review context cache read error: {error:?}"
-                ));
+                debug!("ignoring review context cache read error: {error:?}");
             }
         }
     }
@@ -116,9 +111,7 @@ pub async fn compress_review_context(
     if let Some(key) = &cache_key
         && let Err(error) = cache.write_json(key, &digest)
     {
-        console.debug(format_args!(
-            "ignoring review context cache write error: {error:?}"
-        ));
+        debug!("ignoring review context cache write error: {error:?}");
     }
     Ok(ContextCompression {
         digest,

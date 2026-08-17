@@ -8,6 +8,7 @@ pub struct Console {
     debug: bool,
 }
 
+#[allow(dead_code)]
 impl Console {
     pub fn from_cli(cli: &Cli) -> Self {
         Self {
@@ -16,7 +17,6 @@ impl Console {
         }
     }
 
-    #[allow(dead_code)]
     pub fn verbose(&self, msg: Arguments<'_>) {
         if self.verbose {
             eprintln!("[verbose] {msg}");

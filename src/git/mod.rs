@@ -3,6 +3,7 @@ mod error;
 
 use std::path::Path;
 
+use log::{debug, trace};
 use tokio::process::Command;
 
 use crate::console::Console;
@@ -14,10 +15,10 @@ use self::error::InvalidCommitHashReason;
 pub async fn run_git_bytes(
     args: &[&str],
     current_dir: &Path,
-    console: Console,
+    _console: Console,
 ) -> Result<Vec<u8>, GitError> {
     let commands = format_argv(args);
-    console.debug(format_args!("{commands}"));
+    trace!("{commands}");
 
     let output = Command::new("git")
         .args(args)
@@ -29,7 +30,7 @@ pub async fn run_git_bytes(
     if !output.status.success() {
         let status = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        console.debug(format_args!("{commands}: ({status}): {stderr}"));
+        debug!("{commands}: ({status}): {stderr}");
         return Err(GitError::NonZeroExit { status, stderr });
     }
 

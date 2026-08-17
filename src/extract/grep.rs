@@ -1,6 +1,7 @@
 use std::num::NonZeroU8;
 use std::path::Path;
 
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, GitError, run_git};
@@ -24,9 +25,9 @@ impl Extractor {
         path: Option<&Path>,
         context_lines: NonZeroU8,
     ) -> Result<GrepResult, ExtractError> {
-        self.console.debug(format_args!(
+        trace!(
             "extract grep: {revision} query={query:?} path={path:?} context_lines={context_lines}"
-        ));
+        );
         validate_grep_arguments(query, context_lines)?;
         if let Some(path) = path {
             validate_repository_relative_path(path)?;

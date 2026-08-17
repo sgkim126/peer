@@ -1,5 +1,6 @@
 use std::path::{Path, PathBuf};
 
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -35,9 +36,7 @@ impl Extractor {
         path: Option<&Path>,
         recursive: bool,
     ) -> Result<TreeListing, ExtractError> {
-        self.console.debug(format_args!(
-            "extract list tree: {revision} path={path:?} recursive={recursive}"
-        ));
+        trace!("extract list tree: {revision} path={path:?} recursive={recursive}");
         if let Some(path) = path {
             validate_repository_relative_path(path)?;
         }

@@ -1,5 +1,6 @@
 use std::fmt;
 
+use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 
 use crate::cache::{CacheKey, CacheKeyError, CacheStore};
@@ -158,11 +159,11 @@ where
         config.model.model(),
         &params,
     )?;
-    config.console.debug(format_args!(
+    trace!(
         "typed stage {} for {}",
         stage.kind().as_str(),
         stage.target()
-    ));
+    );
     let result = runtime
         .run(PiRunRequest {
             session_key,
@@ -249,7 +250,7 @@ fn load_cache<C>(
     cache: &CacheStore,
     key: &CacheKey,
     stage: &C,
-    console: Console,
+    _console: Console,
 ) -> Option<CachedReport<C::Report>>
 where
     C: ReviewStage,
@@ -258,28 +259,24 @@ where
         Ok(Some(cached)) => match stage.validate_report(&cached.report) {
             Ok(()) => Some(cached),
             Err(error) => {
-                console.debug(format_args!("ignoring invalid typed stage cache: {error}"));
+                debug!("ignoring invalid typed stage cache: {error}");
                 None
             }
         },
         Ok(None) => None,
         Err(error) => {
-            console.debug(format_args!(
-                "ignoring typed stage cache read error: {error:?}"
-            ));
+            debug!("ignoring typed stage cache read error: {error:?}");
             None
         }
     }
 }
 
-fn update_cache<R>(cache: &CacheStore, key: &CacheKey, report: &CachedReport<R>, console: Console)
+fn update_cache<R>(cache: &CacheStore, key: &CacheKey, report: &CachedReport<R>, _console: Console)
 where
     R: Serialize,
 {
     if let Err(error) = cache.write_json(key, report) {
-        console.debug(format_args!(
-            "ignoring typed stage cache write error: {error:?}"
-        ));
+        debug!("ignoring typed stage cache write error: {error:?}");
     }
 }
 

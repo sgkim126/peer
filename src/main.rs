@@ -18,6 +18,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::Parser;
+use log::debug;
 
 use crate::cache::CacheStore;
 use crate::cli::{Cli, Command};
@@ -40,7 +41,7 @@ async fn main() -> ExitCode {
             }
             Err(err) => {
                 eprintln!("error: {err}");
-                console.debug(format_args!("{err:?}"));
+                debug!("{err:?}");
                 ExitCode::FAILURE
             }
         },
@@ -49,7 +50,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(error) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -57,7 +58,7 @@ async fn main() -> ExitCode {
                 Ok(project_root) => project_root,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -73,7 +74,7 @@ async fn main() -> ExitCode {
                 }
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     ExitCode::FAILURE
                 }
             }
@@ -104,7 +105,7 @@ async fn main() -> ExitCode {
                 Ok(context) => context,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -112,7 +113,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(error) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -120,13 +121,13 @@ async fn main() -> ExitCode {
                 Ok(discovered) => discovered,
                 Err(error) => {
                     eprintln!("{error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
             if let Err(error) = apply_llm_overrides(&mut config, provider, model) {
                 eprintln!("error: {error}");
-                console.debug(format_args!("{error:?}"));
+                debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
             let target = match review::resolve_target(
@@ -140,7 +141,7 @@ async fn main() -> ExitCode {
                 Ok(target) => target,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -153,7 +154,7 @@ async fn main() -> ExitCode {
             .await
             {
                 eprintln!("error: {error}");
-                console.debug(format_args!("{error:?}"));
+                debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
 
@@ -174,7 +175,7 @@ async fn main() -> ExitCode {
                 Ok(result) => result,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -202,7 +203,7 @@ async fn main() -> ExitCode {
                     ));
                 }
                 eprintln!("error: {error}");
-                console.debug(format_args!("{error:?}"));
+                debug!("{error:?}");
             }
             let is_success = result.is_success();
 
@@ -217,7 +218,7 @@ async fn main() -> ExitCode {
                 }
                 Err(error) => {
                     eprintln!("failed to render review output: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     ExitCode::FAILURE
                 }
             }
@@ -227,7 +228,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(err) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format_args!("{err:?}"));
+                    debug!("{err:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -235,7 +236,7 @@ async fn main() -> ExitCode {
                 Ok((config, project_root)) => (config, project_root),
                 Err(err) => {
                     eprintln!("{err}");
-                    console.debug(format_args!("{err:?}"));
+                    debug!("{err:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -251,7 +252,7 @@ async fn main() -> ExitCode {
                 }
                 Err(err) => {
                     eprintln!("error: {err}");
-                    console.debug(format_args!("{err:?}"));
+                    debug!("{err:?}");
                     ExitCode::FAILURE
                 }
             }
@@ -267,7 +268,7 @@ async fn main() -> ExitCode {
             let mut input = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut input) {
                 eprintln!("failed to read render input: {error}");
-                console.debug(format_args!("{error:?}"));
+                debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
 
@@ -275,7 +276,7 @@ async fn main() -> ExitCode {
                 Ok(document) => document,
                 Err(error) => {
                     eprintln!("failed to parse render document: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -286,7 +287,7 @@ async fn main() -> ExitCode {
                 }
                 Err(error) => {
                     eprintln!("failed to render: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     ExitCode::FAILURE
                 }
             }

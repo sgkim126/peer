@@ -1,3 +1,4 @@
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -14,8 +15,7 @@ pub struct CommitList {
 
 impl Extractor {
     pub async fn commit_list(&self, range: &str) -> Result<CommitList, ExtractError> {
-        self.console
-            .debug(format_args!("extract commit list: {range}"));
+        trace!("extract commit list: {range}");
         if range.contains("...") || !range.contains("..") {
             return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
         }

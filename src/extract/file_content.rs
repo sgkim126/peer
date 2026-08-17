@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use log::trace;
 use serde::{Deserialize, Deserializer, Serialize, de};
 
 use crate::git::{CommitHash, GitError, run_git_bytes};
@@ -87,10 +88,7 @@ impl Extractor {
         path: &Path,
         line_range: Option<FileContentRange>,
     ) -> Result<FileContent, ExtractError> {
-        self.console.debug(format_args!(
-            "extract file content: {revision} {}",
-            path.display()
-        ));
+        trace!("extract file content: {revision} {}", path.display());
         validate_repository_relative_path(path)?;
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
         let path = path

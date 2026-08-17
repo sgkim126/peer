@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, BufReader};
@@ -36,12 +37,11 @@ impl ToolServer {
                     accepted = listener.accept() => match accepted {
                         Ok((stream, _)) => {
                             let extractor = Arc::clone(&extractor);
-                            let console = console;
                             connections.spawn(async move {
                                 if let Err(error) = handle_connection(stream, &extractor).await {
-                                    console.debug(format_args!(
+                                    warn!(
                                         "peer tool connection failed: {error}"
-                                    ));
+                                    );
                                 }
                             });
                         }

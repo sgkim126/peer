@@ -4,6 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncWrite, BufReader};
@@ -251,9 +252,7 @@ impl PiRunner {
                     let mut failed = record;
                     failed.status = error.session_status();
                     if let Err(write_error) = self.write_session(&request.session_key, &failed) {
-                        self.console.debug(format_args!(
-                            "cannot persist Pi session state: {write_error}"
-                        ));
+                        warn!("cannot persist Pi session state: {write_error}");
                     }
                     return Err(error.into());
                 }
@@ -281,8 +280,7 @@ impl PiRunner {
             |_| SessionStatus::Completed,
         );
         if let Err(error) = self.write_session(&request.session_key, &record) {
-            self.console
-                .debug(format_args!("cannot persist Pi session state: {error}"));
+            warn!("cannot persist Pi session state: {error}");
         }
         result
     }
@@ -420,8 +418,7 @@ impl PiRunner {
                 let usage = match self.read_usage(record).await {
                     Ok(usage) => usage,
                     Err(error) => {
-                        self.console
-                            .debug(format_args!("cannot read Pi usage: {error}"));
+                        warn!("cannot read Pi usage: {error}");
                         LlmUsage::zero(request.model.to_string())
                     }
                 };
@@ -436,8 +433,7 @@ impl PiRunner {
                 let usage = match self.read_usage(record).await {
                     Ok(usage) => usage,
                     Err(error) => {
-                        self.console
-                            .debug(format_args!("cannot read Pi usage: {error}"));
+                        warn!("cannot read Pi usage: {error}");
                         LlmUsage::zero(request.model.to_string())
                     }
                 };

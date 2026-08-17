@@ -1,3 +1,4 @@
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -12,8 +13,7 @@ pub struct CommitMessage {
 
 impl Extractor {
     pub async fn commit_message(&self, revision: &str) -> Result<CommitMessage, ExtractError> {
-        self.console
-            .debug(format_args!("extract commit message: {revision}"));
+        trace!("extract commit message: {revision}");
         let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
 
         let output = run_git(

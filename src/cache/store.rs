@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
+use log::{debug, trace};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -62,26 +63,22 @@ impl CacheStore {
         let content = match std::fs::read_to_string(&path) {
             Ok(content) => content,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                self.console
-                    .debug(format_args!("cache miss: {}", path.display()));
+                trace!("cache miss: {}", path.display());
                 return Ok(None);
             }
             Err(source) => {
-                self.console
-                    .debug(format_args!("cannot read {}: {source:?}", path.display()));
+                debug!("cannot read {}: {source:?}", path.display());
                 return Err(CacheReadError::Read { path, source });
             }
         };
         let value = serde_json::from_str(&content).map_err(|source| {
-            self.console
-                .debug(format_args!("cannot parse {}: {source:?}", path.display()));
+            debug!("cannot parse {}: {source:?}", path.display());
             CacheReadError::Deserialize {
                 path: path.clone(),
                 source,
             }
         })?;
-        self.console
-            .debug(format_args!("cache hit: {}", path.display()));
+        trace!("cache hit: {}", path.display());
         Ok(Some(value))
     }
 
@@ -127,8 +124,7 @@ impl CacheStore {
             });
         }
 
-        self.console
-            .debug(format_args!("cache write: {}", path.display()));
+        trace!("cache write: {}", path.display());
         Ok(())
     }
 
@@ -137,14 +133,12 @@ impl CacheStore {
         let path = self.path_for(key);
         match std::fs::remove_file(&path) {
             Ok(()) => {
-                self.console
-                    .debug(format_args!("cache remove: {}", path.display()));
+                trace!("cache remove: {}", path.display());
                 Ok(())
             }
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => Ok(()),
             Err(source) => {
-                self.console
-                    .debug(format_args!("cannot remove {}: {source:?}", path.display()));
+                debug!("cannot remove {}: {source:?}", path.display());
                 Err(CacheRemoveError { path, source })
             }
         }
@@ -158,9 +152,7 @@ impl CacheStore {
             .then(|| {
                 let version = CacheKey::version();
                 CacheVersion::parse(&version).ok_or_else(|| {
-                    self.console.debug(format_args!(
-                        "cannot prune: invalid cache version {version}"
-                    ));
+                    debug!("cannot prune: invalid cache version {version}");
                     CachePruneError::InvalidVersion { version }
                 })
             })
@@ -176,10 +168,7 @@ impl CacheStore {
         let mut skipped = 0;
         for entry in entries {
             let entry = entry.map_err(|source| {
-                self.console.debug(format_args!(
-                    "cannot read entry in {:?}: {source:?}",
-                    self.root
-                ));
+                debug!("cannot read entry in {:?}: {source:?}", self.root);
                 CachePruneError::ReadDir {
                     path: self.root.clone(),
                     source,
@@ -190,15 +179,11 @@ impl CacheStore {
                 Ok(file_type) => file_type,
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
                     skipped += 1;
-                    self.console.debug(format_args!(
-                        "cache entry skipped path={path:?} reason=already-missing"
-                    ));
+                    trace!("cache entry skipped path={path:?} reason=already-missing");
                     continue;
                 }
                 Err(source) => {
-                    self.console.debug(format_args!(
-                        "cannot inspect cache entry {path:?}: {source:?}"
-                    ));
+                    debug!("cannot inspect cache entry {path:?}: {source:?}");
                     return Err(CachePruneError::InspectEntry { path, source });
                 }
             };
@@ -212,16 +197,14 @@ impl CacheStore {
                         .is_some_and(|(version, current)| version < current));
             if !should_prune {
                 skipped += 1;
-                self.console.debug(format_args!(
-                    "cache entry skipped path={path:?} reason=not-prunable"
-                ));
+                trace!("cache entry skipped path={path:?} reason=not-prunable");
                 continue;
             }
 
-            self.console.debug(format_args!(
+            trace!(
                 "cache entry selected for pruning path={path:?} reason={}",
                 if all { "all" } else { "outdated-version" }
-            ));
+            );
             let result = if file_type.is_dir() {
                 std::fs::remove_dir_all(&path)
             } else {
@@ -230,19 +213,14 @@ impl CacheStore {
             match result {
                 Ok(()) => {
                     removed += 1;
-                    self.console
-                        .debug(format_args!("cache entry removed path={path:?}"));
+                    trace!("cache entry removed path={path:?}");
                 }
                 Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
                     skipped += 1;
-                    self.console.debug(format_args!(
-                        "cache entry skipped path={path:?} reason=already-missing"
-                    ));
+                    trace!("cache entry skipped path={path:?} reason=already-missing");
                 }
                 Err(source) => {
-                    self.console.debug(format_args!(
-                        "cache entry removal failed path={path:?} error={source:?}"
-                    ));
+                    debug!("cache entry removal failed path={path:?} error={source:?}");
                     return Err(CachePruneError::Remove { path, source });
                 }
             }
@@ -255,22 +233,15 @@ impl CacheStore {
     }
 
     fn entries(&self) -> Result<Option<std::fs::ReadDir>, CachePruneError> {
-        self.console
-            .debug(format_args!("inspecting cache root path={:?}", self.root));
+        trace!("inspecting cache root path={:?}", self.root);
         let metadata = match std::fs::symlink_metadata(&self.root) {
             Ok(metadata) => metadata,
             Err(source) if source.kind() == std::io::ErrorKind::NotFound => {
-                self.console.debug(format_args!(
-                    "cache root skipped path={:?} reason=missing",
-                    self.root
-                ));
+                trace!("cache root skipped path={:?} reason=missing", self.root);
                 return Ok(None);
             }
             Err(source) => {
-                self.console.debug(format_args!(
-                    "cannot inspect cache root {:?}: {source:?}",
-                    self.root
-                ));
+                debug!("cannot inspect cache root {:?}: {source:?}", self.root);
                 return Err(CachePruneError::Inspect {
                     path: self.root.clone(),
                     source,
@@ -278,21 +249,17 @@ impl CacheStore {
             }
         };
         if !metadata.file_type().is_dir() {
-            self.console.debug(format_args!(
+            debug!(
                 "cache root rejected path={:?} reason=not-directory-or-symlink",
                 self.root
-            ));
+            );
             return Err(CachePruneError::UnsafeRoot {
                 path: self.root.clone(),
             });
         }
-        self.console
-            .debug(format_args!("reading cache entries root={:?}", self.root));
+        trace!("reading cache entries root={:?}", self.root);
         std::fs::read_dir(&self.root).map(Some).map_err(|source| {
-            self.console.debug(format_args!(
-                "cannot read cache directory {:?}: {source:?}",
-                self.root
-            ));
+            debug!("cannot read cache directory {:?}: {source:?}", self.root);
             CachePruneError::ReadDir {
                 path: self.root.clone(),
                 source,

@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -21,10 +22,10 @@ impl Extractor {
         to_revision: &str,
         path: &Path,
     ) -> Result<FileDiff, ExtractError> {
-        self.console.debug(format_args!(
+        trace!(
             "extract file diff: {from_revision}..{to_revision} {}",
             path.display()
-        ));
+        );
         validate_repository_relative_path(path)?;
         let from = CommitHash::resolve(from_revision, &self.project_root, self.console).await?;
         let to = CommitHash::resolve(to_revision, &self.project_root, self.console).await?;
