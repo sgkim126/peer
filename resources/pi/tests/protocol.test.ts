@@ -16,14 +16,14 @@ test("decodes a supported peer run configuration", () => {
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "abc1234",
                 expected_commits: ["abc1234"],
             },
             system_prompt: "Review code.",
             read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_check_result"],
+            terminal_tools: ["submit_quality"],
             max_turns: 4,
         },
     };
@@ -260,14 +260,14 @@ test("rejects empty terminal tools for a review context operation", () => {
     );
 });
 
-test("rejects empty terminal tools for a check operation", () => {
+test("rejects empty terminal tools for a stage operation", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "abc1234",
                 expected_commits: ["abc1234"],
             },
@@ -280,24 +280,24 @@ test("rejects empty terminal tools for a check operation", () => {
 
     assert.throws(
         () => decodeConfigureEnvelope(encoded),
-        /peer check operation requires at least one terminal tool/,
+        /peer stage operation requires at least one terminal tool/,
     );
 });
 
-test("rejects a check operation with an empty target", () => {
+test("rejects a stage operation with an empty target", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "",
                 expected_commits: ["abc1234"],
             },
             system_prompt: "Review code.",
             read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_check_result"],
+            terminal_tools: ["submit_quality"],
             max_turns: 4,
         },
     });
@@ -308,20 +308,20 @@ test("rejects a check operation with an empty target", () => {
     );
 });
 
-test("rejects a check operation without expected commits", () => {
+test("rejects a stage operation without expected commits", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "abc1234",
                 expected_commits: [],
             },
             system_prompt: "Review code.",
             read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_check_result"],
+            terminal_tools: ["submit_quality"],
             max_turns: 4,
         },
     });
@@ -332,20 +332,20 @@ test("rejects a check operation without expected commits", () => {
     );
 });
 
-test("rejects a check operation with an empty expected commit", () => {
+test("rejects a stage operation with an empty expected commit", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "abc1234",
                 expected_commits: [""],
             },
             system_prompt: "Review code.",
             read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_check_result"],
+            terminal_tools: ["submit_quality"],
             max_turns: 4,
         },
     });

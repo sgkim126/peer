@@ -96,24 +96,24 @@ mod tests {
     fn run_config_identifies_its_tool_contract() {
         let config = RunConfig {
             tool_contract_digest: tool_contract_digest(),
-            operation: Operation::Check {
-                check: CheckKind::Quality,
+            operation: Operation::Stage {
+                stage: StageKind::Quality,
                 target: "abc1234".to_string(),
                 expected_commits: vec![CommitHash::new("abc1234").unwrap()],
             },
             system_prompt: "Review code.".to_string(),
             read_tools: vec![ReadTool::GetCommitDiff],
-            terminal_tools: vec![TerminalTool::SubmitCheckResult],
+            terminal_tools: vec![TerminalTool::SubmitQuality],
             max_turns: 4,
         };
 
         let value = serde_json::to_value(&config).unwrap();
-        assert_eq!(value["operation"]["type"], "check");
-        assert_eq!(value["operation"]["check"], "quality");
+        assert_eq!(value["operation"]["type"], "stage");
+        assert_eq!(value["operation"]["stage"], "quality");
         assert_eq!(value["read_tools"], serde_json::json!(["get_commit_diff"]));
         assert_eq!(
             value["terminal_tools"],
-            serde_json::json!(["submit_check_result"])
+            serde_json::json!(["submit_quality"])
         );
         assert_eq!(value["tool_contract_digest"], tool_contract_digest());
     }
@@ -155,10 +155,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_unknown_check_kind() {
+    fn rejects_an_unknown_stage_kind() {
         let error = serde_json::from_value::<Operation>(serde_json::json!({
-            "type": "check",
-            "check": "unknown",
+            "type": "stage",
+            "stage": "unknown",
             "target": "abc1234",
             "expected_commits": ["abc1234"],
         }))
@@ -168,10 +168,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_unknown_check_field() {
+    fn rejects_an_unknown_stage_field() {
         let error = serde_json::from_value::<Operation>(serde_json::json!({
-            "type": "check",
-            "check": "quality",
+            "type": "stage",
+            "stage": "quality",
             "target": "abc1234",
             "expected_commits": ["abc1234"],
             "extra_field": "value",
