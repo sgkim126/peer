@@ -1,3 +1,4 @@
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -12,9 +13,8 @@ pub struct CommitDiff {
 
 impl Extractor {
     pub async fn commit_diff(&self, revision: &str) -> Result<CommitDiff, ExtractError> {
-        self.console
-            .debug(format_args!("extract commit diff: {revision}"));
-        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+        trace!("extract commit diff: {revision}");
+        let hash = CommitHash::resolve(revision, &self.project_root).await?;
 
         let diff = run_git(
             &[
@@ -26,7 +26,6 @@ impl Extractor {
                 hash.as_ref(),
             ],
             &self.project_root,
-            self.console,
         )
         .await?;
 
@@ -42,8 +41,6 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::console::Console;
-
     struct Repo {
         _tmp: TempDir,
         path: std::path::PathBuf,
@@ -53,37 +50,25 @@ mod tests {
         async fn new() -> Self {
             let tmp = tempfile::tempdir().unwrap();
             let path = tmp.path().to_path_buf();
-            let console = Console::default();
-            run_git(&["init"], &path, console).await.unwrap();
-            run_git(
-                &["config", "user.email", "test@example.com"],
-                &path,
-                console,
-            )
-            .await
-            .unwrap();
-            run_git(&["config", "user.name", "Test"], &path, console)
+            run_git(&["init"], &path).await.unwrap();
+            run_git(&["config", "user.email", "test@example.com"], &path)
+                .await
+                .unwrap();
+            run_git(&["config", "user.name", "Test"], &path)
                 .await
                 .unwrap();
             Self { _tmp: tmp, path }
         }
 
         async fn commit(&self, files: &[(&str, &[u8])], message: &str) -> CommitHash {
-            let console = Console::default();
             for (name, content) in files {
                 std::fs::write(self.path.join(name), content).unwrap();
-                run_git(&["add", name], &self.path, console).await.unwrap();
+                run_git(&["add", name], &self.path).await.unwrap();
             }
-            run_git(
-                &["commit", "--no-gpg-sign", "-m", message],
-                &self.path,
-                console,
-            )
-            .await
-            .unwrap();
-            let raw = run_git(&["rev-parse", "HEAD"], &self.path, console)
+            run_git(&["commit", "--no-gpg-sign", "-m", message], &self.path)
                 .await
                 .unwrap();
+            let raw = run_git(&["rev-parse", "HEAD"], &self.path).await.unwrap();
             CommitHash::new(raw.trim()).unwrap()
         }
     }
@@ -94,7 +79,7 @@ mod tests {
         let hash = repo
             .commit(&[("hello.txt", b"hello world\n")], "add hello")
             .await;
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .commit_diff(hash.as_ref())
             .await
             .unwrap();
@@ -106,23 +91,14 @@ mod tests {
         let repo = Repo::new().await;
         repo.commit(&[("f.txt", b"old\n")], "initial").await;
         std::fs::write(repo.path.join("f.txt"), b"new\n").unwrap();
-        let console = Console::default();
-        run_git(&["add", "f.txt"], &repo.path, console)
+        run_git(&["add", "f.txt"], &repo.path).await.unwrap();
+        run_git(&["commit", "--no-gpg-sign", "-m", "modify"], &repo.path)
             .await
             .unwrap();
-        run_git(
-            &["commit", "--no-gpg-sign", "-m", "modify"],
-            &repo.path,
-            console,
-        )
-        .await
-        .unwrap();
-        let raw = run_git(&["rev-parse", "HEAD"], &repo.path, console)
-            .await
-            .unwrap();
+        let raw = run_git(&["rev-parse", "HEAD"], &repo.path).await.unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .commit_diff(hash.as_ref())
             .await
             .unwrap();
@@ -134,11 +110,9 @@ mod tests {
     #[tokio::test]
     async fn commit_diff_fails_for_unknown_hash() {
         let tmp = tempfile::tempdir().unwrap();
-        run_git(&["init"], tmp.path(), Console::default())
-            .await
-            .unwrap();
+        run_git(&["init"], tmp.path()).await.unwrap();
         let hash = "deadbeef";
-        let err = Extractor::new(tmp.path().to_path_buf(), Console::default())
+        let err = Extractor::new(tmp.path().to_path_buf())
             .commit_diff(hash)
             .await
             .unwrap_err();

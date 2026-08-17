@@ -1,3 +1,4 @@
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -17,11 +18,9 @@ impl Extractor {
         from_revision: &str,
         to_revision: &str,
     ) -> Result<RangeDiff, ExtractError> {
-        self.console.debug(format_args!(
-            "extract range diff: {from_revision}..{to_revision}"
-        ));
-        let from = CommitHash::resolve(from_revision, &self.project_root, self.console).await?;
-        let to = CommitHash::resolve(to_revision, &self.project_root, self.console).await?;
+        trace!("extract range diff: {from_revision}..{to_revision}");
+        let from = CommitHash::resolve(from_revision, &self.project_root).await?;
+        let to = CommitHash::resolve(to_revision, &self.project_root).await?;
         let diff = run_git(
             &[
                 "diff",
@@ -33,7 +32,6 @@ impl Extractor {
                 "--",
             ],
             &self.project_root,
-            self.console,
         )
         .await?;
 
@@ -45,50 +43,40 @@ impl Extractor {
 mod tests {
     use super::*;
 
-    use crate::console::Console;
-
     #[tokio::test]
     async fn compares_the_range_endpoints() {
         let directory = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        run_git(&["init"], directory.path(), console).await.unwrap();
+        run_git(&["init"], directory.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
-        run_git(&["config", "user.name", "Test"], directory.path(), console)
+        run_git(&["config", "user.name", "Test"], directory.path())
             .await
             .unwrap();
         std::fs::write(directory.path().join("file.txt"), "before\n").unwrap();
-        run_git(&["add", "file.txt"], directory.path(), console)
+        run_git(&["add", "file.txt"], directory.path())
             .await
             .unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "before"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
-        let from = CommitHash::resolve("HEAD", directory.path(), console)
-            .await
-            .unwrap();
+        let from = CommitHash::resolve("HEAD", directory.path()).await.unwrap();
         std::fs::write(directory.path().join("file.txt"), "after\n").unwrap();
         run_git(
             &["commit", "-am", "after", "--no-gpg-sign"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
-        let to = CommitHash::resolve("HEAD", directory.path(), console)
-            .await
-            .unwrap();
+        let to = CommitHash::resolve("HEAD", directory.path()).await.unwrap();
 
-        let result = Extractor::new(directory.path().to_path_buf(), console)
+        let result = Extractor::new(directory.path().to_path_buf())
             .range_diff(from.as_ref(), "HEAD")
             .await
             .unwrap();
@@ -102,22 +90,19 @@ mod tests {
     #[tokio::test]
     async fn disables_text_conversion() {
         let directory = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        run_git(&["init"], directory.path(), console).await.unwrap();
+        run_git(&["init"], directory.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
-        run_git(&["config", "user.name", "Test"], directory.path(), console)
+        run_git(&["config", "user.name", "Test"], directory.path())
             .await
             .unwrap();
         run_git(
             &["config", "diff.marker.textconv", "sed s/before/CONVERTED/"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
@@ -127,33 +112,25 @@ mod tests {
         )
         .unwrap();
         std::fs::write(directory.path().join("file.txt"), "before\n").unwrap();
-        run_git(
-            &["add", ".gitattributes", "file.txt"],
-            directory.path(),
-            console,
-        )
-        .await
-        .unwrap();
+        run_git(&["add", ".gitattributes", "file.txt"], directory.path())
+            .await
+            .unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "before"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
-        let from = CommitHash::resolve("HEAD", directory.path(), console)
-            .await
-            .unwrap();
+        let from = CommitHash::resolve("HEAD", directory.path()).await.unwrap();
         std::fs::write(directory.path().join("file.txt"), "after\n").unwrap();
         run_git(
             &["commit", "-am", "after", "--no-gpg-sign"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
 
-        let result = Extractor::new(directory.path().to_path_buf(), console)
+        let result = Extractor::new(directory.path().to_path_buf())
             .range_diff(from.as_ref(), "HEAD")
             .await
             .unwrap();

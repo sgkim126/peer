@@ -10,7 +10,6 @@ use crate::cache::CacheStore;
 use crate::check::{self, CheckCommandError, CheckResult};
 use crate::cli::CheckCommand;
 use crate::config::Config;
-use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::git::{CommitHash, GitError, run_git};
 use crate::llm::LlmUsage;
@@ -232,11 +231,10 @@ pub async fn resolve_target(
     target: &str,
     max_commits: u32,
     project_root: &Path,
-    console: Console,
 ) -> Result<ReviewTarget, ReviewTargetError> {
     if !target.contains("..") {
         return Ok(ReviewTarget::Commit(
-            CommitHash::resolve(target, project_root, console).await?,
+            CommitHash::resolve(target, project_root).await?,
         ));
     }
 
@@ -252,8 +250,8 @@ pub async fn resolve_target(
 
     // Resolve both ends explicitly so invalid revisions produce the same useful
     // error as a single-commit target instead of leaking `git rev-list` stderr.
-    let from = CommitHash::resolve(from, project_root, console).await?;
-    let to = CommitHash::resolve(to, project_root, console).await?;
+    let from = CommitHash::resolve(from, project_root).await?;
+    let to = CommitHash::resolve(to, project_root).await?;
     let revision = format!("{from}..{to}");
     let commit_limit = u64::from(max_commits) + 1;
     let output = run_git(
@@ -265,7 +263,6 @@ pub async fn resolve_target(
             &revision,
         ],
         project_root,
-        console,
     )
     .await?;
     let commits = output
@@ -290,7 +287,6 @@ pub async fn validate_target(
     target: &ReviewTarget,
     max_commits: u32,
     project_root: &Path,
-    console: Console,
 ) -> Result<(), ReviewTargetError> {
     let commits = match target {
         ReviewTarget::Commit(commit) => std::slice::from_ref(commit),
@@ -308,7 +304,6 @@ pub async fn validate_target(
         let output = run_git(
             &["rev-list", "--parents", "-n", "1", commit.as_ref()],
             project_root,
-            console,
         )
         .await?;
         if output.split_whitespace().count() > 2 {
@@ -361,7 +356,6 @@ fn append_commit_checks(checks: &mut Vec<ReviewCheck>, commit: &CommitHash) {
 
 pub async fn run(
     plan: ReviewPlan,
-    console: Console,
     config: &Config,
     project_root: PathBuf,
     cache: &CacheStore,
@@ -391,7 +385,6 @@ pub async fn run(
     for review_check in planned_checks {
         let command = CheckCommand::from(review_check.clone());
         match check::handler(
-            console,
             command,
             config,
             project_root.clone(),
@@ -486,16 +479,11 @@ mod tests {
         async fn new() -> Self {
             let tmp = tempfile::tempdir().unwrap();
             let path = tmp.path().to_path_buf();
-            let console = Console::default();
-            run_git(&["init"], &path, console).await.unwrap();
-            run_git(
-                &["config", "user.email", "test@example.com"],
-                &path,
-                console,
-            )
-            .await
-            .unwrap();
-            run_git(&["config", "user.name", "Test"], &path, console)
+            run_git(&["init"], &path).await.unwrap();
+            run_git(&["config", "user.email", "test@example.com"], &path)
+                .await
+                .unwrap();
+            run_git(&["config", "user.name", "Test"], &path)
                 .await
                 .unwrap();
             Self { _tmp: tmp, path }
@@ -503,19 +491,11 @@ mod tests {
 
         async fn commit(&self, file: &str, message: &str) -> CommitHash {
             std::fs::write(self.path.join(file), message).unwrap();
-            run_git(&["add", file], &self.path, Console::default())
+            run_git(&["add", file], &self.path).await.unwrap();
+            run_git(&["commit", "--no-gpg-sign", "-m", message], &self.path)
                 .await
                 .unwrap();
-            run_git(
-                &["commit", "--no-gpg-sign", "-m", message],
-                &self.path,
-                Console::default(),
-            )
-            .await
-            .unwrap();
-            CommitHash::resolve("HEAD", &self.path, Console::default())
-                .await
-                .unwrap()
+            CommitHash::resolve("HEAD", &self.path).await.unwrap()
         }
     }
 
@@ -572,9 +552,7 @@ mod tests {
         let target = format!("{base}..HEAD");
 
         assert_eq!(
-            resolve_target(&target, 10, &repo.path, Console::default())
-                .await
-                .unwrap(),
+            resolve_target(&target, 10, &repo.path).await.unwrap(),
             ReviewTarget::Range {
                 from: base,
                 to: third.clone(),
@@ -589,11 +567,11 @@ mod tests {
         repo.commit("a.txt", "first").await;
 
         assert_matches!(
-            resolve_target("HEAD...HEAD", 10, &repo.path, Console::default()).await,
+            resolve_target("HEAD...HEAD", 10, &repo.path).await,
             Err(ReviewTargetError::InvalidRange(_))
         );
         assert_matches!(
-            resolve_target("HEAD..HEAD", 10, &repo.path, Console::default()).await,
+            resolve_target("HEAD..HEAD", 10, &repo.path).await,
             Err(ReviewTargetError::EmptyRange(_))
         );
     }
@@ -607,7 +585,7 @@ mod tests {
         let target = format!("{base}..HEAD");
 
         assert_matches!(
-            resolve_target(&target, 1, &repo.path, Console::default()).await,
+            resolve_target(&target, 1, &repo.path).await,
             Err(ReviewTargetError::TooManyCommits {
                 actual: 2,
                 maximum: 1
@@ -627,7 +605,7 @@ mod tests {
         };
 
         assert_matches!(
-            validate_target(&target, 1, &repo.path, Console::default()).await,
+            validate_target(&target, 1, &repo.path).await,
             Err(ReviewTargetError::TooManyCommits {
                 actual: 2,
                 maximum: 1

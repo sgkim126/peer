@@ -1,10 +1,10 @@
 use std::fmt;
 
+use log::debug;
 use serde::Deserialize;
 
 use crate::cache::{CacheKey, CacheKeyError, CacheStore};
 use crate::config::Config;
-use crate::console::Console;
 use crate::llm::LlmUsage;
 use crate::pi::{
     ModelRef, ModelRefError, Operation, PiRunFailure, PiRunRequest, PiRuntime, RunConfig,
@@ -45,7 +45,6 @@ pub async fn compress_review_context(
     cache: &CacheStore,
     runtime: &mut PiRuntime,
     resume: bool,
-    console: Console,
 ) -> Result<ContextCompression, ContextCompressionError> {
     if context.is_empty() {
         return Ok(ContextCompression {
@@ -60,9 +59,7 @@ pub async fn compress_review_context(
         match CacheKey::from_params(CONTEXT_CACHE_NAMESPACE, provider, model_name, context) {
             Ok(key) => Some(key),
             Err(error) => {
-                console.debug(format_args!(
-                    "cannot build review context cache key: {error:?}"
-                ));
+                debug!("cannot build review context cache key: {error:?}");
                 None
             }
         };
@@ -75,15 +72,11 @@ pub async fn compress_review_context(
                         usage: None,
                     });
                 }
-                Err(error) => console.debug(format_args!(
-                    "ignoring invalid cached review context digest: {error:?}"
-                )),
+                Err(error) => debug!("ignoring invalid cached review context digest: {error:?}"),
             },
             Ok(None) => {}
             Err(error) => {
-                console.debug(format_args!(
-                    "ignoring review context cache read error: {error:?}"
-                ));
+                debug!("ignoring review context cache read error: {error:?}");
             }
         }
     }
@@ -116,9 +109,7 @@ pub async fn compress_review_context(
     if let Some(key) = &cache_key
         && let Err(error) = cache.write_json(key, &digest)
     {
-        console.debug(format_args!(
-            "ignoring review context cache write error: {error:?}"
-        ));
+        debug!("ignoring review context cache write error: {error:?}");
     }
     Ok(ContextCompression {
         digest,
@@ -262,8 +253,8 @@ mod tests {
     async fn skips_empty_context_without_starting_pi() {
         let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
         let directory = tempfile::tempdir().unwrap();
-        let cache = CacheStore::new(directory.path(), Console::default());
-        let mut runtime = PiRuntime::new(directory.path(), cache.clone(), Console::default());
+        let cache = CacheStore::new(directory.path());
+        let mut runtime = PiRuntime::new(directory.path(), cache.clone());
 
         let result = compress_review_context(
             &ReviewContext::default(),
@@ -271,7 +262,6 @@ mod tests {
             &cache,
             &mut runtime,
             true,
-            Console::default(),
         )
         .await
         .unwrap();
@@ -284,8 +274,8 @@ mod tests {
     async fn uses_cache_without_starting_pi() {
         let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
         let directory = tempfile::tempdir().unwrap();
-        let cache = CacheStore::new(directory.path(), Console::default());
-        let mut runtime = PiRuntime::new(directory.path(), cache.clone(), Console::default());
+        let cache = CacheStore::new(directory.path());
+        let mut runtime = PiRuntime::new(directory.path(), cache.clone());
         let context = context();
         let key = CacheKey::from_params(
             CONTEXT_CACHE_NAMESPACE,
@@ -305,16 +295,9 @@ mod tests {
         };
         cache.write_json(&key, &digest).unwrap();
 
-        let result = compress_review_context(
-            &context,
-            &config,
-            &cache,
-            &mut runtime,
-            true,
-            Console::default(),
-        )
-        .await
-        .unwrap();
+        let result = compress_review_context(&context, &config, &cache, &mut runtime, true)
+            .await
+            .unwrap();
 
         assert_eq!(result.digest, digest);
         assert_eq!(result.usage, None);

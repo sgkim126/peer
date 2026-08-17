@@ -1,9 +1,9 @@
 use std::fmt;
 
+use log::trace;
 use serde::Deserialize;
 
 use crate::cache::{CacheKey, CacheKeyError};
-use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::LlmUsage;
@@ -20,7 +20,6 @@ pub struct CheckRunConfig {
     pub context_usage: Option<LlmUsage>,
     pub session_key: CacheKey,
     pub resume: bool,
-    pub console: Console,
 }
 
 #[derive(Debug)]
@@ -122,9 +121,7 @@ impl Checker {
     {
         let request = check.request(&self.extractor, review_context).await?;
         let target = check.target();
-        self.config
-            .console
-            .debug(format_args!("check {} for {target}", check.name()));
+        trace!("check {} for {target}", check.name());
         let result = runtime
             .run(PiRunRequest {
                 session_key: self.config.session_key.clone(),

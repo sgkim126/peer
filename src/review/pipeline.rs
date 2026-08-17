@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::cache::CacheStore;
 use crate::config::Config;
-use crate::console::Console;
 use crate::context::ReviewContext;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
@@ -156,15 +155,13 @@ impl From<ModelRefError> for PipelineRunError {
 pub async fn run_pipeline(
     target: &ReviewTarget,
     context: ReviewContext,
-    console: Console,
     config: &Config,
     project_root: PathBuf,
     cache: &CacheStore,
     runtime: &mut PiRuntime,
     resume: bool,
 ) -> Result<PipelineReviewResult, PipelineRunError> {
-    let input =
-        ReviewInput::collect(target, context, &Extractor::new(project_root, console)).await?;
+    let input = ReviewInput::collect(target, context, &Extractor::new(project_root)).await?;
     let model = ModelRef::try_new(
         config.llm.default_provider.as_str(),
         config.llm.default_model.as_str(),
@@ -185,17 +182,7 @@ pub async fn run_pipeline(
     };
 
     let context_stage = ReviewContextStage::new(input.clone());
-    let context_run = match execute(
-        cache,
-        runtime,
-        config,
-        &model,
-        resume,
-        console,
-        &context_stage,
-    )
-    .await
-    {
+    let context_run = match execute(cache, runtime, config, &model, resume, &context_stage).await {
         Ok(run) => run,
         Err(error) => {
             push_error(&mut result, &context_stage, error);
@@ -213,17 +200,7 @@ pub async fn run_pipeline(
         .push(PipelineStageResult::ReviewContext(context_run));
 
     let scope_stage = CommitScopeStage::new(input.clone(), context_report.clone());
-    let scope_run = match execute(
-        cache,
-        runtime,
-        config,
-        &model,
-        resume,
-        console,
-        &scope_stage,
-    )
-    .await
-    {
+    let scope_run = match execute(cache, runtime, config, &model, resume, &scope_stage).await {
         Ok(run) => run,
         Err(error) => {
             push_error(&mut result, &scope_stage, error);
@@ -242,16 +219,7 @@ pub async fn run_pipeline(
 
     let sequence_stage =
         CommitSequenceStage::new(input.clone(), context_report.clone(), scope_report.clone());
-    let sequence_run = match execute(
-        cache,
-        runtime,
-        config,
-        &model,
-        resume,
-        console,
-        &sequence_stage,
-    )
-    .await
+    let sequence_run = match execute(cache, runtime, config, &model, resume, &sequence_stage).await
     {
         Ok(run) => run,
         Err(error) => {
@@ -278,7 +246,7 @@ pub async fn run_pipeline(
             scope_report.clone(),
             sequence_report.clone(),
         );
-        match execute(cache, runtime, config, &model, resume, console, &stage).await {
+        match execute(cache, runtime, config, &model, resume, &stage).await {
             Ok(run) => result.stages.push(PipelineStageResult::Size(run)),
             Err(error) => push_error(&mut result, &stage, error),
         }
@@ -290,7 +258,7 @@ pub async fn run_pipeline(
             scope_report.clone(),
             sequence_report.clone(),
         );
-        match execute(cache, runtime, config, &model, resume, console, &stage).await {
+        match execute(cache, runtime, config, &model, resume, &stage).await {
             Ok(run) => result.stages.push(PipelineStageResult::Intent(run)),
             Err(error) => push_error(&mut result, &stage, error),
         }
@@ -303,7 +271,7 @@ pub async fn run_pipeline(
             scope_report.clone(),
             sequence_report.clone(),
         );
-        match execute(cache, runtime, config, &model, resume, console, &stage).await {
+        match execute(cache, runtime, config, &model, resume, &stage).await {
             Ok(run) => result.stages.push(PipelineStageResult::Quality(run)),
             Err(error) => push_error(&mut result, &stage, error),
         }
@@ -316,7 +284,7 @@ pub async fn run_pipeline(
             scope_report.clone(),
             sequence_report.clone(),
         );
-        match execute(cache, runtime, config, &model, resume, console, &stage).await {
+        match execute(cache, runtime, config, &model, resume, &stage).await {
             Ok(run) => result.stages.push(PipelineStageResult::Security(run)),
             Err(error) => push_error(&mut result, &stage, error),
         }
@@ -331,7 +299,6 @@ async fn execute<C>(
     config: &Config,
     model: &ModelRef,
     resume: bool,
-    console: Console,
     stage: &C,
 ) -> Result<StageRun<C::Report>, StageRunError>
 where
@@ -345,7 +312,6 @@ where
             model: model.clone(),
             max_iterations: config.max_iterations_for(stage.kind().as_str()).get(),
             resume,
-            console,
         },
     )
     .await

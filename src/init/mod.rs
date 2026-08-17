@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use crate::config::DEFAULT_CONFIG_TOML;
-use crate::console::Console;
 use crate::error::PeerError;
 use crate::git::run_git;
 
@@ -10,13 +9,13 @@ const PEER_GITIGNORE: &str =
 
 /// Initialise the `.peer/` directory in the current git repository root.
 /// Returns the current working directory on success.
-pub async fn handler(console: Console) -> Result<PathBuf, PeerError> {
+pub async fn handler() -> Result<PathBuf, PeerError> {
     let cwd = std::env::current_dir().map_err(|e| PeerError::InvalidConfig {
         message: "cannot determine current directory".into(),
         source: Some(Box::new(e)),
     })?;
 
-    run_git(&["--version"], &cwd, console).await?;
+    run_git(&["--version"], &cwd).await?;
 
     if !cwd.join(".git").exists() {
         return Err(PeerError::InvalidConfig {

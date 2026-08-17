@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -21,13 +22,13 @@ impl Extractor {
         to_revision: &str,
         path: &Path,
     ) -> Result<FileDiff, ExtractError> {
-        self.console.debug(format_args!(
+        trace!(
             "extract file diff: {from_revision}..{to_revision} {}",
             path.display()
-        ));
+        );
         validate_repository_relative_path(path)?;
-        let from = CommitHash::resolve(from_revision, &self.project_root, self.console).await?;
-        let to = CommitHash::resolve(to_revision, &self.project_root, self.console).await?;
+        let from = CommitHash::resolve(from_revision, &self.project_root).await?;
+        let to = CommitHash::resolve(to_revision, &self.project_root).await?;
         let path = path
             .to_str()
             .expect("repository-relative path was validated as UTF-8");
@@ -42,7 +43,6 @@ impl Extractor {
                 path,
             ],
             &self.project_root,
-            self.console,
         )
         .await?;
 
@@ -74,8 +74,6 @@ mod tests {
     use super::*;
 
     use std::assert_matches;
-
-    use crate::console::Console;
 
     #[test]
     fn rejects_empty_path() {
@@ -114,45 +112,37 @@ mod tests {
     #[tokio::test]
     async fn compares_two_revisions_for_one_path() {
         let repository = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        run_git(&["init"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["init"], repository.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
-        run_git(&["config", "user.name", "Test"], repository.path(), console)
+        run_git(&["config", "user.name", "Test"], repository.path())
             .await
             .unwrap();
         std::fs::write(repository.path().join("file.txt"), "old\n").unwrap();
         std::fs::write(repository.path().join("other.txt"), "unchanged\n").unwrap();
-        run_git(&["add", "."], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["add", "."], repository.path()).await.unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "initial"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
         std::fs::write(repository.path().join("file.txt"), "new\n").unwrap();
-        run_git(&["add", "file.txt"], repository.path(), console)
+        run_git(&["add", "file.txt"], repository.path())
             .await
             .unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "update file"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
 
-        let result = Extractor::new(repository.path().to_path_buf(), console)
+        let result = Extractor::new(repository.path().to_path_buf())
             .file_diff("HEAD~1", "HEAD", Path::new("file.txt"))
             .await
             .unwrap();
@@ -166,46 +156,36 @@ mod tests {
     #[tokio::test]
     async fn treats_the_requested_path_as_a_literal_pathspec() {
         let repository = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        run_git(&["init"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["init"], repository.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
-        run_git(&["config", "user.name", "Test"], repository.path(), console)
+        run_git(&["config", "user.name", "Test"], repository.path())
             .await
             .unwrap();
         std::fs::write(repository.path().join("*.txt"), "literal old\n").unwrap();
         std::fs::write(repository.path().join("other.txt"), "other old\n").unwrap();
-        run_git(&["add", "-A"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["add", "-A"], repository.path()).await.unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "initial"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
         std::fs::write(repository.path().join("*.txt"), "literal new\n").unwrap();
         std::fs::write(repository.path().join("other.txt"), "other new\n").unwrap();
-        run_git(&["add", "-A"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["add", "-A"], repository.path()).await.unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "update files"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
 
-        let result = Extractor::new(repository.path().to_path_buf(), console)
+        let result = Extractor::new(repository.path().to_path_buf())
             .file_diff("HEAD~1", "HEAD", Path::new("*.txt"))
             .await
             .unwrap();

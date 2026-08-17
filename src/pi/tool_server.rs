@@ -6,13 +6,13 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::task::{JoinHandle, JoinSet};
 
-use crate::console::Console;
 use crate::extract::{ExtractError, Extractor, FileContent};
 
 use super::rpc::{CodecError, read_record, write_record};
@@ -26,9 +26,9 @@ pub struct ToolServer {
 }
 
 impl ToolServer {
-    pub fn start(project_root: &Path, console: Console) -> Result<Self, std::io::Error> {
+    pub fn start(project_root: &Path) -> Result<Self, std::io::Error> {
         let (directory, socket_path, listener) = bind_listener()?;
-        let extractor = Arc::new(Extractor::new(project_root.to_path_buf(), console));
+        let extractor = Arc::new(Extractor::new(project_root.to_path_buf()));
         let task = tokio::spawn(async move {
             let mut connections = JoinSet::new();
             loop {
@@ -36,12 +36,11 @@ impl ToolServer {
                     accepted = listener.accept() => match accepted {
                         Ok((stream, _)) => {
                             let extractor = Arc::clone(&extractor);
-                            let console = console;
                             connections.spawn(async move {
                                 if let Err(error) = handle_connection(stream, &extractor).await {
-                                    console.debug(format_args!(
+                                    warn!(
                                         "peer tool connection failed: {error}"
-                                    ));
+                                    );
                                 }
                             });
                         }
@@ -393,7 +392,7 @@ mod tests {
 
     async fn send_raw_request(request: Vec<u8>) -> ToolResponse {
         let repository = tempfile::tempdir().unwrap();
-        let server = ToolServer::start(repository.path(), Console::default()).unwrap();
+        let server = ToolServer::start(repository.path()).unwrap();
         let stream = UnixStream::connect(server.socket_path()).await.unwrap();
         let (reader, mut writer) = stream.into_split();
         let write = tokio::spawn(async move { writer.write_all(&request).await });
@@ -406,33 +405,28 @@ mod tests {
     #[tokio::test]
     async fn serves_repository_tools_over_a_unix_socket() {
         let repository = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        run_git(&["init"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["init"], repository.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
-        run_git(&["config", "user.name", "Test"], repository.path(), console)
+        run_git(&["config", "user.name", "Test"], repository.path())
             .await
             .unwrap();
         fs::write(repository.path().join("file.txt"), "content\n").unwrap();
-        run_git(&["add", "file.txt"], repository.path(), console)
+        run_git(&["add", "file.txt"], repository.path())
             .await
             .unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "socket test"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
 
-        let server = ToolServer::start(repository.path(), console).unwrap();
+        let server = ToolServer::start(repository.path()).unwrap();
         let stream = UnixStream::connect(server.socket_path()).await.unwrap();
         let (reader, mut writer) = stream.into_split();
         write_record(
@@ -461,7 +455,7 @@ mod tests {
     #[tokio::test]
     async fn serves_overlapping_connections() {
         let repository = tempfile::tempdir().unwrap();
-        let server = ToolServer::start(repository.path(), Console::default()).unwrap();
+        let server = ToolServer::start(repository.path()).unwrap();
         let first_stream = UnixStream::connect(server.socket_path()).await.unwrap();
         let second_stream = UnixStream::connect(server.socket_path()).await.unwrap();
         let (first_reader, mut first_writer) = first_stream.into_split();
@@ -506,7 +500,7 @@ mod tests {
     #[tokio::test]
     async fn removes_socket_and_directory_when_dropped() {
         let repository = tempfile::tempdir().unwrap();
-        let server = ToolServer::start(repository.path(), Console::default()).unwrap();
+        let server = ToolServer::start(repository.path()).unwrap();
         let socket_path = server.socket_path().to_path_buf();
         let directory = socket_path.parent().unwrap().to_path_buf();
 
@@ -521,7 +515,7 @@ mod tests {
 
     #[tokio::test]
     async fn reports_unknown_tools() {
-        let extractor = Extractor::new(PathBuf::from("/unused"), Console::default());
+        let extractor = Extractor::new(PathBuf::from("/unused"));
         let error = execute_tool(&extractor, "unknown", json!({}))
             .await
             .unwrap_err();
@@ -550,7 +544,7 @@ mod tests {
         let (server_stream, client_stream) = UnixStream::pair().unwrap();
         let (reader, mut writer) = client_stream.into_split();
         let server = tokio::spawn(async move {
-            let extractor = Extractor::new(PathBuf::from("/unused"), Console::default());
+            let extractor = Extractor::new(PathBuf::from("/unused"));
             handle_connection(server_stream, &extractor).await
         });
         writer.write_all(b"{invalid}\n").await.unwrap();
@@ -566,7 +560,7 @@ mod tests {
     async fn propagates_eof_before_a_request() {
         let (server_stream, mut client_stream) = UnixStream::pair().unwrap();
         let server = tokio::spawn(async move {
-            let extractor = Extractor::new(PathBuf::from("/unused"), Console::default());
+            let extractor = Extractor::new(PathBuf::from("/unused"));
             handle_connection(server_stream, &extractor).await
         });
         client_stream.shutdown().await.unwrap();
@@ -615,7 +609,7 @@ mod tests {
     #[tokio::test]
     async fn rejects_trailing_data_after_a_request() {
         let repository = tempfile::tempdir().unwrap();
-        let server = ToolServer::start(repository.path(), Console::default()).unwrap();
+        let server = ToolServer::start(repository.path()).unwrap();
         let stream = UnixStream::connect(server.socket_path()).await.unwrap();
         let (reader, mut writer) = stream.into_split();
         let mut request = serde_json::to_vec(&json!({

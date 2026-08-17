@@ -1,3 +1,4 @@
+use log::trace;
 use serde::{Deserialize, Serialize};
 
 use crate::git::{CommitHash, run_git};
@@ -14,8 +15,7 @@ pub struct CommitList {
 
 impl Extractor {
     pub async fn commit_list(&self, range: &str) -> Result<CommitList, ExtractError> {
-        self.console
-            .debug(format_args!("extract commit list: {range}"));
+        trace!("extract commit list: {range}");
         if range.contains("...") || !range.contains("..") {
             return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
         }
@@ -25,14 +25,13 @@ impl Extractor {
             return Err(ExtractError::InvalidTwoDotRange(range.to_string()));
         }
 
-        let from = CommitHash::resolve(from, &self.project_root, self.console).await?;
-        let to = CommitHash::resolve(to, &self.project_root, self.console).await?;
+        let from = CommitHash::resolve(from, &self.project_root).await?;
+        let to = CommitHash::resolve(to, &self.project_root).await?;
         let resolved_range = format!("{from}..{to}");
 
         let output = run_git(
             &["rev-list", "--reverse", &resolved_range],
             &self.project_root,
-            self.console,
         )
         .await?;
 
@@ -59,7 +58,6 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::console::Console;
     use crate::git::GitError;
 
     struct Repo {
@@ -71,35 +69,23 @@ mod tests {
         async fn new() -> Self {
             let tmp = tempfile::tempdir().unwrap();
             let path = tmp.path().to_path_buf();
-            let console = Console::default();
-            run_git(&["init"], &path, console).await.unwrap();
-            run_git(
-                &["config", "user.email", "test@example.com"],
-                &path,
-                console,
-            )
-            .await
-            .unwrap();
-            run_git(&["config", "user.name", "Test"], &path, console)
+            run_git(&["init"], &path).await.unwrap();
+            run_git(&["config", "user.email", "test@example.com"], &path)
+                .await
+                .unwrap();
+            run_git(&["config", "user.name", "Test"], &path)
                 .await
                 .unwrap();
             Self { _tmp: tmp, path }
         }
 
         async fn commit(&self, file: &str, message: &str) -> CommitHash {
-            let console = Console::default();
             std::fs::write(self.path.join(file), file).unwrap();
-            run_git(&["add", file], &self.path, console).await.unwrap();
-            run_git(
-                &["commit", "--no-gpg-sign", "-m", message],
-                &self.path,
-                console,
-            )
-            .await
-            .unwrap();
-            let raw = run_git(&["rev-parse", "HEAD"], &self.path, console)
+            run_git(&["add", file], &self.path).await.unwrap();
+            run_git(&["commit", "--no-gpg-sign", "-m", message], &self.path)
                 .await
                 .unwrap();
+            let raw = run_git(&["rev-parse", "HEAD"], &self.path).await.unwrap();
             CommitHash::new(raw.trim()).unwrap()
         }
     }
@@ -112,7 +98,7 @@ mod tests {
         let hash3 = repo.commit("c.txt", "third").await;
 
         let range = format!("{hash1}..HEAD");
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .commit_list(&range)
             .await
             .unwrap();
@@ -127,7 +113,7 @@ mod tests {
         repo.commit("b.txt", "second").await;
 
         let range = format!("{hash1}..HEAD");
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .commit_list(&range)
             .await
             .unwrap();
@@ -141,7 +127,7 @@ mod tests {
         let hash1 = repo.commit("a.txt", "first").await;
         repo.commit("b.txt", "second").await;
 
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .commit_list(&format!("{hash1}..HEAD"))
             .await
             .unwrap();
@@ -156,7 +142,7 @@ mod tests {
         let repo = Repo::new().await;
         let hash1 = repo.commit("a.txt", "first").await;
         let range = format!("{hash1}...HEAD");
-        let err = Extractor::new(repo.path.clone(), Console::default())
+        let err = Extractor::new(repo.path.clone())
             .commit_list(&range)
             .await
             .unwrap_err();
@@ -167,7 +153,7 @@ mod tests {
     async fn commit_list_fails_for_non_range() {
         let repo = Repo::new().await;
         let hash1 = repo.commit("a.txt", "first").await;
-        let err = Extractor::new(repo.path.clone(), Console::default())
+        let err = Extractor::new(repo.path.clone())
             .commit_list(hash1.as_ref())
             .await
             .unwrap_err();
@@ -180,7 +166,7 @@ mod tests {
         repo.commit("a.txt", "first").await;
         let from = "deadbeef1234567";
         let range = format!("{from}..HEAD");
-        let err = Extractor::new(repo.path.clone(), Console::default())
+        let err = Extractor::new(repo.path.clone())
             .commit_list(&range)
             .await
             .unwrap_err();
@@ -193,7 +179,7 @@ mod tests {
         let hash1 = repo.commit("a.txt", "first").await;
         let to = "deadbeef1234567";
         let range = format!("{hash1}..{to}");
-        let err = Extractor::new(repo.path.clone(), Console::default())
+        let err = Extractor::new(repo.path.clone())
             .commit_list(&range)
             .await
             .unwrap_err();

@@ -78,23 +78,6 @@ fn prune_all_removes_every_cache_entry() {
 
 #[cfg(unix)]
 #[test]
-fn debug_logs_escape_control_characters_in_paths() {
-    let (_directory, cache, nested) = project();
-    std::fs::write(cache.join("evil\n[verbose] forged-message"), "cached").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_peer"))
-        .args(["--debug", "prune", "--all"])
-        .current_dir(nested)
-        .output()
-        .unwrap();
-    let stderr = String::from_utf8(output.stderr).unwrap();
-
-    assert!(output.status.success());
-    assert!(stderr.contains(r#"evil\n[verbose] forged-message"#));
-    assert!(!stderr.contains("\n[verbose] forged-message"));
-}
-
-#[cfg(unix)]
-#[test]
 fn prune_does_not_follow_a_symbolic_link_peer_directory() {
     use std::os::unix::fs::symlink;
 

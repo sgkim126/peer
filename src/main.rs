@@ -2,7 +2,6 @@ mod cache;
 mod check;
 mod cli;
 mod config;
-mod console;
 mod context;
 mod error;
 mod extract;
@@ -18,28 +17,28 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::Parser;
+use log::{debug, info};
 
 use crate::cache::CacheStore;
 use crate::cli::{Cli, Command};
 use crate::config::{Config, discover, discover_peer_root};
-use crate::console::Console;
 use crate::error::PeerError;
 use crate::pi::{ModelRef, PiRuntime};
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    init_logging();
     let cli = Cli::parse();
-    let console = Console::from_cli(&cli);
 
     match cli.command {
-        Command::Init => match init::handler(console).await {
+        Command::Init => match init::handler().await {
             Ok(path) => {
                 println!("initialized peer in {}", path.display());
                 ExitCode::SUCCESS
             }
             Err(err) => {
                 eprintln!("error: {err}");
-                console.debug(format_args!("{err:?}"));
+                debug!("{err:?}");
                 ExitCode::FAILURE
             }
         },
@@ -48,7 +47,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(error) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -56,11 +55,11 @@ async fn main() -> ExitCode {
                 Ok(project_root) => project_root,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
-            let cache = CacheStore::new(project_root.join(".peer/cache"), console);
+            let cache = CacheStore::new(project_root.join(".peer/cache"));
             match cache.prune(all) {
                 Ok(removed) => {
                     if all {
@@ -72,7 +71,7 @@ async fn main() -> ExitCode {
                 }
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     ExitCode::FAILURE
                 }
             }
@@ -103,7 +102,7 @@ async fn main() -> ExitCode {
                 Ok(context) => context,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -111,7 +110,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(error) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -119,49 +118,43 @@ async fn main() -> ExitCode {
                 Ok(discovered) => discovered,
                 Err(error) => {
                     eprintln!("{error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
             if let Err(error) = apply_llm_overrides(&mut config, provider, model) {
                 eprintln!("error: {error}");
-                console.debug(format_args!("{error:?}"));
+                debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
             let target = match review::resolve_target(
                 &target,
                 config.review.max_commits.get(),
                 &project_root,
-                console,
             )
             .await
             {
                 Ok(target) => target,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
-            if let Err(error) = review::validate_target(
-                &target,
-                config.review.max_commits.get(),
-                &project_root,
-                console,
-            )
-            .await
+            if let Err(error) =
+                review::validate_target(&target, config.review.max_commits.get(), &project_root)
+                    .await
             {
                 eprintln!("error: {error}");
-                console.debug(format_args!("{error:?}"));
+                debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
 
-            let cache = CacheStore::new(project_root.join(".peer/cache"), console);
-            let mut pi = PiRuntime::new(&project_root, cache.clone(), console);
+            let cache = CacheStore::new(project_root.join(".peer/cache"));
+            let mut pi = PiRuntime::new(&project_root, cache.clone());
             let result = match review::run_pipeline(
                 &target,
                 review_context,
-                console,
                 &config,
                 project_root,
                 &cache,
@@ -173,12 +166,12 @@ async fn main() -> ExitCode {
                 Ok(result) => result,
                 Err(error) => {
                     eprintln!("error: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
             for stage in &result.stages {
-                console.verbose(format_args!(
+                info!(
                     "{} stage for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
                     stage.stage().as_str(),
                     stage.target(),
@@ -186,11 +179,11 @@ async fn main() -> ExitCode {
                     stage.usage().cost_usd,
                     stage.usage().input_tokens,
                     stage.usage().output_tokens,
-                ));
+                );
             }
             for error in &result.errors {
                 if let Some(usage) = &error.usage {
-                    console.verbose(format_args!(
+                    info!(
                         "{} stage for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
                         error.stage.as_str(),
                         error.target,
@@ -198,10 +191,10 @@ async fn main() -> ExitCode {
                         usage.cost_usd,
                         usage.input_tokens,
                         usage.output_tokens,
-                    ));
+                    );
                 }
                 eprintln!("error: {error}");
-                console.debug(format_args!("{error:?}"));
+                debug!("{error:?}");
             }
             let is_success = result.is_success();
 
@@ -216,7 +209,7 @@ async fn main() -> ExitCode {
                 }
                 Err(error) => {
                     eprintln!("failed to render review output: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     ExitCode::FAILURE
                 }
             }
@@ -226,7 +219,7 @@ async fn main() -> ExitCode {
                 Ok(cwd) => cwd,
                 Err(err) => {
                     eprintln!("cannot determine current directory.");
-                    console.debug(format_args!("{err:?}"));
+                    debug!("{err:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -234,12 +227,12 @@ async fn main() -> ExitCode {
                 Ok((config, project_root)) => (config, project_root),
                 Err(err) => {
                     eprintln!("{err}");
-                    console.debug(format_args!("{err:?}"));
+                    debug!("{err:?}");
                     return ExitCode::FAILURE;
                 }
             };
 
-            match extract::handler(console, &command, config, project_root).await {
+            match extract::handler(&command, config, project_root).await {
                 Ok(data) => {
                     println!(
                         "{}",
@@ -250,7 +243,7 @@ async fn main() -> ExitCode {
                 }
                 Err(err) => {
                     eprintln!("error: {err}");
-                    console.debug(format_args!("{err:?}"));
+                    debug!("{err:?}");
                     ExitCode::FAILURE
                 }
             }
@@ -266,7 +259,7 @@ async fn main() -> ExitCode {
             let mut input = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut input) {
                 eprintln!("failed to read render input: {error}");
-                console.debug(format_args!("{error:?}"));
+                debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
 
@@ -274,7 +267,7 @@ async fn main() -> ExitCode {
                 Ok(document) => document,
                 Err(error) => {
                     eprintln!("failed to parse render document: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
@@ -285,12 +278,18 @@ async fn main() -> ExitCode {
                 }
                 Err(error) => {
                     eprintln!("failed to render: {error}");
-                    console.debug(format_args!("{error:?}"));
+                    debug!("{error:?}");
                     ExitCode::FAILURE
                 }
             }
         }
     }
+}
+
+fn init_logging() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .target(env_logger::Target::Stderr)
+        .init();
 }
 
 fn apply_llm_overrides(

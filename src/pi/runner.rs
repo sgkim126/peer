@@ -4,13 +4,13 @@ use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+use log::warn;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncWrite, BufReader};
 use tokio::process::Child;
 
 use crate::cache::{CacheKey, CacheReadError, CacheStore, CacheWriteError};
-use crate::console::Console;
 use crate::llm::{LlmModelUsage, LlmUsage};
 
 use super::assets::AssetError;
@@ -211,17 +211,11 @@ pub struct PiRunner {
     client: ProcessClient,
     cache: CacheStore,
     version_root: PathBuf,
-    console: Console,
     _tool_server: ToolServer,
 }
 
 impl PiRunner {
-    pub fn new(
-        process: PiProcess,
-        tool_server: ToolServer,
-        cache: CacheStore,
-        console: Console,
-    ) -> Self {
+    pub fn new(process: PiProcess, tool_server: ToolServer, cache: CacheStore) -> Self {
         let (child, stdin, stdout) = process.into_parts();
         let version_root = cache.version_root();
         Self {
@@ -229,7 +223,6 @@ impl PiRunner {
             client: RpcClient::new(BufReader::new(stdout), stdin),
             cache,
             version_root,
-            console,
             _tool_server: tool_server,
         }
     }
@@ -250,9 +243,7 @@ impl PiRunner {
                     let mut failed = record;
                     failed.status = error.session_status();
                     if let Err(write_error) = self.write_session(&request.session_key, &failed) {
-                        self.console.debug(format_args!(
-                            "cannot persist Pi session state: {write_error}"
-                        ));
+                        warn!("cannot persist Pi session state: {write_error}");
                     }
                     return Err(error.into());
                 }
@@ -280,8 +271,7 @@ impl PiRunner {
             |_| SessionStatus::Completed,
         );
         if let Err(error) = self.write_session(&request.session_key, &record) {
-            self.console
-                .debug(format_args!("cannot persist Pi session state: {error}"));
+            warn!("cannot persist Pi session state: {error}");
         }
         result
     }
@@ -419,8 +409,7 @@ impl PiRunner {
                 let usage = match self.read_usage(record).await {
                     Ok(usage) => usage,
                     Err(error) => {
-                        self.console
-                            .debug(format_args!("cannot read Pi usage: {error}"));
+                        warn!("cannot read Pi usage: {error}");
                         LlmUsage::zero(request.model.to_string())
                     }
                 };
@@ -435,8 +424,7 @@ impl PiRunner {
                 let usage = match self.read_usage(record).await {
                     Ok(usage) => usage,
                     Err(error) => {
-                        self.console
-                            .debug(format_args!("cannot read Pi usage: {error}"));
+                        warn!("cannot read Pi usage: {error}");
                         LlmUsage::zero(request.model.to_string())
                     }
                 };
