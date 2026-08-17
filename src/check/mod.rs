@@ -17,7 +17,6 @@ use serde::{Deserialize, Serialize};
 use crate::cache::{CacheKey, CacheStore};
 use crate::cli::CheckCommand;
 use crate::config::Config;
-use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
@@ -131,7 +130,6 @@ pub struct CheckOptions<'a> {
 pub async fn resolve_review_head(
     command: &CheckCommand,
     project_root: &Path,
-    console: Console,
 ) -> Result<CommitHash, ExtractError> {
     let revision = match command {
         CheckCommand::Size { revision } => revision,
@@ -149,11 +147,10 @@ pub async fn resolve_review_head(
             to
         }
     };
-    Ok(CommitHash::resolve(revision, project_root, console).await?)
+    Ok(CommitHash::resolve(revision, project_root).await?)
 }
 
 pub async fn handler(
-    console: Console,
     command: CheckCommand,
     config: &Config,
     project_root: PathBuf,
@@ -167,7 +164,7 @@ pub async fn handler(
         review_head,
         runtime,
     } = options;
-    let extractor = Extractor::new(project_root, console);
+    let extractor = Extractor::new(project_root);
 
     let check: Check = match command {
         CheckCommand::Size { revision } => {
@@ -189,16 +186,9 @@ pub async fn handler(
     let provider = &config.llm.default_provider;
     let model_name = &config.llm.default_model;
     let max_iterations = config.max_iterations_for(check.name()).get();
-    let cache_key = check_cache_key(&check, provider, model_name, review_context, console);
+    let cache_key = check_cache_key(&check, provider, model_name, review_context);
     let cached = cache_key.as_ref().and_then(|key| {
-        load_check_cache(
-            cache_store,
-            key,
-            &check,
-            model_name,
-            context_usage.clone(),
-            console,
-        )
+        load_check_cache(cache_store, key, &check, model_name, context_usage.clone())
     });
     if let Some(LoadedCheckCache::Complete(result)) = cached {
         return Ok(*result);
@@ -213,13 +203,12 @@ pub async fn handler(
             context_usage,
             session_key,
             resume,
-            console,
         },
     )
     .run(runtime, &check, review_context)
     .await?;
     if let Some(key) = &cache_key {
-        update_check_cache(cache_store, key, &result, console);
+        update_check_cache(cache_store, key, &result);
     }
     Ok(result)
 }
@@ -319,7 +308,6 @@ fn check_cache_key(
     provider: &str,
     model: &str,
     review_context: &ReviewContextDigest,
-    _console: Console,
 ) -> Option<CacheKey> {
     let params = check_cache_params(check, review_context);
     match CacheKey::from_params(format!("check-{}", check.name()), provider, model, &params) {
@@ -351,7 +339,6 @@ fn load_check_cache(
     check: &Check,
     model: &str,
     context_usage: Option<LlmUsage>,
-    _console: Console,
 ) -> Option<LoadedCheckCache> {
     let cached = match store.read_json::<CachedCheck>(key) {
         Ok(Some(cached)) => cached,
@@ -397,7 +384,7 @@ fn load_check_cache(
     })))
 }
 
-fn update_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult, _console: Console) {
+fn update_check_cache(store: &CacheStore, key: &CacheKey, result: &CheckResult) {
     if result.error.is_some() {
         debug!("not caching incomplete check result");
         return;
@@ -500,17 +487,16 @@ mod tests {
     #[test]
     fn cache_update_stores_only_complete_results() {
         let directory = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        let cache_store = CacheStore::new(directory.path(), console);
+        let cache_store = CacheStore::new(directory.path());
         let cache_key =
             CacheKey::from_params("check-size", "test", "test-model", &"abc1234").unwrap();
         let incomplete = result(Some(CheckError::Exhausted {
             reason: "exhausted".to_string(),
         }));
-        update_check_cache(&cache_store, &cache_key, &incomplete, console);
+        update_check_cache(&cache_store, &cache_key, &incomplete);
         assert_matches!(cache_store.read_json::<CachedCheck>(&cache_key), Ok(None),);
 
-        update_check_cache(&cache_store, &cache_key, &result(None), console);
+        update_check_cache(&cache_store, &cache_key, &result(None));
         let cached = cache_store
             .read_json::<CachedCheck>(&cache_key)
             .unwrap()
@@ -528,28 +514,21 @@ mod tests {
     #[tokio::test]
     async fn cached_checks_do_not_start_pi() {
         let directory = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        crate::git::run_git(&["init"], directory.path(), console)
+        crate::git::run_git(&["init"], directory.path())
             .await
             .unwrap();
         crate::git::run_git(
             &["config", "user.email", "test@example.com"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
-        crate::git::run_git(
-            &["config", "user.name", "Test User"],
-            directory.path(),
-            console,
-        )
-        .await
-        .unwrap();
+        crate::git::run_git(&["config", "user.name", "Test User"], directory.path())
+            .await
+            .unwrap();
         crate::git::run_git(
             &["commit", "--allow-empty", "-m", "cached commit"],
             directory.path(),
-            console,
         )
         .await
         .unwrap();
@@ -557,18 +536,12 @@ mod tests {
         let config: Config = toml::from_str(crate::config::DEFAULT_CONFIG_TOML).unwrap();
         let provider_name = config.llm.default_provider.clone();
         let model_name = config.llm.default_model.clone();
-        let extractor = Extractor::new(directory.path().to_path_buf(), console);
+        let extractor = Extractor::new(directory.path().to_path_buf());
         let check = Check::Size(SizeCheck::try_new("HEAD", &extractor).await.unwrap());
         let review_context = ReviewContextDigest::default();
-        let cache_store = CacheStore::new(directory.path().join(".peer/cache"), console);
-        let cache_key = check_cache_key(
-            &check,
-            &provider_name,
-            &model_name,
-            &review_context,
-            console,
-        )
-        .unwrap();
+        let cache_store = CacheStore::new(directory.path().join(".peer/cache"));
+        let cache_key =
+            check_cache_key(&check, &provider_name, &model_name, &review_context).unwrap();
         cache_store
             .write_json(
                 &cache_key,
@@ -580,9 +553,8 @@ mod tests {
             )
             .unwrap();
 
-        let mut runtime = PiRuntime::new(directory.path(), cache_store.clone(), console);
+        let mut runtime = PiRuntime::new(directory.path(), cache_store.clone());
         let result = handler(
-            console,
             CheckCommand::Size {
                 revision: "HEAD".to_string(),
             },
@@ -593,9 +565,7 @@ mod tests {
             CheckOptions {
                 context_usage: None,
                 resume: true,
-                review_head: CommitHash::resolve("HEAD", directory.path(), console)
-                    .await
-                    .unwrap(),
+                review_head: CommitHash::resolve("HEAD", directory.path()).await.unwrap(),
                 runtime: &mut runtime,
             },
         )

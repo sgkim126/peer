@@ -3,7 +3,6 @@ use std::collections::HashSet;
 use log::{debug, trace};
 use serde::{Deserialize, Serialize};
 
-use crate::console::Console;
 use crate::git::{CommitHash, run_git};
 
 use super::{ExtractError, Extractor};
@@ -42,7 +41,7 @@ struct RawFileEntry {
 }
 
 /// Parses `git diff-tree --name-status -z` output.
-fn parse_name_status(output: &str, _console: Console) -> Result<Vec<RawFileEntry>, ExtractError> {
+fn parse_name_status(output: &str) -> Result<Vec<RawFileEntry>, ExtractError> {
     let mut entries = Vec::new();
     let mut fields = output.split('\0').filter(|field| !field.is_empty());
     while let Some(code) = fields.next() {
@@ -102,7 +101,7 @@ fn parse_name_status(output: &str, _console: Console) -> Result<Vec<RawFileEntry
 }
 
 /// Parses `git diff-tree --numstat -z` output.
-fn parse_binary_paths(numstat: &str, _console: Console) -> Result<HashSet<&str>, ExtractError> {
+fn parse_binary_paths(numstat: &str) -> Result<HashSet<&str>, ExtractError> {
     let mut binary = HashSet::new();
     for record in numstat.split('\0') {
         if record.is_empty() {
@@ -134,7 +133,7 @@ fn parse_binary_paths(numstat: &str, _console: Console) -> Result<HashSet<&str>,
 impl Extractor {
     pub async fn commit_files(&self, revision: &str) -> Result<CommitFiles, ExtractError> {
         trace!("extract commit files: {revision}");
-        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+        let hash = CommitHash::resolve(revision, &self.project_root).await?;
 
         let name_status_out = run_git(
             &[
@@ -149,7 +148,6 @@ impl Extractor {
                 hash.as_ref(),
             ],
             &self.project_root,
-            self.console,
         )
         .await?;
 
@@ -169,12 +167,11 @@ impl Extractor {
                 hash.as_ref(),
             ],
             &self.project_root,
-            self.console,
         )
         .await?;
 
-        let binary_paths = parse_binary_paths(&numstat_out, self.console)?;
-        let raw_entries = parse_name_status(&name_status_out, self.console)?;
+        let binary_paths = parse_binary_paths(&numstat_out)?;
+        let raw_entries = parse_name_status(&name_status_out)?;
 
         let files = raw_entries
             .into_iter()
@@ -207,9 +204,7 @@ mod tests {
 
     #[test]
     fn parse_name_status_added() {
-        let console = Console::default();
-
-        let entries = parse_name_status("A\0src/new_file.rs\0", console).unwrap();
+        let entries = parse_name_status("A\0src/new_file.rs\0").unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -222,9 +217,7 @@ mod tests {
 
     #[test]
     fn parse_name_status_modified() {
-        let console = Console::default();
-
-        let entries = parse_name_status("M\0src/lib.rs\0", console).unwrap();
+        let entries = parse_name_status("M\0src/lib.rs\0").unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -237,9 +230,7 @@ mod tests {
 
     #[test]
     fn parse_name_status_deleted() {
-        let console = Console::default();
-
-        let entries = parse_name_status("D\0src/old_file.rs\0", console).unwrap();
+        let entries = parse_name_status("D\0src/old_file.rs\0").unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -252,10 +243,7 @@ mod tests {
 
     #[test]
     fn parse_name_status_renamed_includes_source_path() {
-        let console = Console::default();
-
-        let entries =
-            parse_name_status("R90\0src/old_name.rs\0src/new_name.rs\0", console).unwrap();
+        let entries = parse_name_status("R90\0src/old_name.rs\0src/new_name.rs\0").unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -268,9 +256,7 @@ mod tests {
 
     #[test]
     fn parse_name_status_copied_includes_source_path() {
-        let console = Console::default();
-
-        let entries = parse_name_status("C80\0src/original.rs\0src/copy.rs\0", console).unwrap();
+        let entries = parse_name_status("C80\0src/original.rs\0src/copy.rs\0").unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -283,9 +269,7 @@ mod tests {
 
     #[test]
     fn parse_name_status_type_changed() {
-        let console = Console::default();
-
-        let entries = parse_name_status("T\0src/some_file.rs\0", console).unwrap();
+        let entries = parse_name_status("T\0src/some_file.rs\0").unwrap();
         assert_eq!(
             entries,
             vec![RawFileEntry {
@@ -298,10 +282,8 @@ mod tests {
 
     #[test]
     fn parse_name_status_multiple_entries() {
-        let console = Console::default();
-
         let output = "A\0file1.txt\0M\0file2.rs\0D\0file3.old\0";
-        let entries = parse_name_status(output, console).unwrap();
+        let entries = parse_name_status(output).unwrap();
         assert_eq!(
             entries,
             vec![
@@ -326,30 +308,21 @@ mod tests {
 
     #[test]
     fn parse_name_status_rejects_unknown_codes() {
-        let console = Console::default();
-
         let output = "X\0unknown.txt\0A\0known.txt\0";
         assert_matches!(
-            parse_name_status(output, console),
+            parse_name_status(output),
             Err(ExtractError::MalformedGitOutput(message)) if message.contains("unknown git name-status code")
         );
     }
 
     #[test]
     fn parse_name_status_empty_input() {
-        let console = Console::default();
-
-        assert_eq!(
-            parse_name_status("", console).unwrap(),
-            Vec::<RawFileEntry>::new()
-        );
+        assert_eq!(parse_name_status("").unwrap(), Vec::<RawFileEntry>::new());
     }
 
     #[test]
     fn parse_name_status_preserves_special_paths() {
-        let console = Console::default();
-
-        let entries = parse_name_status("A\0café\tfile.txt\0", console).unwrap();
+        let entries = parse_name_status("A\0café\tfile.txt\0").unwrap();
 
         assert_eq!(
             entries,
@@ -367,7 +340,7 @@ mod tests {
         let non_binary1 = "file.txt";
         let binary2 = "archive.zip";
         let numstat = format!("-\t-\t{binary1}\x005\t3\t{non_binary1}\x00-\t-\t{binary2}\0");
-        let binary = parse_binary_paths(&numstat, Console::default()).unwrap();
+        let binary = parse_binary_paths(&numstat).unwrap();
         assert!(binary.contains(binary1));
         assert!(binary.contains(binary2));
         assert!(!binary.contains(non_binary1));
@@ -375,21 +348,13 @@ mod tests {
 
     #[test]
     fn parse_binary_paths_empty_input() {
-        assert!(
-            parse_binary_paths("", Console::default())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(parse_binary_paths("").unwrap().is_empty());
     }
 
     #[test]
     fn parse_binary_paths_no_binary_files() {
         let numstat = "5\t3\tfile1.txt\x0010\t2\tfile2.rs\0";
-        assert!(
-            parse_binary_paths(numstat, Console::default())
-                .unwrap()
-                .is_empty()
-        );
+        assert!(parse_binary_paths(numstat).unwrap().is_empty());
     }
 
     struct Repo {
@@ -401,50 +366,36 @@ mod tests {
         async fn new() -> Self {
             let tmp = tempfile::tempdir().unwrap();
             let path = tmp.path().to_path_buf();
-            let console = Console::default();
-            run_git(&["init"], &path, console).await.unwrap();
-            run_git(
-                &["config", "user.email", "test@example.com"],
-                &path,
-                console,
-            )
-            .await
-            .unwrap();
-            run_git(&["config", "user.name", "Test"], &path, console)
+            run_git(&["init"], &path).await.unwrap();
+            run_git(&["config", "user.email", "test@example.com"], &path)
+                .await
+                .unwrap();
+            run_git(&["config", "user.name", "Test"], &path)
                 .await
                 .unwrap();
             Self { _tmp: tmp, path }
         }
 
         async fn commit_files_raw(&self, files: &[(&str, &[u8])], message: &str) -> CommitHash {
-            let console = Console::default();
             for (name, content) in files {
                 std::fs::write(self.path.join(name), content).unwrap();
-                run_git(&["add", name], &self.path, console).await.unwrap();
+                run_git(&["add", name], &self.path).await.unwrap();
             }
-            run_git(
-                &["commit", "--no-gpg-sign", "-m", message],
-                &self.path,
-                console,
-            )
-            .await
-            .unwrap();
-            let raw = run_git(&["rev-parse", "HEAD"], &self.path, console)
+            run_git(&["commit", "--no-gpg-sign", "-m", message], &self.path)
                 .await
                 .unwrap();
+            let raw = run_git(&["rev-parse", "HEAD"], &self.path).await.unwrap();
             CommitHash::new(raw.trim()).unwrap()
         }
     }
 
     #[tokio::test]
     async fn commit_files_returns_added_file() {
-        let console = Console::default();
-
         let repo = Repo::new().await;
         let hash = repo
             .commit_files_raw(&[("hello.txt", b"hello")], "add hello")
             .await;
-        let result = Extractor::new(repo.path.clone(), console)
+        let result = Extractor::new(repo.path.clone())
             .commit_files(hash.as_ref())
             .await
             .unwrap();
@@ -462,14 +413,13 @@ mod tests {
 
     #[tokio::test]
     async fn commit_files_preserves_non_ascii_and_tab_paths() {
-        let console = Console::default();
         let repo = Repo::new().await;
         let path = "café\tfile.txt";
         let hash = repo
             .commit_files_raw(&[(path, b"hello")], "add special path")
             .await;
 
-        let result = Extractor::new(repo.path.clone(), console)
+        let result = Extractor::new(repo.path.clone())
             .commit_files(hash.as_ref())
             .await
             .unwrap();
@@ -487,14 +437,12 @@ mod tests {
 
     #[tokio::test]
     async fn commit_files_detects_binary_file() {
-        let console = Console::default();
-
         let repo = Repo::new().await;
         let binary_data: Vec<u8> = vec![0x00, 0x01, 0x02, 0x03];
         let hash = repo
             .commit_files_raw(&[("data.bin", &binary_data)], "add binary")
             .await;
-        let result = Extractor::new(repo.path.clone(), console)
+        let result = Extractor::new(repo.path.clone())
             .commit_files(hash.as_ref())
             .await
             .unwrap();
@@ -518,21 +466,17 @@ mod tests {
 
         std::fs::write(repo.path.join("a.txt"), b"changed").unwrap();
         std::fs::remove_file(repo.path.join("b.txt")).unwrap();
-        let console = Console::default();
-        run_git(&["add", "-A"], &repo.path, console).await.unwrap();
+        run_git(&["add", "-A"], &repo.path).await.unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "modify and delete"],
             &repo.path,
-            console,
         )
         .await
         .unwrap();
-        let raw = run_git(&["rev-parse", "HEAD"], &repo.path, console)
-            .await
-            .unwrap();
+        let raw = run_git(&["rev-parse", "HEAD"], &repo.path).await.unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = Extractor::new(repo.path.clone(), console)
+        let result = Extractor::new(repo.path.clone())
             .commit_files(hash.as_ref())
             .await
             .unwrap();
@@ -558,8 +502,6 @@ mod tests {
 
     #[tokio::test]
     async fn commit_files_tracks_rename_source_path() {
-        let console = Console::default();
-
         let repo = Repo::new().await;
         repo.commit_files_raw(&[("old_name.txt", b"content here")], "initial")
             .await;
@@ -569,20 +511,17 @@ mod tests {
             repo.path.join("new_name.txt"),
         )
         .unwrap();
-        run_git(&["add", "-A"], &repo.path, console).await.unwrap();
+        run_git(&["add", "-A"], &repo.path).await.unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "rename file"],
             &repo.path,
-            console,
         )
         .await
         .unwrap();
-        let raw = run_git(&["rev-parse", "HEAD"], &repo.path, console)
-            .await
-            .unwrap();
+        let raw = run_git(&["rev-parse", "HEAD"], &repo.path).await.unwrap();
         let hash = CommitHash::new(raw.trim()).unwrap();
 
-        let result = Extractor::new(repo.path.clone(), console)
+        let result = Extractor::new(repo.path.clone())
             .commit_files(hash.as_ref())
             .await
             .unwrap();
@@ -600,12 +539,10 @@ mod tests {
 
     #[tokio::test]
     async fn commit_files_fails_for_unknown_hash() {
-        let console = Console::default();
-
         let tmp = tempfile::tempdir().unwrap();
-        run_git(&["init"], tmp.path(), console).await.unwrap();
+        run_git(&["init"], tmp.path()).await.unwrap();
         let hash = "deadbeef";
-        let err = Extractor::new(tmp.path().to_path_buf(), console)
+        let err = Extractor::new(tmp.path().to_path_buf())
             .commit_files(hash)
             .await
             .unwrap_err();

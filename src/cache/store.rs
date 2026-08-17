@@ -7,8 +7,6 @@ use log::{debug, info, trace};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
-use crate::console::Console;
-
 use super::{
     CacheKey, CachePruneError, CacheReadError, CacheRemoveError, CacheVersion, CacheWriteError,
 };
@@ -31,15 +29,11 @@ fn sanitize_path_segment(value: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct CacheStore {
     root: PathBuf,
-    _console: Console,
 }
 
 impl CacheStore {
-    pub fn new(root: impl Into<PathBuf>, console: Console) -> Self {
-        Self {
-            root: root.into(),
-            _console: console,
-        }
+    pub fn new(root: impl Into<PathBuf>) -> Self {
+        Self { root: root.into() }
     }
 
     pub fn version_root(&self) -> PathBuf {
@@ -287,7 +281,7 @@ mod tests {
 
     #[test]
     fn path_orders_provider_and_model_before_namespace() {
-        let store = CacheStore::new(".peer/cache", Console::default());
+        let store = CacheStore::new(".peer/cache");
         let key = key("key");
         let path = store.path_for(&key);
 
@@ -313,7 +307,7 @@ mod tests {
     #[test]
     fn reads_and_atomically_writes_json() {
         let directory = tempfile::tempdir().unwrap();
-        let store = CacheStore::new(directory.path(), Console::default());
+        let store = CacheStore::new(directory.path());
         let key = key("key");
         let value = Value {
             value: "cached".to_string(),
@@ -333,7 +327,7 @@ mod tests {
     #[test]
     fn missing_files_are_cache_misses() {
         let directory = tempfile::tempdir().unwrap();
-        let store = CacheStore::new(directory.path(), Console::default());
+        let store = CacheStore::new(directory.path());
 
         assert_eq!(store.read_json::<Value>(&key("missing")).unwrap(), None);
     }
@@ -341,7 +335,7 @@ mod tests {
     #[test]
     fn removes_a_single_cache_value() {
         let directory = tempfile::tempdir().unwrap();
-        let store = CacheStore::new(directory.path(), Console::default());
+        let store = CacheStore::new(directory.path());
         let key = key("key");
         store
             .write_json(
@@ -360,7 +354,7 @@ mod tests {
     #[test]
     fn malformed_json_is_an_error() {
         let directory = tempfile::tempdir().unwrap();
-        let store = CacheStore::new(directory.path(), Console::default());
+        let store = CacheStore::new(directory.path());
         let key = key("invalid");
         let path = store.path_for(&key);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -379,7 +373,7 @@ mod tests {
         std::fs::create_dir_all(root.join("0.1/provider")).unwrap();
         std::fs::write(root.join("0.1/provider/value.json"), "{}").unwrap();
         std::fs::write(root.join("loose.tmp"), "temporary").unwrap();
-        let store = CacheStore::new(&root, Console::default());
+        let store = CacheStore::new(&root);
 
         assert_eq!(store.prune(true).unwrap(), 2);
         assert!(root.is_dir());
@@ -389,7 +383,7 @@ mod tests {
     #[test]
     fn prune_succeeds_when_the_cache_root_is_missing() {
         let directory = tempfile::tempdir().unwrap();
-        let store = CacheStore::new(directory.path().join("missing"), Console::default());
+        let store = CacheStore::new(directory.path().join("missing"));
 
         assert_eq!(store.prune(true).unwrap(), 0);
     }
@@ -404,7 +398,7 @@ mod tests {
         let root = directory.path().join("cache");
         std::fs::create_dir(&target).unwrap();
         symlink(&target, &root).unwrap();
-        let store = CacheStore::new(&root, Console::default());
+        let store = CacheStore::new(&root);
 
         assert_matches!(store.prune(true), Err(CachePruneError::UnsafeRoot { .. }));
         assert!(target.is_dir());
@@ -422,7 +416,7 @@ mod tests {
         std::fs::create_dir(&target).unwrap();
         std::fs::write(target.join("preserved"), "value").unwrap();
         symlink(&target, root.join("linked")).unwrap();
-        let store = CacheStore::new(&root, Console::default());
+        let store = CacheStore::new(&root);
 
         assert_eq!(store.prune(true).unwrap(), 1);
         assert!(target.join("preserved").is_file());
@@ -437,7 +431,7 @@ mod tests {
             std::fs::create_dir_all(root.join(name)).unwrap();
         }
         std::fs::write(root.join("loose.tmp"), "temporary").unwrap();
-        let store = CacheStore::new(&root, Console::default());
+        let store = CacheStore::new(&root);
 
         assert_eq!(store.prune(false).unwrap(), 1);
         assert!(!root.join("0.0").exists());

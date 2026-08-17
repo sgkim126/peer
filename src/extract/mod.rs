@@ -13,10 +13,6 @@ use std::path::{Component, Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::cli::ExtractCommand;
-use crate::config::Config;
-use crate::console::Console;
-
 pub use self::commit_diff::CommitDiff;
 pub use self::commit_files::CommitFiles;
 pub use self::commit_list::CommitList;
@@ -30,19 +26,17 @@ pub use self::file_content::{FileContent, FileContentRange};
 pub use self::file_diff::FileDiff;
 pub use self::grep::GrepResult;
 pub use self::list_tree::TreeListing;
+use crate::cli::ExtractCommand;
+use crate::config::Config;
 
 /// Provides the programmatic entry point to repository extraction.
 pub struct Extractor {
     project_root: PathBuf,
-    console: Console,
 }
 
 impl Extractor {
-    pub fn new(project_root: PathBuf, console: Console) -> Self {
-        Self {
-            project_root,
-            console,
-        }
+    pub fn new(project_root: PathBuf) -> Self {
+        Self { project_root }
     }
 }
 
@@ -60,12 +54,11 @@ pub enum ExtractData {
 }
 
 pub async fn handler(
-    console: Console,
     command: &ExtractCommand,
     _config: Config,
     project_root: PathBuf,
 ) -> Result<ExtractData, ExtractError> {
-    let extractor = Extractor::new(project_root, console);
+    let extractor = Extractor::new(project_root);
     Ok(match command {
         ExtractCommand::CommitDiff { revision } => {
             ExtractData::CommitDiff(extractor.commit_diff(revision).await?)

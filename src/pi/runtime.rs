@@ -1,7 +1,6 @@
 use std::path::PathBuf;
 
 use crate::cache::CacheStore;
-use crate::console::Console;
 
 use super::assets::materialize;
 use super::dependency::PiDependency;
@@ -11,17 +10,15 @@ use super::tool_server::ToolServer;
 
 pub struct PiRuntime {
     project_root: PathBuf,
-    console: Console,
     cache: CacheStore,
     runner: Option<PiRunner>,
 }
 
 impl PiRuntime {
-    pub fn new(project_root: impl Into<PathBuf>, cache: CacheStore, console: Console) -> Self {
+    pub fn new(project_root: impl Into<PathBuf>, cache: CacheStore) -> Self {
         Self {
             project_root: project_root.into(),
             cache,
-            console,
             runner: None,
         }
     }
@@ -56,8 +53,7 @@ impl PiRuntime {
         let agent_dir = version_root.join("pi-agent");
         std::fs::create_dir_all(&session_dir).map_err(PiRunError::Start)?;
         std::fs::create_dir_all(&agent_dir).map_err(PiRunError::Start)?;
-        let tool_server =
-            ToolServer::start(&self.project_root, self.console).map_err(PiRunError::ToolServer)?;
+        let tool_server = ToolServer::start(&self.project_root).map_err(PiRunError::ToolServer)?;
         let process = PiProcess::spawn(&PiProcessOptions {
             executable: dependency.executable,
             cwd: self.project_root.clone(),
@@ -67,11 +63,6 @@ impl PiRuntime {
             tool_socket: tool_server.socket_path().to_path_buf(),
         })
         .map_err(PiRunError::Start)?;
-        Ok(PiRunner::new(
-            process,
-            tool_server,
-            self.cache.clone(),
-            self.console,
-        ))
+        Ok(PiRunner::new(process, tool_server, self.cache.clone()))
     }
 }

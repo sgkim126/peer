@@ -11,7 +11,6 @@ use tokio::io::{AsyncBufRead, AsyncWrite, BufReader};
 use tokio::process::Child;
 
 use crate::cache::{CacheKey, CacheReadError, CacheStore, CacheWriteError};
-use crate::console::Console;
 use crate::llm::{LlmModelUsage, LlmUsage};
 
 use super::assets::AssetError;
@@ -213,17 +212,11 @@ pub struct PiRunner {
     client: ProcessClient,
     cache: CacheStore,
     version_root: PathBuf,
-    console: Console,
     _tool_server: ToolServer,
 }
 
 impl PiRunner {
-    pub fn new(
-        process: PiProcess,
-        tool_server: ToolServer,
-        cache: CacheStore,
-        console: Console,
-    ) -> Self {
+    pub fn new(process: PiProcess, tool_server: ToolServer, cache: CacheStore) -> Self {
         let (child, stdin, stdout) = process.into_parts();
         let version_root = cache.version_root();
         Self {
@@ -231,7 +224,6 @@ impl PiRunner {
             client: RpcClient::new(BufReader::new(stdout), stdin),
             cache,
             version_root,
-            console,
             _tool_server: tool_server,
         }
     }

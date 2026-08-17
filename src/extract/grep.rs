@@ -33,7 +33,7 @@ impl Extractor {
             validate_repository_relative_path(path)?;
         }
         let context_lines = context_lines.get().to_string();
-        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+        let hash = CommitHash::resolve(revision, &self.project_root).await?;
         let path = path.map(|path| {
             path.to_str()
                 .expect("repository-relative path was validated as UTF-8")
@@ -55,7 +55,7 @@ impl Extractor {
             args.push(path);
         }
 
-        let output = run_git(&args, &self.project_root, self.console)
+        let output = run_git(&args, &self.project_root)
             .await
             .or_else(|error| match error {
                 GitError::NonZeroExit { status: 1, .. } => Ok(String::new()),
@@ -105,8 +105,6 @@ mod tests {
 
     use std::assert_matches;
 
-    use crate::console::Console;
-
     #[test]
     fn rejects_empty_query() {
         assert_matches!(
@@ -155,18 +153,14 @@ mod tests {
     #[tokio::test]
     async fn searches_the_requested_commit_snapshot() {
         let repository = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        run_git(&["init"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["init"], repository.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
-        run_git(&["config", "user.name", "Test"], repository.path(), console)
+        run_git(&["config", "user.name", "Test"], repository.path())
             .await
             .unwrap();
         std::fs::create_dir_all(repository.path().join("src")).unwrap();
@@ -175,13 +169,12 @@ mod tests {
             "fn authenticate() {\n    validate_token();\n}\n",
         )
         .unwrap();
-        run_git(&["add", "src/auth.rs"], repository.path(), console)
+        run_git(&["add", "src/auth.rs"], repository.path())
             .await
             .unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "add authentication"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
@@ -191,7 +184,7 @@ mod tests {
         )
         .unwrap();
 
-        let result = Extractor::new(repository.path().to_path_buf(), console)
+        let result = Extractor::new(repository.path().to_path_buf())
             .grep(
                 "validate_token",
                 "HEAD",
@@ -213,33 +206,28 @@ mod tests {
     #[tokio::test]
     async fn no_match_returns_an_empty_result() {
         let repository = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        run_git(&["init"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["init"], repository.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
-        run_git(&["config", "user.name", "Test"], repository.path(), console)
+        run_git(&["config", "user.name", "Test"], repository.path())
             .await
             .unwrap();
         std::fs::write(repository.path().join("file.txt"), "content\n").unwrap();
-        run_git(&["add", "file.txt"], repository.path(), console)
+        run_git(&["add", "file.txt"], repository.path())
             .await
             .unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "add file"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
 
-        let result = Extractor::new(repository.path().to_path_buf(), console)
+        let result = Extractor::new(repository.path().to_path_buf())
             .grep("missing", "HEAD", None, NonZeroU8::new(2).unwrap())
             .await
             .unwrap();
@@ -250,34 +238,27 @@ mod tests {
     #[tokio::test]
     async fn treats_the_requested_path_as_a_literal_pathspec() {
         let repository = tempfile::tempdir().unwrap();
-        let console = Console::default();
-        run_git(&["init"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["init"], repository.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
-        run_git(&["config", "user.name", "Test"], repository.path(), console)
+        run_git(&["config", "user.name", "Test"], repository.path())
             .await
             .unwrap();
         std::fs::write(repository.path().join(":(glob)**"), "literal match\n").unwrap();
         std::fs::write(repository.path().join("other.txt"), "other match\n").unwrap();
-        run_git(&["add", "-A"], repository.path(), console)
-            .await
-            .unwrap();
+        run_git(&["add", "-A"], repository.path()).await.unwrap();
         run_git(
             &["commit", "--no-gpg-sign", "-m", "add files"],
             repository.path(),
-            console,
         )
         .await
         .unwrap();
 
-        let result = Extractor::new(repository.path().to_path_buf(), console)
+        let result = Extractor::new(repository.path().to_path_buf())
             .grep(
                 "match",
                 "HEAD",

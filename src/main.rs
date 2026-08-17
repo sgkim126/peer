@@ -23,7 +23,6 @@ use log::{debug, info};
 use crate::cache::CacheStore;
 use crate::cli::{Cli, Command};
 use crate::config::{Config, discover, discover_peer_root};
-use crate::console::Console;
 use crate::error::PeerError;
 use crate::pi::{ModelRef, PiRuntime};
 
@@ -31,10 +30,9 @@ use crate::pi::{ModelRef, PiRuntime};
 async fn main() -> ExitCode {
     init_logging();
     let cli = Cli::parse();
-    let console = Console::default();
 
     match cli.command {
-        Command::Init => match init::handler(console).await {
+        Command::Init => match init::handler().await {
             Ok(path) => {
                 println!("initialized peer in {}", path.display());
                 ExitCode::SUCCESS
@@ -62,7 +60,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let cache = CacheStore::new(project_root.join(".peer/cache"), console);
+            let cache = CacheStore::new(project_root.join(".peer/cache"));
             match cache.prune(all) {
                 Ok(removed) => {
                     if all {
@@ -134,7 +132,6 @@ async fn main() -> ExitCode {
                 &target,
                 config.review.max_commits.get(),
                 &project_root,
-                console,
             )
             .await
             {
@@ -145,25 +142,20 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            if let Err(error) = review::validate_target(
-                &target,
-                config.review.max_commits.get(),
-                &project_root,
-                console,
-            )
-            .await
+            if let Err(error) =
+                review::validate_target(&target, config.review.max_commits.get(), &project_root)
+                    .await
             {
                 eprintln!("error: {error}");
                 debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
 
-            let cache = CacheStore::new(project_root.join(".peer/cache"), console);
-            let mut pi = PiRuntime::new(&project_root, cache.clone(), console);
+            let cache = CacheStore::new(project_root.join(".peer/cache"));
+            let mut pi = PiRuntime::new(&project_root, cache.clone());
             let result = match review::run_pipeline(
                 &target,
                 review_context,
-                console,
                 &config,
                 project_root,
                 &cache,
@@ -241,7 +233,7 @@ async fn main() -> ExitCode {
                 }
             };
 
-            match extract::handler(console, &command, config, project_root).await {
+            match extract::handler(&command, config, project_root).await {
                 Ok(data) => {
                     println!(
                         "{}",

@@ -90,14 +90,14 @@ impl Extractor {
     ) -> Result<FileContent, ExtractError> {
         trace!("extract file content: {revision} {}", path.display());
         validate_repository_relative_path(path)?;
-        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+        let hash = CommitHash::resolve(revision, &self.project_root).await?;
         let path = path
             .to_str()
             .expect("repository-relative path was validated as UTF-8")
             .to_owned();
         let treeish = format!("{hash}:{path}");
 
-        let bytes = run_git_bytes(&["show", &treeish], &self.project_root, self.console).await?;
+        let bytes = run_git_bytes(&["show", &treeish], &self.project_root).await?;
 
         if bytes.contains(&0u8) {
             if line_range.is_some() {
@@ -160,7 +160,6 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::console::Console;
     use crate::git::run_git;
 
     struct Repo {
@@ -172,37 +171,25 @@ mod tests {
         async fn new() -> Self {
             let tmp = tempfile::tempdir().unwrap();
             let path = tmp.path().to_path_buf();
-            let console = Console::default();
-            run_git(&["init"], &path, console).await.unwrap();
-            run_git(
-                &["config", "user.email", "test@example.com"],
-                &path,
-                console,
-            )
-            .await
-            .unwrap();
-            run_git(&["config", "user.name", "Test"], &path, console)
+            run_git(&["init"], &path).await.unwrap();
+            run_git(&["config", "user.email", "test@example.com"], &path)
+                .await
+                .unwrap();
+            run_git(&["config", "user.name", "Test"], &path)
                 .await
                 .unwrap();
             Self { _tmp: tmp, path }
         }
 
         async fn commit(&self, files: &[(&str, &[u8])], message: &str) -> CommitHash {
-            let console = Console::default();
             for (name, content) in files {
                 std::fs::write(self.path.join(name), content).unwrap();
-                run_git(&["add", name], &self.path, console).await.unwrap();
+                run_git(&["add", name], &self.path).await.unwrap();
             }
-            run_git(
-                &["commit", "--no-gpg-sign", "-m", message],
-                &self.path,
-                console,
-            )
-            .await
-            .unwrap();
-            let raw = run_git(&["rev-parse", "HEAD"], &self.path, console)
+            run_git(&["commit", "--no-gpg-sign", "-m", message], &self.path)
                 .await
                 .unwrap();
+            let raw = run_git(&["rev-parse", "HEAD"], &self.path).await.unwrap();
             CommitHash::new(raw.trim()).unwrap()
         }
     }
@@ -211,7 +198,7 @@ mod tests {
     async fn file_content_returns_text_content() {
         let repo = Repo::new().await;
         let hash = repo.commit(&[("hello.txt", b"hello world")], "add").await;
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .file_content(hash.as_ref(), Path::new("hello.txt"), None)
             .await
             .unwrap();
@@ -229,7 +216,7 @@ mod tests {
         let hash = repo
             .commit(&[("data.bin", &binary_data)], "add binary")
             .await;
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .file_content(hash.as_ref(), Path::new("data.bin"), None)
             .await
             .unwrap();
@@ -248,7 +235,7 @@ mod tests {
         // delete from working tree but file still exists at `hash`
         std::fs::remove_file(repo.path.join("f.txt")).unwrap();
 
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .file_content(hash.as_ref(), Path::new("f.txt"), None)
             .await
             .unwrap();
@@ -263,7 +250,7 @@ mod tests {
     async fn file_content_fails_for_nonexistent_path() {
         let repo = Repo::new().await;
         let hash = repo.commit(&[("a.txt", b"a")], "add").await;
-        let err = Extractor::new(repo.path.clone(), Console::default())
+        let err = Extractor::new(repo.path.clone())
             .file_content(hash.as_ref(), Path::new("nonexistent.txt"), None)
             .await
             .unwrap_err();
@@ -272,7 +259,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_empty_path() {
-        let extractor = Extractor::new(std::path::PathBuf::from("/unused"), Console::default());
+        let extractor = Extractor::new(std::path::PathBuf::from("/unused"));
         assert_matches!(
             extractor.file_content("HEAD", Path::new(""), None).await,
             Err(ExtractError::InvalidRepositoryRelativePath(_))
@@ -281,7 +268,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_absoulte_path() {
-        let extractor = Extractor::new(std::path::PathBuf::from("/unused"), Console::default());
+        let extractor = Extractor::new(std::path::PathBuf::from("/unused"));
         assert_matches!(
             extractor
                 .file_content("HEAD", Path::new("/tmp/file.rs"), None)
@@ -292,7 +279,7 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_parent_path() {
-        let extractor = Extractor::new(std::path::PathBuf::from("/unused"), Console::default());
+        let extractor = Extractor::new(std::path::PathBuf::from("/unused"));
         assert_matches!(
             extractor
                 .file_content("HEAD", Path::new("src/../file.rs"), None)
@@ -308,7 +295,7 @@ mod tests {
             .commit(&[("lines.txt", b"one\ntwo\nthree\nfour\n")], "add lines")
             .await;
 
-        let result = Extractor::new(repo.path.clone(), Console::default())
+        let result = Extractor::new(repo.path.clone())
             .file_content(
                 hash.as_ref(),
                 Path::new("lines.txt"),
@@ -331,7 +318,7 @@ mod tests {
             .commit(&[("data.bin", b"\0binary")], "add binary")
             .await;
 
-        let error = Extractor::new(repo.path.clone(), Console::default())
+        let error = Extractor::new(repo.path.clone())
             .file_content(
                 hash.as_ref(),
                 Path::new("data.bin"),

@@ -74,46 +74,30 @@ impl ReviewInput {
 mod tests {
     use super::*;
 
-    use crate::console::Console;
     use crate::git::run_git;
 
     async fn commit(directory: &std::path::Path, file: &str, message: &str) -> CommitHash {
         std::fs::write(directory.join(file), format!("{message}\n")).unwrap();
-        run_git(&["add", file], directory, Console::default())
+        run_git(&["add", file], directory).await.unwrap();
+        run_git(&["commit", "--no-gpg-sign", "-m", message], directory)
             .await
             .unwrap();
-        run_git(
-            &["commit", "--no-gpg-sign", "-m", message],
-            directory,
-            Console::default(),
-        )
-        .await
-        .unwrap();
-        CommitHash::resolve("HEAD", directory, Console::default())
-            .await
-            .unwrap()
+        CommitHash::resolve("HEAD", directory).await.unwrap()
     }
 
     #[tokio::test]
     async fn collects_commits_oldest_first_and_the_cumulative_diff() {
         let directory = tempfile::tempdir().unwrap();
-        run_git(&["init"], directory.path(), Console::default())
-            .await
-            .unwrap();
+        run_git(&["init"], directory.path()).await.unwrap();
         run_git(
             &["config", "user.email", "test@example.com"],
             directory.path(),
-            Console::default(),
         )
         .await
         .unwrap();
-        run_git(
-            &["config", "user.name", "Test"],
-            directory.path(),
-            Console::default(),
-        )
-        .await
-        .unwrap();
+        run_git(&["config", "user.name", "Test"], directory.path())
+            .await
+            .unwrap();
         let base = commit(directory.path(), "base.txt", "base").await;
         let first = commit(directory.path(), "first.txt", "first").await;
         let second = commit(directory.path(), "second.txt", "second").await;
@@ -126,7 +110,7 @@ mod tests {
         let input = ReviewInput::collect(
             &target,
             ReviewContext::default(),
-            &Extractor::new(directory.path().to_path_buf(), Console::default()),
+            &Extractor::new(directory.path().to_path_buf()),
         )
         .await
         .unwrap();

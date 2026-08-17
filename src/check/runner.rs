@@ -4,7 +4,6 @@ use log::trace;
 use serde::Deserialize;
 
 use crate::cache::{CacheKey, CacheKeyError};
-use crate::console::Console;
 use crate::context::ReviewContextDigest;
 use crate::extract::{ExtractError, Extractor};
 use crate::llm::LlmUsage;
@@ -21,8 +20,6 @@ pub struct CheckRunConfig {
     pub context_usage: Option<LlmUsage>,
     pub session_key: CacheKey,
     pub resume: bool,
-    #[expect(dead_code)]
-    pub console: Console,
 }
 
 #[derive(Debug)]

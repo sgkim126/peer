@@ -14,12 +14,11 @@ pub struct CommitMessage {
 impl Extractor {
     pub async fn commit_message(&self, revision: &str) -> Result<CommitMessage, ExtractError> {
         trace!("extract commit message: {revision}");
-        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+        let hash = CommitHash::resolve(revision, &self.project_root).await?;
 
         let output = run_git(
             &["log", "-1", "--format=%B", hash.as_ref()],
             &self.project_root,
-            self.console,
         )
         .await?;
 
@@ -39,23 +38,20 @@ mod tests {
 
     use tempfile::TempDir;
 
-    use crate::console::Console;
-
     async fn init_repo_with_commit(dir: &Path, message: &str) -> CommitHash {
-        let console = Console::default();
-        run_git(&["init"], dir, console).await.unwrap();
-        run_git(&["config", "user.email", "test@example.com"], dir, console)
+        run_git(&["init"], dir).await.unwrap();
+        run_git(&["config", "user.email", "test@example.com"], dir)
             .await
             .unwrap();
-        run_git(&["config", "user.name", "Test"], dir, console)
+        run_git(&["config", "user.name", "Test"], dir)
             .await
             .unwrap();
         std::fs::write(dir.join("f"), "x").unwrap();
-        run_git(&["add", "f"], dir, console).await.unwrap();
-        run_git(&["commit", "--no-gpg-sign", "-m", message], dir, console)
+        run_git(&["add", "f"], dir).await.unwrap();
+        run_git(&["commit", "--no-gpg-sign", "-m", message], dir)
             .await
             .unwrap();
-        let raw = run_git(&["rev-parse", "HEAD"], dir, console).await.unwrap();
+        let raw = run_git(&["rev-parse", "HEAD"], dir).await.unwrap();
         CommitHash::new(raw.trim()).unwrap()
     }
 
@@ -75,9 +71,8 @@ mod tests {
 
     #[tokio::test]
     async fn commit_message_returns_correct_message() {
-        let console = Console::default();
         let (repo, hash) = Repo::new("initial commit").await;
-        let result = Extractor::new(repo.path.clone(), console)
+        let result = Extractor::new(repo.path.clone())
             .commit_message(hash.as_ref())
             .await
             .unwrap();
@@ -87,10 +82,9 @@ mod tests {
 
     #[tokio::test]
     async fn commit_message_preserves_multiline_message() {
-        let console = Console::default();
         let msg = "subject line\n\nbody paragraph";
         let (repo, hash) = Repo::new(msg).await;
-        let result = Extractor::new(repo.path.clone(), console)
+        let result = Extractor::new(repo.path.clone())
             .commit_message(hash.as_ref())
             .await
             .unwrap();
@@ -99,11 +93,10 @@ mod tests {
 
     #[tokio::test]
     async fn commit_message_fails_for_unknown_hash() {
-        let console = Console::default();
         let tmp = tempfile::tempdir().unwrap();
-        run_git(&["init"], tmp.path(), console).await.unwrap();
+        run_git(&["init"], tmp.path()).await.unwrap();
         let hash = "deadbeef";
-        let err = Extractor::new(tmp.path().to_path_buf(), console)
+        let err = Extractor::new(tmp.path().to_path_buf())
             .commit_message(hash)
             .await
             .unwrap_err();

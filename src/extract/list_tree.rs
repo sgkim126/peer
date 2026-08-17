@@ -40,7 +40,7 @@ impl Extractor {
         if let Some(path) = path {
             validate_repository_relative_path(path)?;
         }
-        let hash = CommitHash::resolve(revision, &self.project_root, self.console).await?;
+        let hash = CommitHash::resolve(revision, &self.project_root).await?;
         let normalized_path: Option<PathBuf> = path.map(|path| path.components().collect());
         let treeish = normalized_path
             .as_deref()
@@ -60,7 +60,7 @@ impl Extractor {
         } else {
             vec!["ls-tree", "-z", &treeish]
         };
-        let output = run_git(&args, &self.project_root, self.console).await?;
+        let output = run_git(&args, &self.project_root).await?;
 
         parse_tree_listing(&output, normalized_path.as_deref())
     }

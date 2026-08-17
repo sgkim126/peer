@@ -3,8 +3,6 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize, Serializer, de};
 
-use crate::console::Console;
-
 use super::{GitError, InvalidCommitHashReason};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,12 +12,11 @@ impl CommitHash {
     const MIN_LEN: usize = 7;
     const MAX_LEN: usize = 64;
 
-    pub async fn resolve(rev: &str, dir: &Path, console: Console) -> Result<Self, GitError> {
+    pub async fn resolve(rev: &str, dir: &Path) -> Result<Self, GitError> {
         let rev_commit = format!("{rev}^{{commit}}");
         let output = super::run_git(
             &["rev-parse", "--verify", "--end-of-options", &rev_commit],
             dir,
-            console,
         )
         .await
         .map_err(|err| match err {
@@ -91,25 +88,17 @@ mod tests {
 
     async fn create_repo_with_commit() -> tempfile::TempDir {
         let tmp = tempfile::tempdir().unwrap();
-        let console = Console::default();
 
-        super::super::run_git(&["init"], tmp.path(), console)
+        super::super::run_git(&["init"], tmp.path()).await.unwrap();
+        super::super::run_git(&["config", "user.email", "test@example.com"], tmp.path())
             .await
             .unwrap();
-        super::super::run_git(
-            &["config", "user.email", "test@example.com"],
-            tmp.path(),
-            console,
-        )
-        .await
-        .unwrap();
-        super::super::run_git(&["config", "user.name", "Test User"], tmp.path(), console)
+        super::super::run_git(&["config", "user.name", "Test User"], tmp.path())
             .await
             .unwrap();
         super::super::run_git(
             &["commit", "--allow-empty", "-m", "initial commit"],
             tmp.path(),
-            console,
         )
         .await
         .unwrap();
@@ -120,18 +109,12 @@ mod tests {
     #[tokio::test]
     async fn resolve_resolves_head_to_its_full_commit_hash() {
         let tmp = create_repo_with_commit().await;
-        let console = Console::default();
-        let expected = super::super::run_git(
-            &["rev-parse", "--verify", "HEAD^{commit}"],
-            tmp.path(),
-            console,
-        )
-        .await
-        .unwrap();
+        let expected =
+            super::super::run_git(&["rev-parse", "--verify", "HEAD^{commit}"], tmp.path())
+                .await
+                .unwrap();
 
-        let hash = CommitHash::resolve("HEAD", tmp.path(), console)
-            .await
-            .unwrap();
+        let hash = CommitHash::resolve("HEAD", tmp.path()).await.unwrap();
 
         assert_eq!(hash.as_ref(), expected.trim());
     }
@@ -139,21 +122,12 @@ mod tests {
     #[tokio::test]
     async fn resolve_peels_an_annotated_tag_to_its_commit_hash() {
         let tmp = create_repo_with_commit().await;
-        let console = Console::default();
-        super::super::run_git(
-            &["tag", "-a", "v1.0.0", "-m", "release"],
-            tmp.path(),
-            console,
-        )
-        .await
-        .unwrap();
+        super::super::run_git(&["tag", "-a", "v1.0.0", "-m", "release"], tmp.path())
+            .await
+            .unwrap();
 
-        let head = CommitHash::resolve("HEAD", tmp.path(), console)
-            .await
-            .unwrap();
-        let tag = CommitHash::resolve("v1.0.0", tmp.path(), console)
-            .await
-            .unwrap();
+        let head = CommitHash::resolve("HEAD", tmp.path()).await.unwrap();
+        let tag = CommitHash::resolve("v1.0.0", tmp.path()).await.unwrap();
 
         assert_eq!(tag, head);
     }
@@ -161,21 +135,12 @@ mod tests {
     #[tokio::test]
     async fn resolve_resolves_revision_starting_with_hyphen() {
         let tmp = create_repo_with_commit().await;
-        let console = Console::default();
-        super::super::run_git(
-            &["update-ref", "refs/heads/-release", "HEAD"],
-            tmp.path(),
-            console,
-        )
-        .await
-        .unwrap();
+        super::super::run_git(&["update-ref", "refs/heads/-release", "HEAD"], tmp.path())
+            .await
+            .unwrap();
 
-        let head = CommitHash::resolve("HEAD", tmp.path(), console)
-            .await
-            .unwrap();
-        let revision = CommitHash::resolve("-release", tmp.path(), console)
-            .await
-            .unwrap();
+        let head = CommitHash::resolve("HEAD", tmp.path()).await.unwrap();
+        let revision = CommitHash::resolve("-release", tmp.path()).await.unwrap();
 
         assert_eq!(revision, head);
     }
@@ -183,18 +148,11 @@ mod tests {
     #[tokio::test]
     async fn resolve_makes_error_with_unknown_name() {
         let tmp = create_repo_with_commit().await;
-        let console = Console::default();
-        super::super::run_git(
-            &["tag", "-a", "v1.0.0", "-m", "release"],
-            tmp.path(),
-            console,
-        )
-        .await
-        .unwrap();
-
-        let err = CommitHash::resolve("1.0.0", tmp.path(), console)
+        super::super::run_git(&["tag", "-a", "v1.0.0", "-m", "release"], tmp.path())
             .await
-            .unwrap_err();
+            .unwrap();
+
+        let err = CommitHash::resolve("1.0.0", tmp.path()).await.unwrap_err();
 
         assert_matches!(err, GitError::InvalidRevision(rev) if rev == "1.0.0");
     }
