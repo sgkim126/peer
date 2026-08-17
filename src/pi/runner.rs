@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use log::warn;
+use log::{debug, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncWrite, BufReader};
@@ -398,7 +398,13 @@ impl PiRunner {
                     // Do not request usage over a failed RPC connection
                     return Err(error.into());
                 }
-                let usage = self.read_usage(record).await.ok();
+                let usage = match self.read_usage(record).await {
+                    Ok(usage) => Some(usage),
+                    Err(usage_error) => {
+                        debug!("cannot read Pi usage after run failure: {usage_error:?}");
+                        None
+                    }
+                };
                 return Err(PiRunFailure { error, usage });
             }
         };
@@ -513,6 +519,7 @@ impl PiRunner {
                         .await?;
                 }
                 Some("extension_error") => {
+                    debug!("Pi extension error event: {event:?}");
                     return Err(PiRunError::InvalidState("Pi extension failed".to_string()));
                 }
                 _ => {}
@@ -549,6 +556,7 @@ where
             Some("turn_end") if configured => turn_ended = true,
             Some("agent_settled") if turn_ended => return Ok(()),
             Some("extension_error") => {
+                debug!("Pi extension configuration error event: {event:?}");
                 return Err(PiRunError::InvalidState(
                     "extension configuration failed".to_string(),
                 ));

@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use log::warn;
+use log::{error, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, BufReader};
@@ -50,9 +50,16 @@ impl ToolServer {
                                 std::io::ErrorKind::Interrupted
                                     | std::io::ErrorKind::ConnectionAborted
                             ) => {}
-                        Err(_) => break,
+                        Err(error) => {
+                            error!("peer tool server stopped accepting connections: {error}");
+                            break;
+                        }
                     },
-                    _ = connections.join_next(), if !connections.is_empty() => {}
+                    result = connections.join_next(), if !connections.is_empty() => {
+                        if let Some(Err(error)) = result {
+                            error!("peer tool connection task failed: {error}");
+                        }
+                    }
                 }
             }
         });
