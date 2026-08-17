@@ -1,17 +1,19 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-#[cfg(test)]
-use crate::check::CheckResult;
-use crate::check::{CheckError, CheckTarget, Finding, Severity};
 use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
+#[cfg(test)]
+use crate::stage::StageResult;
+use crate::stage::{Finding, Severity, StageFailure, StageTarget};
 
-use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_markdown};
+use super::{
+    RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message, escape_markdown,
+};
 
-pub fn render(result: &RenderCheck) -> String {
+pub fn render(result: &RenderStage) -> String {
     let mut output = String::new();
-    writeln!(output, "## Check: {}", escape_markdown(&result.check)).unwrap();
+    writeln!(output, "## Stage: {}", escape_markdown(&result.stage)).unwrap();
     writeln!(output).unwrap();
     writeln!(
         output,
@@ -49,7 +51,7 @@ pub fn render(result: &RenderCheck) -> String {
             writeln!(output, "- **Iterations:** {iterations}").unwrap();
         }
         if let Some(usage) = usage {
-            write_usage_markdown(&mut output, "Check usage", usage);
+            write_usage_markdown(&mut output, "Stage usage", usage);
         }
     }
     output.trim_end().to_string()
@@ -73,7 +75,7 @@ pub fn render_review_summary(
     );
     write!(
         output,
-        "\n- **Info findings:** {}\n- **Low findings:** {}\n- **Medium findings:** {}\n- **High findings:** {}\n- **Critical findings:** {}\n- **Exhausted checks:** {}\n- **Failed checks:** {}",
+        "\n- **Info findings:** {}\n- **Low findings:** {}\n- **Medium findings:** {}\n- **High findings:** {}\n- **Critical findings:** {}\n- **Exhausted stages:** {}\n- **Failed stages:** {}",
         counts.info,
         counts.low,
         counts.medium,
@@ -122,22 +124,22 @@ fn render_finding(finding: &Finding) -> String {
     )
 }
 
-fn display_error(error: RenderCheckErrorRef<'_>) -> String {
+fn display_error(error: RenderStageErrorRef<'_>) -> String {
     match error {
-        RenderCheckErrorRef::Exhausted(reason) | RenderCheckErrorRef::Execution(reason) => {
+        RenderStageErrorRef::Exhausted(reason) | RenderStageErrorRef::Execution(reason) => {
             reason.to_string()
         }
-        RenderCheckErrorRef::Check(CheckError::ClarificationRequired { questions }) => {
-            questions.join("; ")
+        RenderStageErrorRef::Stage(StageFailure::ClarificationRequired { questions }) => {
+            clarification_message(questions)
         }
-        RenderCheckErrorRef::Check(error) => error.to_string(),
+        RenderStageErrorRef::Stage(error) => error.to_string(),
     }
 }
 
-fn display_target(target: &CheckTarget) -> String {
+fn display_target(target: &StageTarget) -> String {
     match target {
-        CheckTarget::Commit(commit) => commit.to_string(),
-        CheckTarget::Range { from, to } => format!("{from}..{to}"),
+        StageTarget::Commit(commit) => commit.to_string(),
+        StageTarget::Range { from, to } => format!("{from}..{to}"),
     }
 }
 
@@ -189,13 +191,13 @@ fn write_usage_markdown(output: &mut String, heading: &str, usage: &LlmUsage) {
 mod tests {
     use super::*;
 
-    use crate::check::FileLocation;
     use crate::git::CommitHash;
+    use crate::stage::FileLocation;
 
-    fn result() -> CheckResult {
-        CheckResult {
-            check: "security".to_string(),
-            target: CheckTarget::Range {
+    fn result() -> StageResult {
+        StageResult {
+            stage: "security".to_string(),
+            target: StageTarget::Range {
                 from: CommitHash::new("abc1234").unwrap(),
                 to: CommitHash::new("def5678").unwrap(),
             },
@@ -203,7 +205,7 @@ mod tests {
                 CommitHash::new("abc1234").unwrap(),
                 CommitHash::new("def5678").unwrap(),
             ],
-            summary: "Checked the change.".to_string(),
+            summary: "Reviewed the change.".to_string(),
             findings: vec![
                 Finding {
                     commit: CommitHash::new("def5678").unwrap(),
@@ -222,7 +224,7 @@ mod tests {
                 },
             ],
             iterations: 2,
-            error: None,
+            failure: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 100,
@@ -248,8 +250,11 @@ mod tests {
     fn failed_results_render_the_failure_and_usage() {
         let mut result = result();
         result.findings.clear();
-        result.error = Some(CheckError::ClarificationRequired {
-            questions: vec!["Which deployment policy applies?".into()],
+        result.failure = Some(StageFailure::ClarificationRequired {
+            questions: vec![crate::stage::ClarificationQuestion {
+                question: "Which deployment policy applies?".into(),
+                reason: "The policy affects the finding.".into(),
+            }],
         });
         let output = render(&result.into());
 
@@ -262,7 +267,7 @@ mod tests {
     fn includes_usage() {
         let output = render(&result().into());
 
-        assert!(output.contains("### Check usage"));
+        assert!(output.contains("### Stage usage"));
         assert!(output.contains("- **Cost:** $0.001000"));
         assert!(!output.contains("Cache-read tokens"));
         assert!(!output.contains("Cache-write tokens"));
@@ -302,7 +307,7 @@ mod tests {
     #[test]
     fn escapes_dynamic_content_and_flattens_newlines() {
         let mut result = result();
-        result.check = "check <unsafe>".to_string();
+        result.stage = "stage <unsafe>".to_string();
         result.summary = "Summary\n# injected heading [link](url) ~struck~".to_string();
         result.findings[0].message = "message\n- injected finding **bold**".to_string();
         result.findings[0].location = Some(FileLocation {
@@ -312,7 +317,7 @@ mod tests {
 
         let output = render(&result.into());
 
-        assert!(output.contains("## Check: check \\<unsafe\\>"));
+        assert!(output.contains("## Stage: stage \\<unsafe\\>"));
         assert!(output.contains("Summary \\# injected heading \\[link\\]\\(url\\) \\~struck\\~"));
         assert!(output.contains("message \\- injected finding \\*\\*bold\\*\\*"));
         assert!(output.contains("src/\\[unsafe\\]\\.rs"));

@@ -1,17 +1,20 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
-#[cfg(test)]
-use crate::check::CheckResult;
-use crate::check::{CheckError, CheckTarget, Finding, Severity};
 use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
+#[cfg(test)]
+use crate::stage::StageResult;
+use crate::stage::{Finding, Severity, StageFailure, StageTarget};
 
-use super::{RenderCheck, RenderCheckErrorRef, ReviewCounts, escape_html, escape_markdown};
+use super::{
+    RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message, escape_html,
+    escape_markdown,
+};
 
-pub fn render(result: &RenderCheck, repo: &str) -> String {
+pub fn render(result: &RenderStage, repo: &str) -> String {
     let mut body = String::new();
-    writeln!(body, "## Check: {}", escape_github_markdown(&result.check)).unwrap();
+    writeln!(body, "## Stage: {}", escape_github_markdown(&result.stage)).unwrap();
     writeln!(body).unwrap();
     writeln!(body, "- **Target:** {}", target(&result.target, repo)).unwrap();
     writeln!(body, "- **Status:** {}", result.status()).unwrap();
@@ -44,13 +47,13 @@ pub fn render(result: &RenderCheck, repo: &str) -> String {
             writeln!(body, "- **Iterations:** {iterations}").unwrap();
         }
         if let Some(usage) = usage {
-            write_usage_markdown(&mut body, "Check usage", usage);
+            write_usage_markdown(&mut body, "Stage usage", usage);
         }
     }
 
     format!(
-        "<details>\n<summary>Check: {} - Status: {} - Target: {}</summary>\n\n{}\n</details>",
-        escape_github_html(&result.check),
+        "<details>\n<summary>Stage: {} - Status: {} - Target: {}</summary>\n\n{}\n</details>",
+        escape_github_html(&result.stage),
         result.status(),
         escape_github_html(&display_target(&result.target)),
         body.trim_end()
@@ -75,7 +78,7 @@ pub fn render_review_summary(
     );
     write!(
         output,
-        "\n- **Info findings:** {}\n- **Low findings:** {}\n- **Medium findings:** {}\n- **High findings:** {}\n- **Critical findings:** {}\n- **Exhausted checks:** {}\n- **Failed checks:** {}",
+        "\n- **Info findings:** {}\n- **Low findings:** {}\n- **Medium findings:** {}\n- **High findings:** {}\n- **Critical findings:** {}\n- **Exhausted stages:** {}\n- **Failed stages:** {}",
         counts.info,
         counts.low,
         counts.medium,
@@ -135,22 +138,22 @@ fn render_finding(finding: &Finding, repo: &str) -> String {
     )
 }
 
-fn display_error(error: RenderCheckErrorRef<'_>) -> String {
+fn display_error(error: RenderStageErrorRef<'_>) -> String {
     match error {
-        RenderCheckErrorRef::Exhausted(reason) | RenderCheckErrorRef::Execution(reason) => {
+        RenderStageErrorRef::Exhausted(reason) | RenderStageErrorRef::Execution(reason) => {
             reason.to_string()
         }
-        RenderCheckErrorRef::Check(CheckError::ClarificationRequired { questions }) => {
-            questions.join("; ")
+        RenderStageErrorRef::Stage(StageFailure::ClarificationRequired { questions }) => {
+            clarification_message(questions)
         }
-        RenderCheckErrorRef::Check(error) => error.to_string(),
+        RenderStageErrorRef::Stage(error) => error.to_string(),
     }
 }
 
-fn display_target(target: &CheckTarget) -> String {
+fn display_target(target: &StageTarget) -> String {
     match target {
-        CheckTarget::Commit(commit) => commit.to_string(),
-        CheckTarget::Range { from, to } => format!("{from}..{to}"),
+        StageTarget::Commit(commit) => commit.to_string(),
+        StageTarget::Range { from, to } => format!("{from}..{to}"),
     }
 }
 
@@ -200,13 +203,13 @@ fn write_usage_markdown(output: &mut String, heading: &str, usage: &LlmUsage) {
     .unwrap();
 }
 
-fn target(target: &CheckTarget, repo: &str) -> String {
+fn target(target: &StageTarget, repo: &str) -> String {
     match target {
-        CheckTarget::Commit(commit) => {
+        StageTarget::Commit(commit) => {
             let commit = commit.as_ref();
             format!("[`{commit}`]({})", commit_url(repo, commit))
         }
-        CheckTarget::Range { from, to } => escape_github_markdown(&format!("{from}..{to}")),
+        StageTarget::Range { from, to } => escape_github_markdown(&format!("{from}..{to}")),
     }
 }
 
@@ -258,13 +261,13 @@ fn neutralize_mentions(value: &str) -> String {
 mod tests {
     use super::*;
 
-    use crate::check::FileLocation;
     use crate::git::CommitHash;
+    use crate::stage::FileLocation;
 
-    fn result() -> CheckResult {
-        CheckResult {
-            check: "security".to_string(),
-            target: CheckTarget::Range {
+    fn result() -> StageResult {
+        StageResult {
+            stage: "security".to_string(),
+            target: StageTarget::Range {
                 from: CommitHash::new("abc1234").unwrap(),
                 to: CommitHash::new("def5678").unwrap(),
             },
@@ -272,7 +275,7 @@ mod tests {
                 CommitHash::new("abc1234").unwrap(),
                 CommitHash::new("def5678").unwrap(),
             ],
-            summary: "Checked the change.".to_string(),
+            summary: "Reviewed the change.".to_string(),
             findings: vec![
                 Finding {
                     commit: CommitHash::new("def5678").unwrap(),
@@ -291,7 +294,7 @@ mod tests {
                 },
             ],
             iterations: 2,
-            error: None,
+            failure: None,
             context_usage: None,
             usage: LlmUsage {
                 input_tokens: 100,
@@ -330,7 +333,7 @@ mod tests {
     #[test]
     fn escapes_markdown_and_details_summary_content() {
         let mut result = result();
-        result.check = "check </summary><script>".to_string();
+        result.stage = "stage </summary><script>".to_string();
         result.summary = "> quote\n- list".to_string();
         result.findings[0].message = "[link](url)".to_string();
         result.findings[0].location = Some(FileLocation {
@@ -340,7 +343,7 @@ mod tests {
 
         let output = render(&result.into(), "owner/repo");
 
-        assert!(output.contains("<summary>Check: check &lt;/summary&gt;&lt;script&gt;"));
+        assert!(output.contains("<summary>Stage: stage &lt;/summary&gt;&lt;script&gt;"));
         assert!(output.contains("\\> quote \\- list"));
         assert!(output.contains("\\[link\\]\\(url\\)"));
         assert!(output.contains("[src/\\]unsafe\\[\\.rs:7]"));
@@ -351,7 +354,7 @@ mod tests {
     #[test]
     fn neutralizes_mentions_in_dynamic_content() {
         let mut result = result();
-        result.check = "@reviewers".to_string();
+        result.stage = "@reviewers".to_string();
         result.summary = "Please notify @org/team".to_string();
         result.findings[0].message = "Assigned to @alice".to_string();
 

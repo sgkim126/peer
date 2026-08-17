@@ -6,9 +6,7 @@ mod runner;
 mod security;
 mod size;
 
-pub use self::result::{CheckError, CheckResult, CheckTarget, Finding, Severity};
-
-pub use self::result::FileLocation;
+pub use self::result::{CheckError, CheckResult, CheckTarget, Finding};
 
 use std::fmt;
 use std::path::{Path, PathBuf};
