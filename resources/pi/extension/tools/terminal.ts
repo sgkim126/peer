@@ -118,21 +118,17 @@ const SecurityFinding = Type.Intersect([
     }),
 ]);
 
-function requireOperation(
-    getConfig: GetConfig,
-    type: "stage",
-    tool: TerminalTool,
-) {
+function requireOperation(getConfig: GetConfig, tool: TerminalTool) {
     const envelope = getConfig();
-    if (envelope?.config.operation.type !== type) {
-        throw new Error(`terminal tool is not valid for the active ${type} operation`);
+    if (envelope?.config.operation.type !== "stage") {
+        throw new Error("terminal tool is not valid for the active stage operation");
     }
     requireConfiguredTerminalTool(envelope, tool);
     return envelope;
 }
 
 function requireStage(getConfig: GetConfig, stage: string, tool: TerminalTool) {
-    const envelope = requireOperation(getConfig, "stage", tool);
+    const envelope = requireOperation(getConfig, tool);
     const operation = envelope.config.operation;
     if (operation.type !== "stage" || operation.stage !== stage) {
         throw new Error(`terminal tool is not valid for the active ${stage} stage`);
@@ -175,12 +171,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
             }),
         }),
         async execute(_id, params) {
-            const envelope = getConfig();
-            const type = envelope?.config.operation.type;
-            if (type !== "stage") {
-                throw new Error("terminal tool is not valid for the active operation");
-            }
-            requireConfiguredTerminalTool(envelope, "request_clarification");
+            requireOperation(getConfig, "request_clarification");
             return outcome(
                 {
                     type: "clarification",

@@ -52,15 +52,14 @@ export interface StageOperation {
     expected_commits: string[];
 }
 
-export type RunConfig =
-    | {
-        tool_contract_digest: string;
-        operation: StageOperation;
-        system_prompt: string;
-        read_tools: ReadTool[];
-        terminal_tools: StageTerminalTool[];
-        max_turns: number;
-    };
+export interface RunConfig {
+    tool_contract_digest: string;
+    operation: StageOperation;
+    system_prompt: string;
+    read_tools: ReadTool[];
+    terminal_tools: StageTerminalTool[];
+    max_turns: number;
+}
 
 export interface ConfigureEnvelope {
     digest: string;
@@ -179,19 +178,17 @@ export function decodeConfigureEnvelope(encoded: string): ConfigureEnvelope {
     if (!("max_turns" in config) || !Number.isSafeInteger(config.max_turns) || config.max_turns < 1) {
         throw new Error("invalid peer maximum turn count");
     }
-    if (config.operation.type === "stage") {
-        if (!isReadToolArray(config.read_tools)) {
-            throw new Error("invalid read tools for peer stage operation");
-        }
-        if (!isStageTerminalToolArray(config.terminal_tools)) {
-            throw new Error("invalid terminal tools for peer stage operation");
-        }
-        if (config.terminal_tools.length === 0) {
-            throw new Error("peer stage operation requires at least one terminal tool");
-        }
-        if (!hasValidStageSubmissionTools(config.operation.stage, config.terminal_tools)) {
-            throw new Error("invalid terminal tools for peer stage operation");
-        }
+    if (!isReadToolArray(config.read_tools)) {
+        throw new Error("invalid read tools for peer stage operation");
+    }
+    if (!isStageTerminalToolArray(config.terminal_tools)) {
+        throw new Error("invalid terminal tools for peer stage operation");
+    }
+    if (config.terminal_tools.length === 0) {
+        throw new Error("peer stage operation requires at least one terminal tool");
+    }
+    if (!hasValidStageSubmissionTools(config.operation.stage, config.terminal_tools)) {
+        throw new Error("invalid terminal tools for peer stage operation");
     }
     return value as ConfigureEnvelope;
 }
