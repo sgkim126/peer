@@ -140,6 +140,11 @@ where
         &params,
     )?;
     if let Some(cached) = load_cache::<C>(cache, &cache_key, stage) {
+        trace!(
+            "typed stage cache hit: {} for {:?}",
+            stage.kind().as_str(),
+            stage.target()
+        );
         return Ok(StageRun {
             stage: stage.kind(),
             target: stage.target(),
@@ -158,7 +163,7 @@ where
         &params,
     )?;
     trace!(
-        "typed stage {} for {}",
+        "typed stage started: {} for {:?}",
         stage.kind().as_str(),
         stage.target()
     );
@@ -188,6 +193,11 @@ where
             error: PiRunError::Exhausted { turns },
             usage: Some(usage),
         }) => {
+            trace!(
+                "typed stage exhausted: {} for {:?} turns={turns}",
+                stage.kind().as_str(),
+                stage.target()
+            );
             return Ok(StageRun {
                 stage: stage.kind(),
                 target: stage.target(),
@@ -199,16 +209,28 @@ where
                 usage,
             });
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => {
+            debug!(
+                "typed stage Pi run failed: {} for {:?}: {error:?}",
+                stage.kind().as_str(),
+                stage.target()
+            );
+            return Err(error.into());
+        }
     };
     let outcome = match serde_json::from_value(result.outcome) {
         Ok(WireOutcome::Completed { report }) => {
-            stage
-                .validate_report(&report)
-                .map_err(|reason| StageRunError::InvalidReport {
+            stage.validate_report(&report).map_err(|reason| {
+                debug!(
+                    "invalid typed stage report: {} for {:?}: {reason}",
+                    stage.kind().as_str(),
+                    stage.target()
+                );
+                StageRunError::InvalidReport {
                     reason,
                     usage: result.usage.clone(),
-                })?;
+                }
+            })?;
             update_cache(
                 cache,
                 &cache_key,
@@ -217,16 +239,40 @@ where
                     iterations: result.iterations,
                 },
             );
+            trace!(
+                "typed stage completed: {} for {:?} iterations={}",
+                stage.kind().as_str(),
+                stage.target(),
+                result.iterations
+            );
             StageOutcome::Completed { report }
         }
         Ok(WireOutcome::Clarification { questions }) => {
-            validate_questions(&questions).map_err(|reason| StageRunError::InvalidQuestions {
-                reason,
-                usage: result.usage.clone(),
+            validate_questions(&questions).map_err(|reason| {
+                debug!(
+                    "invalid typed stage questions: {} for {:?}: {reason}",
+                    stage.kind().as_str(),
+                    stage.target()
+                );
+                StageRunError::InvalidQuestions {
+                    reason,
+                    usage: result.usage.clone(),
+                }
             })?;
+            trace!(
+                "typed stage blocked: {} for {:?} questions={}",
+                stage.kind().as_str(),
+                stage.target(),
+                questions.len()
+            );
             StageOutcome::Blocked { questions }
         }
         Err(source) => {
+            debug!(
+                "invalid typed stage output: {} for {:?}: {source:?}",
+                stage.kind().as_str(),
+                stage.target()
+            );
             return Err(StageRunError::InvalidOutput {
                 source,
                 usage: result.usage,

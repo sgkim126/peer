@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
+use log::trace;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tokio::io::{AsyncBufRead, AsyncWrite};
@@ -104,11 +105,19 @@ where
         if command.contains_key("id") {
             return Err(RpcError::ReservedCommandId);
         }
+        let command_type = command
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let request = RpcRequest {
             id: format!("peer-{}", self.next_id),
             command,
         };
         self.next_id += 1;
+        trace!(
+            "Pi RPC request: id={:?} command={command_type:?}",
+            request.id
+        );
         write_record(&mut self.writer, &request).await?;
 
         loop {
@@ -122,6 +131,10 @@ where
                 self.events.push_back(value);
                 continue;
             }
+            trace!(
+                "Pi RPC response: id={:?} success={}",
+                response.id, response.success
+            );
             return if response.success {
                 Ok(response)
             } else {
@@ -152,8 +165,15 @@ where
     }
 
     async fn read_value(&mut self) -> Result<Value, RpcError> {
-        match read_record(&mut self.reader).await {
-            Ok(value) => Ok(value),
+        match read_record::<_, Value>(&mut self.reader).await {
+            Ok(value) => {
+                trace!(
+                    "Pi RPC record: type={:?} id={:?}",
+                    value.get("type").and_then(Value::as_str),
+                    value.get("id").and_then(Value::as_str)
+                );
+                Ok(value)
+            }
             Err(error) => {
                 if matches!(&error, CodecError::RecordTooLarge { .. }) {
                     self.unusable = true;

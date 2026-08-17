@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use log::{debug, warn};
+use log::{debug, trace, warn};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufRead, AsyncWrite, BufReader};
@@ -238,6 +238,11 @@ impl PiRunner {
         } else {
             None
         };
+        trace!(
+            "Pi session lookup completed: resume={} resumable={}",
+            request.resume,
+            existing.as_ref().is_some_and(SessionRecord::resumable)
+        );
         let (mut record, continuation) = match existing.filter(SessionRecord::resumable) {
             Some(record) => {
                 if let Err(error) = self.switch_session(&record).await {
@@ -360,6 +365,7 @@ impl PiRunner {
             &serde_json::to_vec(&envelope)
                 .map_err(|error| PiRunError::InvalidState(error.to_string()))?,
         );
+        trace!("configuring Pi extension: digest={digest}");
         self.client
             .request(json!({
                 "type": "prompt",
@@ -367,6 +373,12 @@ impl PiRunner {
             }))
             .await?;
         wait_for_configuration(&mut self.client, &digest).await?;
+        trace!("Pi extension configured: digest={digest}");
+        trace!(
+            "setting Pi model: provider={:?} model={:?}",
+            request.model.provider(),
+            request.model.model()
+        );
         let response = self
             .client
             .request(json!({
@@ -381,6 +393,7 @@ impl PiRunner {
         } else {
             request.prompt.clone()
         };
+        trace!("submitting Pi prompt: continuation={continuation}");
         self.client
             .request(json!({
                 "type": "prompt",
@@ -388,6 +401,10 @@ impl PiRunner {
             }))
             .await?;
 
+        trace!(
+            "waiting for Pi outcome: max_turns={}",
+            request.config.max_turns
+        );
         let outcome = match self
             .wait_for_outcome(&digest, request.config.max_turns)
             .await
@@ -476,7 +493,10 @@ impl PiRunner {
         loop {
             let event = self.client.next_event().await?;
             match event.get("type").and_then(Value::as_str) {
-                Some("turn_end") => turns += 1,
+                Some("turn_end") => {
+                    turns += 1;
+                    trace!("Pi turn ended: turns={turns}");
+                }
                 Some("tool_execution_end") => {
                     if outcome.is_none()
                         && event
@@ -484,6 +504,7 @@ impl PiRunner {
                             .and_then(Value::as_str)
                             == Some("peer.outcome")
                     {
+                        trace!("Pi outcome received: turns={turns}");
                         outcome = Some(
                             event
                                 .pointer("/result/details/outcome")
@@ -503,14 +524,17 @@ impl PiRunner {
                 }
                 Some("agent_settled") => {
                     if let Some(outcome) = outcome {
+                        trace!("Pi agent settled with outcome: turns={turns}");
                         return Ok(WaitOutcome::Completed {
                             outcome,
                             iterations: turns,
                         });
                     }
                     if turns >= max_turns {
+                        trace!("Pi agent exhausted turn limit: turns={turns}");
                         return Ok(WaitOutcome::Exhausted { turns });
                     }
+                    trace!("continuing Pi agent: turns={turns} max_turns={max_turns}");
                     self.client
                         .request(json!({
                             "type": "prompt",
@@ -552,9 +576,16 @@ where
                     && event.get("message").and_then(Value::as_str) == Some(expected.as_str()) =>
             {
                 configured = true;
+                trace!("Pi extension acknowledged configuration");
             }
-            Some("turn_end") if configured => turn_ended = true,
-            Some("agent_settled") if turn_ended => return Ok(()),
+            Some("turn_end") if configured => {
+                turn_ended = true;
+                trace!("Pi configuration turn ended");
+            }
+            Some("agent_settled") if turn_ended => {
+                trace!("Pi configuration agent settled");
+                return Ok(());
+            }
             Some("extension_error") => {
                 debug!("Pi extension configuration error event: {event:?}");
                 return Err(PiRunError::InvalidState(
