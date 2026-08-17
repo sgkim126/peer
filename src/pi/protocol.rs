@@ -9,16 +9,6 @@ const TOOL_CONTRACT: &str = include_str!(concat!(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CheckKind {
-    Size,
-    Intent,
-    Quality,
-    Security,
-    Coherence,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum StageKind {
     ReviewContext,
     CommitScope,
@@ -45,9 +35,7 @@ pub enum ReadTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalTool {
-    SubmitCheckResult,
     RequestClarification,
-    SubmitReviewContextDigest,
     SubmitReviewContext,
     SubmitCommitScope,
     SubmitCommitSequence,
@@ -60,12 +48,6 @@ pub enum TerminalTool {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
-    ReviewContext,
-    Check {
-        check: CheckKind,
-        target: String,
-        expected_commits: Vec<CommitHash>,
-    },
     Stage {
         stage: StageKind,
         target: String,
@@ -132,9 +114,7 @@ mod tests {
             ReadTool::Grep,
         ];
         let terminal_tools = [
-            TerminalTool::SubmitCheckResult,
             TerminalTool::RequestClarification,
-            TerminalTool::SubmitReviewContextDigest,
             TerminalTool::SubmitReviewContext,
             TerminalTool::SubmitCommitScope,
             TerminalTool::SubmitCommitSequence,

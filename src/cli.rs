@@ -107,16 +107,6 @@ pub enum ExtractCommand {
     },
 }
 
-#[derive(Subcommand, Debug, PartialEq)]
-#[command(rename_all = "kebab-case")]
-pub enum CheckCommand {
-    Size { revision: String },
-    Intent { revision: String },
-    Quality { revision: String },
-    Security { revision: String },
-    Coherence { range: String },
-}
-
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq)]
 pub enum OutputFormat {
     Json,

@@ -29,31 +29,6 @@ const Finding = Type.Object({
     })),
 });
 
-const DigestItem = Type.Object({
-    kind: Type.Union([
-        Type.Literal("requirement"),
-        Type.Literal("decision"),
-        Type.Literal("constraint"),
-        Type.Literal("unresolved"),
-        Type.Literal("superseded"),
-    ]),
-    text: Type.String({
-        minLength: 1,
-    }),
-    sources: Type.Array(Type.String(), {
-        minItems: 1,
-    }),
-});
-
-const MissingContext = Type.Object({
-    text: Type.String({
-        minLength: 1,
-    }),
-    sources: Type.Array(Type.String(), {
-        minItems: 1,
-    }),
-});
-
 const SourcedStatement = Type.Object({
     text: Type.String({ minLength: 1 }),
     sources: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
@@ -145,7 +120,7 @@ const SecurityFinding = Type.Intersect([
 
 function requireOperation(
     getConfig: GetConfig,
-    type: "check" | "review_context" | "stage",
+    type: "stage",
     tool: TerminalTool,
 ) {
     const envelope = getConfig();
@@ -188,41 +163,6 @@ function outcome(value: unknown, message: string) {
 
 export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
     pi.registerTool({
-        name: "submit_check_result",
-        label: "Submit Check Result",
-        description: "Submit the final structured check result.",
-        parameters: Type.Object({
-            summary: Type.Optional(Type.String()),
-            findings: Type.Array(Finding),
-        }),
-        async execute(_id, params) {
-            const envelope = requireOperation(getConfig, "check", "submit_check_result");
-            const operation = envelope.config.operation;
-            if (operation.type !== "check") {
-                throw new Error("check operation changed unexpectedly");
-            }
-            const expected = new Set(operation.expected_commits);
-            const unexpected = params.findings
-                .map((finding) => finding.commit)
-                .filter((commit) => !expected.has(commit));
-            if (unexpected.length > 0) {
-                throw new Error(
-                    `finding commits are outside the configured check target: ${unexpected.join(", ")};`
-                    + ` expected one of: ${operation.expected_commits.join(", ")}`,
-                );
-            }
-            return outcome(
-                {
-                    type: "check_result",
-                    summary: params.summary ?? "",
-                    findings: params.findings,
-                },
-                "Submitted check result.",
-            );
-        },
-    });
-
-    pi.registerTool({
         name: "request_clarification",
         label: "Request Clarification",
         description: "Request facts necessary to complete the active review stage.",
@@ -237,7 +177,7 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
         async execute(_id, params) {
             const envelope = getConfig();
             const type = envelope?.config.operation.type;
-            if (type !== "check" && type !== "stage") {
+            if (type !== "stage") {
                 throw new Error("terminal tool is not valid for the active operation");
             }
             requireConfiguredTerminalTool(envelope, "request_clarification");
@@ -344,30 +284,6 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
         async execute(_id, params) {
             requireStage(getConfig, "security", "submit_security");
             return completed(params, "Submitted security stage.");
-        },
-    });
-
-    pi.registerTool({
-        name: "submit_review_context_digest",
-        label: "Submit Review Context Digest",
-        description: "Submit the faithful compressed review context.",
-        parameters: Type.Object({
-            overview: Type.String({
-                minLength: 1
-            }),
-            items: Type.Array(DigestItem),
-            missing_context: Type.Array(MissingContext),
-        }),
-        async execute(_id, params) {
-            requireOperation(
-                getConfig,
-                "review_context",
-                "submit_review_context_digest",
-            );
-            return outcome({
-                type: "review_context",
-                digest: params,
-            }, "Submitted review context digest.");
         },
     });
 }
