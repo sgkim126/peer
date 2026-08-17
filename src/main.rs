@@ -2,7 +2,6 @@ mod cache;
 mod check;
 mod cli;
 mod config;
-mod console;
 mod context;
 mod error;
 mod extract;
