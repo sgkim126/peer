@@ -13,7 +13,7 @@ pub struct CommitDiff {
 
 impl Extractor {
     pub async fn commit_diff(&self, revision: &str) -> Result<CommitDiff, ExtractError> {
-        trace!("extract commit diff: {revision}");
+        trace!("extract commit diff: {revision:?}");
         let hash = CommitHash::resolve(revision, &self.project_root).await?;
 
         let diff = run_git(

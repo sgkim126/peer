@@ -24,7 +24,7 @@ pub async fn run_git_bytes(args: &[&str], current_dir: &Path) -> Result<Vec<u8>,
     if !output.status.success() {
         let status = output.status.code().unwrap_or(-1);
         let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        debug!("{commands}: ({status}): {stderr}");
+        debug!("git command failed command={commands} status={status} stderr={stderr:?}");
         return Err(GitError::NonZeroExit { status, stderr });
     }
 
@@ -38,10 +38,7 @@ pub async fn run_git(args: &[&str], current_dir: &Path) -> Result<String, GitErr
 }
 
 fn format_argv(args: &[&str]) -> String {
-    std::iter::once("git")
-        .chain(args.iter().copied())
-        .collect::<Vec<_>>()
-        .join(" ")
+    format!("git {args:?}")
 }
 
 #[cfg(test)]
@@ -51,16 +48,16 @@ mod tests {
     use std::assert_matches;
 
     #[test]
-    fn format_argv_joins_with_spaces() {
+    fn format_argv_uses_debug_format() {
         assert_eq!(
             format_argv(&["log", "--oneline", "HEAD"]),
-            "git log --oneline HEAD"
+            r#"git ["log", "--oneline", "HEAD"]"#
         );
     }
 
     #[test]
     fn format_argv_with_no_args() {
-        assert_eq!(format_argv(&[]), "git");
+        assert_eq!(format_argv(&[]), "git []");
     }
 
     #[tokio::test]

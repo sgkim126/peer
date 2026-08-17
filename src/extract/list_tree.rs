@@ -36,7 +36,7 @@ impl Extractor {
         path: Option<&Path>,
         recursive: bool,
     ) -> Result<TreeListing, ExtractError> {
-        trace!("extract list tree: {revision} path={path:?} recursive={recursive}");
+        trace!("extract list tree: {revision:?} path={path:?} recursive={recursive}");
         if let Some(path) = path {
             validate_repository_relative_path(path)?;
         }

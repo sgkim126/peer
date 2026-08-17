@@ -26,7 +26,7 @@ impl Extractor {
         context_lines: NonZeroU8,
     ) -> Result<GrepResult, ExtractError> {
         trace!(
-            "extract grep: {revision} query={query:?} path={path:?} context_lines={context_lines}"
+            "extract grep: {revision:?} query={query:?} path={path:?} context_lines={context_lines}"
         );
         validate_grep_arguments(query, context_lines)?;
         if let Some(path) = path {
