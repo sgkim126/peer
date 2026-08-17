@@ -6,12 +6,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 #[derive(Parser, Debug)]
 #[command(name = "peer", about = "LLM-based code review CLI")]
 pub struct Cli {
-    #[arg(long, global = true)]
-    pub verbose: bool,
-
-    #[arg(long, global = true)]
-    pub debug: bool,
-
     #[command(subcommand)]
     pub command: Command,
 }
@@ -146,8 +140,6 @@ mod tests {
         let cli = parse(&["peer", "init"]);
 
         assert_eq!(cli.command, Command::Init);
-        assert!(!cli.verbose);
-        assert!(!cli.debug);
     }
 
     #[test]
@@ -577,37 +569,5 @@ mod tests {
         let result = Cli::try_parse_from(["peer", "render", "--format", "github"]);
 
         assert_matches!(result, Err(_));
-    }
-
-    #[test]
-    fn verbose_flag() {
-        let cli = parse(&["peer", "--verbose", "init"]);
-
-        assert!(cli.verbose);
-        assert!(!cli.debug);
-    }
-
-    #[test]
-    fn debug_flag() {
-        let cli = parse(&["peer", "--debug", "init"]);
-
-        assert!(!cli.verbose);
-        assert!(cli.debug);
-    }
-
-    #[test]
-    fn verbose_and_debug_flags() {
-        let cli = parse(&["peer", "--verbose", "--debug", "init"]);
-
-        assert!(cli.verbose);
-        assert!(cli.debug);
-    }
-
-    #[test]
-    fn global_flags_after_subcommand() {
-        let cli = parse(&["peer", "init", "--verbose", "--debug"]);
-
-        assert!(cli.verbose);
-        assert!(cli.debug);
     }
 }

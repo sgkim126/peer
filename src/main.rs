@@ -31,7 +31,7 @@ use crate::pi::{ModelRef, PiRuntime};
 async fn main() -> ExitCode {
     init_logging();
     let cli = Cli::parse();
-    let console = Console::from_cli(&cli);
+    let console = Console::default();
 
     match cli.command {
         Command::Init => match init::handler(console).await {
