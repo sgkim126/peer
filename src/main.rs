@@ -28,6 +28,7 @@ use crate::pi::{ModelRef, PiRuntime};
 
 #[tokio::main]
 async fn main() -> ExitCode {
+    init_logging();
     let cli = Cli::parse();
     let console = Console::from_cli(&cli);
 
@@ -291,6 +292,12 @@ async fn main() -> ExitCode {
             }
         }
     }
+}
+
+fn init_logging() {
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn"))
+        .target(env_logger::Target::Stderr)
+        .init();
 }
 
 fn apply_llm_overrides(
