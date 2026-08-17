@@ -18,7 +18,7 @@ use std::io::Read;
 use std::process::ExitCode;
 
 use clap::Parser;
-use log::debug;
+use log::{debug, info};
 
 use crate::cache::CacheStore;
 use crate::cli::{Cli, Command};
@@ -180,7 +180,7 @@ async fn main() -> ExitCode {
                 }
             };
             for stage in &result.stages {
-                console.verbose(format_args!(
+                info!(
                     "{} stage for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
                     stage.stage().as_str(),
                     stage.target(),
@@ -188,11 +188,11 @@ async fn main() -> ExitCode {
                     stage.usage().cost_usd,
                     stage.usage().input_tokens,
                     stage.usage().output_tokens,
-                ));
+                );
             }
             for error in &result.errors {
                 if let Some(usage) = &error.usage {
-                    console.verbose(format_args!(
+                    info!(
                         "{} stage for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
                         error.stage.as_str(),
                         error.target,
@@ -200,7 +200,7 @@ async fn main() -> ExitCode {
                         usage.cost_usd,
                         usage.input_tokens,
                         usage.output_tokens,
-                    ));
+                    );
                 }
                 eprintln!("error: {error}");
                 debug!("{error:?}");

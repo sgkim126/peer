@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
 
-use log::{debug, trace};
+use log::{debug, info, trace};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
@@ -31,14 +31,14 @@ fn sanitize_path_segment(value: &str) -> String {
 #[derive(Debug, Clone)]
 pub struct CacheStore {
     root: PathBuf,
-    console: Console,
+    _console: Console,
 }
 
 impl CacheStore {
     pub fn new(root: impl Into<PathBuf>, console: Console) -> Self {
         Self {
             root: root.into(),
-            console,
+            _console: console,
         }
     }
 
@@ -146,8 +146,7 @@ impl CacheStore {
 
     pub fn prune(&self, all: bool) -> Result<usize, CachePruneError> {
         let started = Instant::now();
-        self.console
-            .verbose(format_args!("prune started root={:?} all={all}", self.root));
+        info!("prune started root={:?} all={all}", self.root);
         let current = (!all)
             .then(|| {
                 let version = CacheKey::version();
@@ -158,10 +157,10 @@ impl CacheStore {
             })
             .transpose()?;
         let Some(entries) = self.entries()? else {
-            self.console.verbose(format_args!(
+            info!(
                 "prune completed removed=0 skipped=0 failed=0 duration_ms={}",
                 started.elapsed().as_millis()
-            ));
+            );
             return Ok(0);
         };
         let mut removed = 0;
@@ -225,10 +224,10 @@ impl CacheStore {
                 }
             }
         }
-        self.console.verbose(format_args!(
+        info!(
             "prune completed removed={removed} skipped={skipped} failed=0 duration_ms={}",
             started.elapsed().as_millis()
-        ));
+        );
         Ok(removed)
     }
 
