@@ -566,8 +566,6 @@ where
     W: AsyncWrite + Unpin,
 {
     let expected = format!("peer.configured:{digest}");
-    let mut configured = false;
-    let mut turn_ended = false;
     loop {
         let event = client.next_event().await?;
         match event.get("type").and_then(Value::as_str) {
@@ -575,15 +573,7 @@ where
                 if event.get("method").and_then(Value::as_str) == Some("notify")
                     && event.get("message").and_then(Value::as_str) == Some(expected.as_str()) =>
             {
-                configured = true;
                 trace!("Pi extension acknowledged configuration");
-            }
-            Some("turn_end") if configured => {
-                turn_ended = true;
-                trace!("Pi configuration turn ended");
-            }
-            Some("agent_settled") if turn_ended => {
-                trace!("Pi configuration agent settled");
                 return Ok(());
             }
             Some("extension_error") => {
@@ -685,15 +675,13 @@ mod tests {
     use tokio::io::{AsyncWriteExt, BufReader, duplex};
 
     #[tokio::test]
-    async fn drains_the_configuration_turn_before_returning() {
+    async fn returns_after_the_extension_acknowledges_configuration() {
         let (client_reader, mut server_writer) = duplex(1024);
         let mut client = RpcClient::new(BufReader::new(client_reader), tokio::io::sink());
         let server = tokio::spawn(async move {
             server_writer
                 .write_all(
                     b"{\"type\":\"extension_ui_request\",\"method\":\"notify\",\"message\":\"peer.configured:digest\"}\n\
-                      {\"type\":\"turn_end\"}\n\
-                      {\"type\":\"agent_settled\"}\n\
                       {\"type\":\"agent_start\"}\n",
                 )
                 .await
