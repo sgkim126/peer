@@ -546,7 +546,20 @@ impl PiRunner {
                     debug!("Pi extension error event: {event:?}");
                     return Err(PiRunError::InvalidState("Pi extension failed".to_string()));
                 }
-                _ => {}
+                Some("message_start")
+                | Some("message_update")
+                | Some("message_end")
+                | Some("turn_start")
+                | Some("auto_retry_end")
+                | Some("tool_execution_start")
+                | Some("thinking_level_changed")
+                | Some("agent_start")
+                | Some("agent_end") => {}
+                event_type => {
+                    debug!(
+                        "unexpected Pi event while waiting for outcome: {event_type:?} {event:?}"
+                    );
+                }
             }
         }
     }
@@ -582,7 +595,20 @@ where
                     "extension configuration failed".to_string(),
                 ));
             }
-            _ => {}
+            Some("message_start")
+            | Some("message_update")
+            | Some("message_end")
+            | Some("turn_start")
+            | Some("auto_retry_end")
+            | Some("tool_execution_start")
+            | Some("thinking_level_changed")
+            | Some("agent_start")
+            | Some("agent_end") => {}
+            event_type => {
+                debug!(
+                    "unexpected Pi event while waiting for configuration: {event_type:?} {event:?}"
+                );
+            }
         }
     }
 }
