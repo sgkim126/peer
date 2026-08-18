@@ -16,14 +16,14 @@ test("decodes a supported peer run configuration", () => {
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "abc1234",
                 expected_commits: ["abc1234"],
             },
             system_prompt: "Review code.",
             read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_check_result"],
+            terminal_tools: ["submit_quality"],
             max_turns: 4,
         },
     };
@@ -161,12 +161,15 @@ test("rejects a short digest", () => {
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "review_context"
+                type: "stage",
+                stage: "quality",
+                target: "abc1234",
+                expected_commits: ["abc1234"],
             },
-            system_prompt: "Compress context.",
-            read_tools: [],
-            terminal_tools: ["submit_review_context_digest"],
-            max_turns: 1,
+            system_prompt: "Review code.",
+            read_tools: ["get_commit_diff"],
+            terminal_tools: ["submit_quality"],
+            max_turns: 4,
         },
     });
 
@@ -176,7 +179,7 @@ test("rejects a short digest", () => {
     );
 });
 
-test("rejects read tools for a review context operation", () => {
+test("rejects a legacy review context operation", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
@@ -184,16 +187,16 @@ test("rejects read tools for a review context operation", () => {
             operation: {
                 type: "review_context"
             },
-            system_prompt: "Compress context.",
-            read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_review_context_digest"],
-            max_turns: 1,
+            system_prompt: "Review code.",
+            read_tools: [],
+            terminal_tools: ["submit_quality"],
+            max_turns: 4,
         },
     });
 
     assert.throws(
         () => decodeConfigureEnvelope(encoded),
-        /invalid read tools for peer review context operation/,
+        /invalid peer operation/,
     );
 });
 
@@ -203,11 +206,14 @@ test("rejects a zero turn count", () => {
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "review_context"
+                type: "stage",
+                stage: "quality",
+                target: "abc1234",
+                expected_commits: ["abc1234"],
             },
-            system_prompt: "Compress context.",
-            read_tools: [],
-            terminal_tools: ["submit_review_context_digest"],
+            system_prompt: "Review code.",
+            read_tools: ["get_commit_diff"],
+            terminal_tools: ["submit_quality"],
             max_turns: 0,
         },
     });
@@ -218,56 +224,62 @@ test("rejects a zero turn count", () => {
     );
 });
 
-test("rejects tools for another operation", () => {
+test("rejects a removed generic terminal tool", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "review_context"
+                type: "stage",
+                stage: "quality",
+                target: "abc1234",
+                expected_commits: ["abc1234"],
             },
-            system_prompt: "Compress context.",
-            read_tools: [],
+            system_prompt: "Review code.",
+            read_tools: ["get_commit_diff"],
             terminal_tools: ["submit_check_result"],
-            max_turns: 1,
+            max_turns: 4,
         },
     });
 
     assert.throws(
         () => decodeConfigureEnvelope(encoded),
-        /invalid terminal tools for peer review context operation/,
+        /invalid terminal tools for peer stage operation/,
     );
 });
 
-test("rejects empty terminal tools for a review context operation", () => {
+test("rejects a removed coherence stage kind", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "review_context"
+                type: "stage",
+                stage: "coherence",
+                target: "abc1234..def5678",
+                expected_commits: ["abc1234", "def5678"],
             },
-            system_prompt: "Compress context.",
-            read_tools: [],
-            terminal_tools: [],
-            max_turns: 1,
+            system_prompt: "Review code.",
+            read_tools: ["get_commit_diff"],
+            terminal_tools: ["submit_quality"],
+            max_turns: 4,
         },
     });
 
     assert.throws(
         () => decodeConfigureEnvelope(encoded),
-        /peer review context operation requires at least one terminal tool/,
+        /invalid peer operation/,
     );
 });
 
-test("rejects empty terminal tools for a check operation", () => {
+test("rejects empty terminal tools for a stage operation", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "abc1234",
                 expected_commits: ["abc1234"],
             },
@@ -280,24 +292,24 @@ test("rejects empty terminal tools for a check operation", () => {
 
     assert.throws(
         () => decodeConfigureEnvelope(encoded),
-        /peer check operation requires at least one terminal tool/,
+        /peer stage operation requires at least one terminal tool/,
     );
 });
 
-test("rejects a check operation with an empty target", () => {
+test("rejects a stage operation with an empty target", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "",
                 expected_commits: ["abc1234"],
             },
             system_prompt: "Review code.",
             read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_check_result"],
+            terminal_tools: ["submit_quality"],
             max_turns: 4,
         },
     });
@@ -308,20 +320,20 @@ test("rejects a check operation with an empty target", () => {
     );
 });
 
-test("rejects a check operation without expected commits", () => {
+test("rejects a stage operation without expected commits", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "abc1234",
                 expected_commits: [],
             },
             system_prompt: "Review code.",
             read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_check_result"],
+            terminal_tools: ["submit_quality"],
             max_turns: 4,
         },
     });
@@ -332,20 +344,20 @@ test("rejects a check operation without expected commits", () => {
     );
 });
 
-test("rejects a check operation with an empty expected commit", () => {
+test("rejects a stage operation with an empty expected commit", () => {
     const encoded = encode({
         digest: "a".repeat(64),
         config: {
             tool_contract_digest: "b".repeat(64),
             operation: {
-                type: "check",
-                check: "quality",
+                type: "stage",
+                stage: "quality",
                 target: "abc1234",
                 expected_commits: [""],
             },
             system_prompt: "Review code.",
             read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_check_result"],
+            terminal_tools: ["submit_quality"],
             max_turns: 4,
         },
     });

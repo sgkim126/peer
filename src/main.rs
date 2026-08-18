@@ -1,5 +1,4 @@
 mod cache;
-mod check;
 mod cli;
 mod config;
 mod context;

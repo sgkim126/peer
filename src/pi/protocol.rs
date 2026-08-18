@@ -9,16 +9,6 @@ const TOOL_CONTRACT: &str = include_str!(concat!(
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CheckKind {
-    Size,
-    Intent,
-    Quality,
-    Security,
-    Coherence,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum StageKind {
     ReviewContext,
     CommitScope,
@@ -45,9 +35,7 @@ pub enum ReadTool {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TerminalTool {
-    SubmitCheckResult,
     RequestClarification,
-    SubmitReviewContextDigest,
     SubmitReviewContext,
     SubmitCommitScope,
     SubmitCommitSequence,
@@ -60,12 +48,6 @@ pub enum TerminalTool {
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Operation {
-    ReviewContext,
-    Check {
-        check: CheckKind,
-        target: String,
-        expected_commits: Vec<CommitHash>,
-    },
     Stage {
         stage: StageKind,
         target: String,
@@ -96,24 +78,24 @@ mod tests {
     fn run_config_identifies_its_tool_contract() {
         let config = RunConfig {
             tool_contract_digest: tool_contract_digest(),
-            operation: Operation::Check {
-                check: CheckKind::Quality,
+            operation: Operation::Stage {
+                stage: StageKind::Quality,
                 target: "abc1234".to_string(),
                 expected_commits: vec![CommitHash::new("abc1234").unwrap()],
             },
             system_prompt: "Review code.".to_string(),
             read_tools: vec![ReadTool::GetCommitDiff],
-            terminal_tools: vec![TerminalTool::SubmitCheckResult],
+            terminal_tools: vec![TerminalTool::SubmitQuality],
             max_turns: 4,
         };
 
         let value = serde_json::to_value(&config).unwrap();
-        assert_eq!(value["operation"]["type"], "check");
-        assert_eq!(value["operation"]["check"], "quality");
+        assert_eq!(value["operation"]["type"], "stage");
+        assert_eq!(value["operation"]["stage"], "quality");
         assert_eq!(value["read_tools"], serde_json::json!(["get_commit_diff"]));
         assert_eq!(
             value["terminal_tools"],
-            serde_json::json!(["submit_check_result"])
+            serde_json::json!(["submit_quality"])
         );
         assert_eq!(value["tool_contract_digest"], tool_contract_digest());
     }
@@ -132,9 +114,7 @@ mod tests {
             ReadTool::Grep,
         ];
         let terminal_tools = [
-            TerminalTool::SubmitCheckResult,
             TerminalTool::RequestClarification,
-            TerminalTool::SubmitReviewContextDigest,
             TerminalTool::SubmitReviewContext,
             TerminalTool::SubmitCommitScope,
             TerminalTool::SubmitCommitSequence,
@@ -155,10 +135,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_unknown_check_kind() {
+    fn rejects_an_unknown_stage_kind() {
         let error = serde_json::from_value::<Operation>(serde_json::json!({
-            "type": "check",
-            "check": "unknown",
+            "type": "stage",
+            "stage": "unknown",
             "target": "abc1234",
             "expected_commits": ["abc1234"],
         }))
@@ -168,10 +148,10 @@ mod tests {
     }
 
     #[test]
-    fn rejects_an_unknown_check_field() {
+    fn rejects_an_unknown_stage_field() {
         let error = serde_json::from_value::<Operation>(serde_json::json!({
-            "type": "check",
-            "check": "quality",
+            "type": "stage",
+            "stage": "quality",
             "target": "abc1234",
             "expected_commits": ["abc1234"],
             "extra_field": "value",
