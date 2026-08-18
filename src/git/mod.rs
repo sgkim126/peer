@@ -14,12 +14,7 @@ pub async fn run_git_bytes(args: &[&str], current_dir: &Path) -> Result<Vec<u8>,
     let commands = format_argv(args);
     trace!("{commands}");
 
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(current_dir)
-        .kill_on_drop(true)
-        .output()
-        .await?;
+    let output = git_command(args, current_dir).output().await?;
 
     if !output.status.success() {
         let status = output.status.code().unwrap_or(-1);
@@ -37,6 +32,16 @@ pub async fn run_git(args: &[&str], current_dir: &Path) -> Result<String, GitErr
     Ok(String::from_utf8(stdout)?)
 }
 
+fn git_command(args: &[&str], current_dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .args(args)
+        .current_dir(current_dir)
+        .kill_on_drop(true)
+        .env("GIT_TERMINAL_PROMPT", "0");
+    command
+}
+
 fn format_argv(args: &[&str]) -> String {
     format!("git {args:?}")
 }
@@ -46,6 +51,7 @@ mod tests {
     use super::*;
 
     use std::assert_matches;
+    use std::ffi::OsStr;
 
     #[test]
     fn format_argv_uses_debug_format() {
@@ -58,6 +64,15 @@ mod tests {
     #[test]
     fn format_argv_with_no_args() {
         assert_eq!(format_argv(&[]), "git []");
+    }
+
+    #[test]
+    fn git_command_disables_terminal_prompts() {
+        let command = git_command(&[], Path::new("."));
+
+        assert!(command.as_std().get_envs().any(|(key, value)| {
+            key == OsStr::new("GIT_TERMINAL_PROMPT") && value == Some(OsStr::new("0"))
+        }));
     }
 
     #[tokio::test]
