@@ -297,7 +297,7 @@ where
         Ok(Some(cached)) => match stage.validate_report(&cached.report) {
             Ok(()) => Some(cached),
             Err(error) => {
-                debug!("ignoring invalid typed stage cache: {error}");
+                debug!("ignoring invalid typed stage cache: {error:?}");
                 None
             }
         },
