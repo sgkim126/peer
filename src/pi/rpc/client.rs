@@ -167,11 +167,13 @@ where
     async fn read_value(&mut self) -> Result<Value, RpcError> {
         match read_record::<_, Value>(&mut self.reader).await {
             Ok(value) => {
-                trace!(
-                    "Pi RPC record: type={:?} id={:?}",
-                    value.get("type").and_then(Value::as_str),
-                    value.get("id").and_then(Value::as_str)
-                );
+                let kind = value.get("type").and_then(Value::as_str);
+                if kind != Some("message_update") {
+                    trace!(
+                        "Pi RPC record: type={kind:?} id={:?}",
+                        value.get("id").and_then(Value::as_str)
+                    );
+                }
                 Ok(value)
             }
             Err(error) => {
