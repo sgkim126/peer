@@ -88,7 +88,7 @@ impl Extractor {
         path: &Path,
         line_range: Option<FileContentRange>,
     ) -> Result<FileContent, ExtractError> {
-        trace!("extract file content: {revision} {}", path.display());
+        trace!("extract file content: {revision:?} {path:?}");
         validate_repository_relative_path(path)?;
         let hash = CommitHash::resolve(revision, &self.project_root).await?;
         let path = path

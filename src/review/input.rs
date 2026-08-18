@@ -1,3 +1,4 @@
+use log::trace;
 use serde::Serialize;
 
 use crate::context::ReviewContext;
@@ -35,6 +36,7 @@ impl ReviewInput {
                 from, to, commits, ..
             } => (Some(from.clone()), to.clone(), commits.clone()),
         };
+        trace!("collecting review input: commits={}", commits.len());
         let mut inputs = Vec::with_capacity(commits.len());
         for commit in commits {
             let CommitMessage { hash, message } = extractor.commit_message(commit.as_ref()).await?;
@@ -60,6 +62,7 @@ impl ReviewInput {
                 .expect("single-commit review must contain one commit"),
         };
 
+        trace!("review input collected: commits={}", inputs.len());
         Ok(Self {
             context,
             base,

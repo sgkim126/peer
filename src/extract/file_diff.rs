@@ -22,10 +22,7 @@ impl Extractor {
         to_revision: &str,
         path: &Path,
     ) -> Result<FileDiff, ExtractError> {
-        trace!(
-            "extract file diff: {from_revision}..{to_revision} {}",
-            path.display()
-        );
+        trace!("extract file diff: {from_revision:?}..{to_revision:?} {path:?}");
         validate_repository_relative_path(path)?;
         let from = CommitHash::resolve(from_revision, &self.project_root).await?;
         let to = CommitHash::resolve(to_revision, &self.project_root).await?;

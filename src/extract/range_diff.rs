@@ -18,7 +18,7 @@ impl Extractor {
         from_revision: &str,
         to_revision: &str,
     ) -> Result<RangeDiff, ExtractError> {
-        trace!("extract range diff: {from_revision}..{to_revision}");
+        trace!("extract range diff: {from_revision:?}..{to_revision:?}");
         let from = CommitHash::resolve(from_revision, &self.project_root).await?;
         let to = CommitHash::resolve(to_revision, &self.project_root).await?;
         let diff = run_git(

@@ -243,7 +243,7 @@ impl CacheStore {
         };
         if !metadata.file_type().is_dir() {
             debug!(
-                "cache root rejected path={:?} reason=not-directory-or-symlink",
+                "cache root rejected path={:?} reason=not-directory-or-is-symlink",
                 self.root
             );
             return Err(CachePruneError::UnsafeRoot {

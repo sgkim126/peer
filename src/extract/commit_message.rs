@@ -13,7 +13,7 @@ pub struct CommitMessage {
 
 impl Extractor {
     pub async fn commit_message(&self, revision: &str) -> Result<CommitMessage, ExtractError> {
-        trace!("extract commit message: {revision}");
+        trace!("extract commit message: {revision:?}");
         let hash = CommitHash::resolve(revision, &self.project_root).await?;
 
         let output = run_git(
