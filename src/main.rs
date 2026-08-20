@@ -213,40 +213,6 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Extract { command } => {
-            let cwd = match std::env::current_dir() {
-                Ok(cwd) => cwd,
-                Err(err) => {
-                    eprintln!("cannot determine current directory.");
-                    debug!("{err:?}");
-                    return ExitCode::FAILURE;
-                }
-            };
-            let (config, project_root) = match discover(&cwd) {
-                Ok((config, project_root)) => (config, project_root),
-                Err(err) => {
-                    eprintln!("{err}");
-                    debug!("{err:?}");
-                    return ExitCode::FAILURE;
-                }
-            };
-
-            match extract::handler(&command, config, project_root).await {
-                Ok(data) => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&data)
-                            .expect("serialisation should never fail")
-                    );
-                    ExitCode::SUCCESS
-                }
-                Err(err) => {
-                    eprintln!("error: {err}");
-                    debug!("{err:?}");
-                    ExitCode::FAILURE
-                }
-            }
-        }
         Command::Render { format, repo } => {
             let options = match render::RenderOptions::from_cli(format, repo) {
                 Ok(options) => options,

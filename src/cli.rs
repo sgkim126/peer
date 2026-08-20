@@ -1,4 +1,3 @@
-use std::num::NonZeroU8;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -50,60 +49,12 @@ pub enum Command {
         repo: Option<String>,
     },
 
-    Extract {
-        #[command(subcommand)]
-        command: ExtractCommand,
-    },
-
     Render {
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
 
         #[arg(long, required_if_eq("format", "github"))]
         repo: Option<String>,
-    },
-}
-
-#[derive(Subcommand, Debug, PartialEq)]
-#[command(rename_all = "kebab-case")]
-pub enum ExtractCommand {
-    CommitMessage {
-        revision: String,
-    },
-    CommitDiff {
-        revision: String,
-    },
-    CommitFiles {
-        revision: String,
-    },
-    CommitList {
-        range: String,
-    },
-    FileContent {
-        revision: String,
-        #[arg(long)]
-        path: PathBuf,
-    },
-    FileDiff {
-        from_revision: String,
-        to_revision: String,
-        #[arg(long)]
-        path: PathBuf,
-    },
-    ListTree {
-        revision: String,
-        #[arg(long)]
-        path: Option<PathBuf>,
-        #[arg(long)]
-        recursive: bool,
-    },
-    Grep {
-        revision: String,
-        query: String,
-        #[arg(long)]
-        path: Option<PathBuf>,
-        #[arg(long, default_value = "2")]
-        context_lines: NonZeroU8,
     },
 }
 
@@ -326,184 +277,8 @@ mod tests {
     }
 
     #[test]
-    fn extract_commit_message() {
-        let cli = parse(&["peer", "extract", "commit-message", "abc123"]);
-
-        assert_eq!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::CommitMessage {
-                    revision: "abc123".into()
-                },
-            }
-        );
-    }
-
-    #[test]
-    fn extract_commit_diff() {
-        let cli = parse(&["peer", "extract", "commit-diff", "abc123"]);
-
-        assert_eq!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::CommitDiff {
-                    revision: "abc123".into()
-                },
-            }
-        );
-    }
-
-    #[test]
-    fn extract_commit_files() {
-        let cli = parse(&["peer", "extract", "commit-files", "abc123"]);
-
-        assert_eq!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::CommitFiles {
-                    revision: "abc123".into()
-                },
-            }
-        );
-    }
-
-    #[test]
-    fn extract_commit_list() {
-        let cli = parse(&["peer", "extract", "commit-list", "HEAD~3..HEAD"]);
-
-        assert_eq!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::CommitList {
-                    range: "HEAD~3..HEAD".into()
-                },
-            }
-        );
-    }
-
-    #[test]
-    fn extract_file_content() {
-        let cli = parse(&[
-            "peer",
-            "extract",
-            "file-content",
-            "abc123",
-            "--path",
-            "src/foo.rs",
-        ]);
-
-        assert_eq!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::FileContent {
-                    revision: "abc123".into(),
-                    path: PathBuf::from("src/foo.rs"),
-                },
-            }
-        );
-    }
-
-    #[test]
-    fn extract_file_diff() {
-        let cli = parse(&[
-            "peer",
-            "extract",
-            "file-diff",
-            "HEAD~1",
-            "HEAD",
-            "--path",
-            "src/foo.rs",
-        ]);
-
-        assert_eq!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::FileDiff {
-                    from_revision: "HEAD~1".into(),
-                    to_revision: "HEAD".into(),
-                    path: PathBuf::from("src/foo.rs"),
-                },
-            }
-        );
-    }
-
-    #[test]
-    fn extract_list_tree() {
-        let cli = parse(&[
-            "peer",
-            "extract",
-            "list-tree",
-            "HEAD",
-            "--path",
-            "src",
-            "--recursive",
-        ]);
-
-        assert_eq!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::ListTree {
-                    revision: "HEAD".into(),
-                    path: Some(PathBuf::from("src")),
-                    recursive: true,
-                },
-            }
-        );
-    }
-
-    #[test]
-    fn extract_grep() {
-        let cli = parse(&[
-            "peer",
-            "extract",
-            "grep",
-            "HEAD",
-            "validate_token",
-            "--path",
-            "src",
-            "--context-lines",
-            "2",
-        ]);
-
-        assert_eq!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::Grep {
-                    revision: "HEAD".into(),
-                    query: "validate_token".into(),
-                    path: Some(PathBuf::from("src")),
-                    context_lines: NonZeroU8::new(2).unwrap(),
-                },
-            }
-        );
-    }
-
-    #[test]
-    fn extract_grep_defaults_to_two_context_lines() {
-        let cli = parse(&["peer", "extract", "grep", "HEAD", "query"]);
-
-        assert_matches!(
-            cli.command,
-            Command::Extract {
-                command: ExtractCommand::Grep {
-                    context_lines,
-                    ..
-                },
-            } if context_lines == NonZeroU8::new(2).unwrap()
-        );
-    }
-
-    #[test]
-    fn extract_grep_rejects_zero_context_lines() {
-        let result = Cli::try_parse_from([
-            "peer",
-            "extract",
-            "grep",
-            "HEAD",
-            "query",
-            "--context-lines",
-            "0",
-        ]);
+    fn extract_is_not_a_command() {
+        let result = Cli::try_parse_from(["peer", "extract"]);
 
         assert_matches!(result, Err(_));
     }
