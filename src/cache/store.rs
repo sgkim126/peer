@@ -42,8 +42,6 @@ impl CacheStore {
 
     fn path_for(&self, key: &CacheKey) -> PathBuf {
         self.version_root()
-            .join(sanitize_path_segment(&key.provider))
-            .join(sanitize_path_segment(&key.model))
             .join(sanitize_path_segment(&key.namespace))
             .join(&key.params_hash[..2])
             .join(format!("{}.json", key.params_hash))
@@ -276,11 +274,11 @@ mod tests {
     }
 
     fn key(value: &str) -> CacheKey {
-        CacheKey::from_params("review/context", "provider:name", "model name", &value).unwrap()
+        CacheKey::from_params("review/context", &value).unwrap()
     }
 
     #[test]
-    fn path_orders_provider_and_model_before_namespace() {
+    fn path_uses_namespace_before_hash() {
         let store = CacheStore::new(".peer/cache");
         let key = key("key");
         let path = store.path_for(&key);
@@ -289,8 +287,6 @@ mod tests {
             path.starts_with(
                 Path::new(".peer/cache")
                     .join(CacheKey::version())
-                    .join("provider_name")
-                    .join("model_name")
                     .join("review_context")
             )
         );

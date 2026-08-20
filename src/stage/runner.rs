@@ -133,12 +133,8 @@ where
         expected_commits: stage.expected_commits(),
         request: &request,
     };
-    let cache_key = CacheKey::from_params(
-        format!("typed-stage-{}", stage.kind().as_str()),
-        config.model.provider(),
-        config.model.model(),
-        &params,
-    )?;
+    let cache_key =
+        CacheKey::from_params(format!("typed-stage-{}", stage.kind().as_str()), &params)?;
     if let Some(cached) = load_cache::<C>(cache, &cache_key, stage) {
         trace!(
             "typed stage cache hit: {} for {:?}",
@@ -158,8 +154,6 @@ where
     }
     let session_key = CacheKey::from_params(
         format!("pi-session-typed-stage-{}", stage.kind().as_str()),
-        config.model.provider(),
-        config.model.model(),
         &params,
     )?;
     trace!(
