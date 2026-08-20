@@ -14,10 +14,6 @@ use std::path::{Component, Path, PathBuf};
 pub use self::commit_files::CommitFiles;
 pub use self::commit_message::CommitMessage;
 pub use self::error::ExtractError;
-#[expect(
-    unused_imports,
-    reason = "retained until Pi's get_file_content tool supports range queries"
-)]
 pub use self::file_content::{FileContent, FileContentRange};
 
 /// Provides the programmatic entry point to repository extraction.
