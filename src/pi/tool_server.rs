@@ -8,12 +8,14 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use log::{error, warn};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
+#[cfg(test)]
+use serde_json::json;
 use tokio::io::{AsyncReadExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::task::{JoinHandle, JoinSet};
 
-use crate::extract::{ExtractError, Extractor, FileContent};
+use crate::extract::{ExtractError, Extractor, FileContent, FileContentRange};
 
 use super::rpc::{CodecError, read_record, write_record};
 
@@ -263,6 +265,7 @@ struct RangeArguments {
 struct FileArguments {
     revision: String,
     path: String,
+    range: Option<FileContentRange>,
 }
 
 #[derive(Deserialize)]
@@ -320,19 +323,14 @@ async fn execute_tool(
         }
         "get_file_content" => {
             let arguments: FileArguments = parse_arguments(tool, arguments)?;
-            let result = extractor
-                .file_content(&arguments.revision, Path::new(&arguments.path), None)
+            let result: FileContent = extractor
+                .file_content(
+                    &arguments.revision,
+                    Path::new(&arguments.path),
+                    arguments.range,
+                )
                 .await?;
-            match result {
-                FileContent::Text { content, .. } => Ok(json!({
-                    "type": "text",
-                    "content": content
-                })),
-                FileContent::Binary { size, .. } => Ok(json!({
-                    "type": "binary",
-                    "size": size
-                })),
-            }
+            Ok(serde_json::to_value(result)?)
         }
         "get_file_diff" => {
             let arguments: FileDiffArguments = parse_arguments(tool, arguments)?;
@@ -528,6 +526,61 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error.to_string(), "unknown peer read tool: unknown");
+    }
+
+    #[tokio::test]
+    async fn returns_file_content_for_the_requested_range() {
+        let repository = tempfile::tempdir().unwrap();
+        run_git(&["init"], repository.path()).await.unwrap();
+        run_git(
+            &["config", "user.email", "test@example.com"],
+            repository.path(),
+        )
+        .await
+        .unwrap();
+        run_git(&["config", "user.name", "Test"], repository.path())
+            .await
+            .unwrap();
+        fs::write(repository.path().join("file.txt"), "one\ntwo\nthree\n").unwrap();
+        run_git(&["add", "file.txt"], repository.path())
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "file content test"],
+            repository.path(),
+        )
+        .await
+        .unwrap();
+        let hash = run_git(&["rev-parse", "HEAD"], repository.path())
+            .await
+            .unwrap()
+            .trim()
+            .to_string();
+        let extractor = Extractor::new(repository.path().to_path_buf());
+
+        let result = execute_tool(
+            &extractor,
+            "get_file_content",
+            json!({
+                "revision": "HEAD",
+                "path": "file.txt",
+                "range": { "start_line": 2, "end_line": 3 }
+            }),
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            result,
+            json!({
+                "type": "text",
+                "path": "file.txt",
+                "hash": hash,
+                "content": "two\nthree\n",
+                "start_line": 2,
+                "end_line": 3
+            })
+        );
     }
 
     #[tokio::test]

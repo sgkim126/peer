@@ -92,6 +92,10 @@ export function registerReadTools(pi: ExtensionAPI, getConfig: GetConfig) {
         parameters: Type.Object({
             revision: Type.String(),
             path: Type.String(),
+            range: Type.Optional(Type.Object({
+                start_line: Type.Integer({ minimum: 1 }),
+                end_line: Type.Integer({ minimum: 1 }),
+            })),
         }),
         async execute(_id, params, signal) {
             return await execute(getConfig, "get_file_content", params, signal);

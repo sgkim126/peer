@@ -63,22 +63,6 @@ impl FileContentRange {
             end_line,
         })
     }
-
-    #[expect(
-        dead_code,
-        reason = "retained until Pi's get_file_content tool supports range queries"
-    )]
-    pub fn start_line(self) -> u32 {
-        self.start_line
-    }
-
-    #[expect(
-        dead_code,
-        reason = "retained until Pi's get_file_content tool supports range queries"
-    )]
-    pub fn end_line(self) -> u32 {
-        self.end_line
-    }
 }
 
 impl Extractor {
