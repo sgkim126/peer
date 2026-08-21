@@ -4,6 +4,7 @@ const STAGE_KINDS = [
     "commit_sequence",
     "size",
     "intent",
+    "knowledge",
     "quality",
     "security",
 ] as const;
@@ -26,6 +27,7 @@ const STAGE_TERMINAL_TOOLS = [
     "submit_commit_sequence",
     "submit_size",
     "submit_intent",
+    "submit_knowledge",
     "submit_quality",
     "submit_security",
 ] as const;
@@ -41,6 +43,7 @@ const STAGE_SUBMISSION_TOOLS: Record<StageKind, StageTerminalTool> = {
     commit_sequence: "submit_commit_sequence",
     size: "submit_size",
     intent: "submit_intent",
+    knowledge: "submit_knowledge",
     quality: "submit_quality",
     security: "submit_security",
 };

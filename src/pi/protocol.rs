@@ -15,6 +15,7 @@ pub enum StageKind {
     CommitSequence,
     Size,
     Intent,
+    Knowledge,
     Quality,
     Security,
 }
@@ -41,6 +42,7 @@ pub enum TerminalTool {
     SubmitCommitSequence,
     SubmitSize,
     SubmitIntent,
+    SubmitKnowledge,
     SubmitQuality,
     SubmitSecurity,
 }
@@ -120,6 +122,7 @@ mod tests {
             TerminalTool::SubmitCommitSequence,
             TerminalTool::SubmitSize,
             TerminalTool::SubmitIntent,
+            TerminalTool::SubmitKnowledge,
             TerminalTool::SubmitQuality,
             TerminalTool::SubmitSecurity,
         ];

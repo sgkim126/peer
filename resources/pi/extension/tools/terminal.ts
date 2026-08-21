@@ -109,6 +109,44 @@ const IntentIssue = Type.Intersect([
     })),
 ]);
 
+const KnowledgeLocation = Type.Object({
+    commit: Type.String({ minLength: 1 }),
+    file: Type.String({ minLength: 1 }),
+    line: Type.Optional(Type.Integer({ minimum: 1 })),
+});
+
+const KnowledgeQuestion = Type.Object({
+    category: Type.Union([
+        Type.Literal("objective"),
+        Type.Literal("expected_behavior"),
+        Type.Literal("constraint"),
+        Type.Literal("rationale"),
+        Type.Literal("tradeoff"),
+        Type.Literal("operations"),
+        Type.Literal("verification"),
+        Type.Literal("change_structure"),
+    ]),
+    question: Type.String({ minLength: 1 }),
+    evidence: Type.String({ minLength: 1 }),
+    why_it_matters: Type.String({ minLength: 1 }),
+    related_commits: Type.Array(Type.String({ minLength: 1 })),
+    location: Type.Optional(KnowledgeLocation),
+});
+
+const StructuralRecommendation = Type.Object({
+    kind: Type.Union([
+        Type.Literal("split_pull_request"),
+        Type.Literal("extract_prerequisite"),
+        Type.Literal("reorder_commits"),
+        Type.Literal("split_commit"),
+        Type.Literal("move_change"),
+        Type.Literal("merge_squash"),
+    ]),
+    message: Type.String({ minLength: 1 }),
+    rationale: Type.String({ minLength: 1 }),
+    related_commits: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+});
+
 const SecurityFinding = Type.Intersect([
     Finding,
     Type.Object({
@@ -247,6 +285,21 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
         async execute(_id, params) {
             requireStage(getConfig, "intent", "submit_intent");
             return completed(params, "Submitted intent stage.");
+        },
+    });
+
+    pi.registerTool({
+        name: "submit_knowledge",
+        label: "Submit Knowledge Review",
+        description: "Submit knowledge questions and conclusive structural recommendations.",
+        parameters: Type.Object({
+            summary: Type.String({ minLength: 1 }),
+            questions: Type.Array(KnowledgeQuestion),
+            recommendations: Type.Array(StructuralRecommendation),
+        }),
+        async execute(_id, params) {
+            requireStage(getConfig, "knowledge", "submit_knowledge");
+            return completed(params, "Submitted knowledge review.");
         },
     });
 

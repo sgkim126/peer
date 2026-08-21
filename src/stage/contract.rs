@@ -16,6 +16,7 @@ pub enum StageKind {
     CommitSequence,
     Size,
     Intent,
+    Knowledge,
     Quality,
     Security,
 }
@@ -28,6 +29,7 @@ impl StageKind {
             Self::CommitSequence => "commit_sequence",
             Self::Size => "size",
             Self::Intent => "intent",
+            Self::Knowledge => "knowledge",
             Self::Quality => "quality",
             Self::Security => "security",
         }
@@ -44,6 +46,7 @@ impl FromStr for StageKind {
             "commit_sequence" => Ok(Self::CommitSequence),
             "size" => Ok(Self::Size),
             "intent" => Ok(Self::Intent),
+            "knowledge" => Ok(Self::Knowledge),
             "quality" => Ok(Self::Quality),
             "security" => Ok(Self::Security),
             _ => Err(()),
@@ -150,6 +153,15 @@ mod tests {
     fn intent_string_matches_serialized_name() {
         assert_eq!(StageKind::Intent.as_str(), "intent");
         assert_eq!(serde_json::to_value(StageKind::Intent).unwrap(), "intent");
+    }
+
+    #[test]
+    fn knowledge_string_matches_serialized_name() {
+        assert_eq!(StageKind::Knowledge.as_str(), "knowledge");
+        assert_eq!(
+            serde_json::to_value(StageKind::Knowledge).unwrap(),
+            "knowledge"
+        );
     }
 
     #[test]
