@@ -110,6 +110,10 @@ impl KnowledgeStage {
             target,
         }
     }
+
+    fn contains_commit(&self, commit: &CommitHash) -> bool {
+        self.commits.iter().any(|expected| expected.matches(commit))
+    }
 }
 
 impl ReviewStage for KnowledgeStage {
@@ -162,7 +166,82 @@ impl ReviewStage for KnowledgeStage {
         }
     }
 
-    fn validate_report(&self, _report: &Self::Report) -> Result<(), String> {
+    fn validate_report(&self, report: &Self::Report) -> Result<(), String> {
+        if report.summary.trim().is_empty() {
+            return Err("knowledge summary must not be empty".to_string());
+        }
+        for question in &report.questions {
+            if question.question.trim().is_empty()
+                || question.evidence.trim().is_empty()
+                || question.why_it_matters.trim().is_empty()
+            {
+                return Err(
+                    "knowledge questions require a question, evidence, and why it matters"
+                        .to_string(),
+                );
+            }
+            if let Some(commit) = question
+                .related_commits
+                .iter()
+                .find(|commit| !self.contains_commit(commit))
+            {
+                return Err(format!(
+                    "knowledge question commit {commit} is outside the review"
+                ));
+            }
+            if let Some(location) = &question.location
+                && !self.contains_commit(&location.commit)
+            {
+                return Err(format!(
+                    "knowledge question location commit {} is outside the review",
+                    location.commit
+                ));
+            }
+        }
+        for recommendation in &report.recommendations {
+            if recommendation.message.trim().is_empty()
+                || recommendation.rationale.trim().is_empty()
+            {
+                return Err(
+                    "structural recommendations require a message and rationale".to_string()
+                );
+            }
+            if recommendation.related_commits.is_empty() {
+                return Err(
+                    "structural recommendations require at least one related commit".to_string(),
+                );
+            }
+            if let Some(commit) = recommendation
+                .related_commits
+                .iter()
+                .find(|commit| !self.contains_commit(commit))
+            {
+                return Err(format!(
+                    "structural recommendation commit {commit} is outside the review"
+                ));
+            }
+            if matches!(
+                recommendation.kind,
+                StructuralRecommendationKind::ReorderCommits
+                    | StructuralRecommendationKind::MergeSquash
+            ) && recommendation
+                .related_commits
+                .iter()
+                .enumerate()
+                .filter(|(index, commit)| {
+                    !recommendation.related_commits[..*index]
+                        .iter()
+                        .any(|previous| previous.matches(commit))
+                })
+                .count()
+                < 2
+            {
+                return Err(
+                    "reorder and merge/squash recommendations require at least two distinct related commits"
+                        .to_string(),
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -225,5 +304,117 @@ mod tests {
                 ReadTool::Grep,
             ]
         );
+    }
+
+    #[test]
+    fn accepts_any_number_of_valid_questions() {
+        let report = KnowledgeReport {
+            summary: "Several decisions need durable context".to_string(),
+            questions: vec![
+                KnowledgeQuestion {
+                    category: KnowledgeQuestionCategory::Rationale,
+                    question: "Why is the retry limit three?".to_string(),
+                    evidence: "The diff introduces RETRIES = 3 without an explanation".to_string(),
+                    why_it_matters: "Future tuning needs the original operational constraint"
+                        .to_string(),
+                    related_commits: vec![CommitHash::new("abc1234").unwrap()],
+                    location: None,
+                };
+                6
+            ],
+            recommendations: vec![],
+        };
+
+        assert_eq!(stage().validate_report(&report), Ok(()));
+    }
+
+    #[test]
+    fn rejects_commits_outside_the_review() {
+        let report = KnowledgeReport {
+            summary: "One decision needs durable context".to_string(),
+            questions: vec![KnowledgeQuestion {
+                category: KnowledgeQuestionCategory::Rationale,
+                question: "Why is the retry limit three?".to_string(),
+                evidence: "The diff introduces RETRIES = 3 without an explanation".to_string(),
+                why_it_matters: "Future tuning needs the original operational constraint"
+                    .to_string(),
+                related_commits: vec![CommitHash::new("def5678").unwrap()],
+                location: None,
+            }],
+            recommendations: vec![],
+        };
+
+        assert_eq!(
+            stage().validate_report(&report).unwrap_err(),
+            "knowledge question commit def5678 is outside the review"
+        );
+    }
+
+    #[test]
+    fn recommendations_require_a_related_commit() {
+        let report = KnowledgeReport {
+            summary: "The migration should be separated".to_string(),
+            questions: vec![],
+            recommendations: vec![StructuralRecommendation {
+                kind: StructuralRecommendationKind::SplitCommit,
+                message: "Split the unrelated migration".to_string(),
+                rationale: "It can be reviewed and reverted independently".to_string(),
+                related_commits: vec![],
+            }],
+        };
+
+        assert_eq!(
+            stage().validate_report(&report).unwrap_err(),
+            "structural recommendations require at least one related commit"
+        );
+    }
+
+    #[test]
+    fn reorder_and_merge_recommendations_require_two_related_commits() {
+        for kind in [
+            StructuralRecommendationKind::ReorderCommits,
+            StructuralRecommendationKind::MergeSquash,
+        ] {
+            let report = KnowledgeReport {
+                summary: "The commits need structural changes".to_string(),
+                questions: vec![],
+                recommendations: vec![StructuralRecommendation {
+                    kind,
+                    message: "Update the commit structure".to_string(),
+                    rationale: "This recommendation operates on multiple commits".to_string(),
+                    related_commits: vec![CommitHash::new("abc1234").unwrap()],
+                }],
+            };
+
+            assert_eq!(
+                stage().validate_report(&report).unwrap_err(),
+                "reorder and merge/squash recommendations require at least two distinct related commits"
+            );
+        }
+    }
+
+    #[test]
+    fn reorder_and_merge_recommendations_reject_duplicate_related_commits() {
+        for kind in [
+            StructuralRecommendationKind::ReorderCommits,
+            StructuralRecommendationKind::MergeSquash,
+        ] {
+            let related = CommitHash::new("abc1234").unwrap();
+            let report = KnowledgeReport {
+                summary: "The commits need structural changes".to_string(),
+                questions: vec![],
+                recommendations: vec![StructuralRecommendation {
+                    kind,
+                    message: "Update the commit structure".to_string(),
+                    rationale: "This recommendation operates on multiple commits".to_string(),
+                    related_commits: vec![related.clone(), related],
+                }],
+            };
+
+            assert_eq!(
+                stage().validate_report(&report).unwrap_err(),
+                "reorder and merge/squash recommendations require at least two distinct related commits"
+            );
+        }
     }
 }
