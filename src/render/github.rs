@@ -1,18 +1,51 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use crate::git::CommitHash;
 use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
+use crate::stage::Finding;
 #[cfg(test)]
 use crate::stage::StageResult;
-use crate::stage::{Finding, Severity, StageFailure, StageTarget};
+use crate::stage::{FileLocation, Severity, StageFailure, StageTarget};
 
 use super::{
-    RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message, escape_html,
-    escape_markdown,
+    RenderDocument, RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message,
+    escape_html, escape_markdown, join_review_sections, review_counts, usage_by_model,
 };
 
-pub fn render(result: &RenderStage, repo: &str) -> String {
+pub fn render(document: &RenderDocument, repo: &str) -> String {
+    let stages = document
+        .stages
+        .iter()
+        .map(|stage| render_stage(stage, repo))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let summary = document.summary.as_ref().map(|summary| {
+        render_review_summary(
+            summary,
+            document.context_usage.as_ref(),
+            &usage_by_model(document),
+            &review_counts(document),
+        )
+    });
+    let context = document
+        .summary
+        .is_none()
+        .then_some(document.context_usage.as_ref())
+        .flatten()
+        .map(render_context_usage);
+    let findings = render_findings(&document.findings, repo);
+    join_review_sections(
+        summary
+            .into_iter()
+            .chain([findings])
+            .chain(context)
+            .chain([stages]),
+    )
+}
+
+pub fn render_stage(result: &RenderStage, repo: &str) -> String {
     let mut body = String::new();
     writeln!(body, "## Stage: {}", escape_github_markdown(&result.stage)).unwrap();
     writeln!(body).unwrap();
@@ -22,15 +55,6 @@ pub fn render(result: &RenderStage, repo: &str) -> String {
     if let Some(summary) = result.summary() {
         writeln!(body, "{}", escape_github_markdown(summary)).unwrap();
         writeln!(body).unwrap();
-    }
-    writeln!(body, "### Findings").unwrap();
-    writeln!(body).unwrap();
-    if result.findings().is_empty() {
-        writeln!(body, "None.").unwrap();
-    } else {
-        for finding in result.findings() {
-            writeln!(body, "- {}", render_finding(finding, repo)).unwrap();
-        }
     }
     if let Some(error) = result.error() {
         writeln!(body).unwrap();
@@ -118,10 +142,28 @@ pub fn render_review_summary(
     output.trim_end().to_string()
 }
 
-fn render_finding(finding: &Finding, repo: &str) -> String {
-    let commit = finding.commit.as_ref();
+fn render_findings(findings: &[Finding], repo: &str) -> String {
+    if findings.is_empty() {
+        return String::new();
+    }
+    let mut output = "## Review feedback\n".to_string();
+    for finding in findings {
+        let context = finding_context(&finding.commit, finding.location.as_ref(), repo);
+        writeln!(
+            output,
+            "- **finding/{}** — {} ({context})",
+            severity_name(finding.severity),
+            escape_github_markdown(&finding.message)
+        )
+        .unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn finding_context(commit: &CommitHash, location: Option<&FileLocation>, repo: &str) -> String {
+    let commit = commit.as_ref();
     let mut context = format!("[`{commit}`]({})", commit_url(repo, commit));
-    if let Some(location) = &finding.location {
+    if let Some(location) = location {
         let label = location_label(location.file.as_str(), location.line);
         write!(
             context,
@@ -131,11 +173,7 @@ fn render_finding(finding: &Finding, repo: &str) -> String {
         )
         .unwrap();
     }
-    format!(
-        "**{}** — {} ({context})",
-        severity_name(finding.severity),
-        escape_github_markdown(&finding.message)
-    )
+    context
 }
 
 fn display_error(error: RenderStageErrorRef<'_>) -> String {
@@ -310,12 +348,53 @@ mod tests {
 
     #[test]
     fn includes_commit_and_file_links() {
-        let output = render(&result().into(), "owner/repo");
+        let rendered = crate::render::RenderStageParts::from(result());
+        let output = render_findings(&rendered.findings, "owner/repo");
 
         assert!(output.contains("https://github.com/owner/repo/commit/abc1234"));
         assert!(output.contains("https://github.com/owner/repo/blob/abc1234/src/main.rs#L42"));
-        assert!(!output.contains("Cache-read tokens"));
-        assert!(!output.contains("Cache-write tokens"));
+    }
+
+    #[test]
+    fn renders_unified_feedback_without_reformatting_a_finding() {
+        let findings = vec![Finding {
+            commit: CommitHash::new("abc1234").unwrap(),
+            severity: Severity::High,
+            message: "High-risk finding.".to_string(),
+            location: Some(FileLocation {
+                file: "src/main.rs".to_string(),
+                line: Some(42),
+            }),
+        }];
+
+        let output = render_findings(&findings, "owner/repo");
+
+        assert!(output.contains(r"**finding/high** — High\-risk finding\."));
+        assert!(!output.contains("**finding/high** — **high**"));
+        assert!(output.contains("https://github.com/owner/repo/blob/abc1234/src/main.rs#L42"));
+    }
+
+    #[test]
+    fn renders_unified_feedback_as_a_tight_list() {
+        let findings = vec![
+            Finding {
+                commit: CommitHash::new("abc1234").unwrap(),
+                severity: Severity::High,
+                message: "First.".to_string(),
+                location: None,
+            },
+            Finding {
+                commit: CommitHash::new("def5678").unwrap(),
+                severity: Severity::Low,
+                message: "Second.".to_string(),
+                location: None,
+            },
+        ];
+
+        let output = render_findings(&findings, "owner/repo");
+
+        assert!(output.starts_with("## Review feedback\n- "));
+        assert!(!output.contains("\n\n- "));
     }
 
     #[test]
@@ -324,7 +403,8 @@ mod tests {
         result.usage.cache_read_tokens = 80;
         result.usage.cache_write_tokens = 10;
 
-        let output = render(&result.into(), "owner/repo");
+        let rendered = crate::render::RenderStageParts::from(result);
+        let output = render_stage(&rendered.stage, "owner/repo");
 
         assert!(output.contains("- **Cache-read tokens:** 80"));
         assert!(output.contains("- **Cache-write tokens:** 10"));
@@ -341,14 +421,16 @@ mod tests {
             line: Some(7),
         });
 
-        let output = render(&result.into(), "owner/repo");
+        let rendered = crate::render::RenderStageParts::from(result);
+        let stage_output = render_stage(&rendered.stage, "owner/repo");
+        let findings_output = render_findings(&rendered.findings, "owner/repo");
 
-        assert!(output.contains("<summary>Stage: stage &lt;/summary&gt;&lt;script&gt;"));
-        assert!(output.contains("\\> quote \\- list"));
-        assert!(output.contains("\\[link\\]\\(url\\)"));
-        assert!(output.contains("[src/\\]unsafe\\[\\.rs:7]"));
-        assert!(output.contains("src/%5Dunsafe%5B.rs#L7"));
-        assert!(!output.contains("</summary><script>"));
+        assert!(stage_output.contains("<summary>Stage: stage &lt;/summary&gt;&lt;script&gt;"));
+        assert!(stage_output.contains("\\> quote \\- list"));
+        assert!(findings_output.contains("\\[link\\]\\(url\\)"));
+        assert!(findings_output.contains("[src/\\]unsafe\\[\\.rs:7]"));
+        assert!(findings_output.contains("src/%5Dunsafe%5B.rs#L7"));
+        assert!(!stage_output.contains("</summary><script>"));
     }
 
     #[test]
@@ -358,14 +440,16 @@ mod tests {
         result.summary = "Please notify @org/team".to_string();
         result.findings[0].message = "Assigned to @alice".to_string();
 
-        let output = render(&result.into(), "owner/repo");
+        let rendered = crate::render::RenderStageParts::from(result);
+        let stage_output = render_stage(&rendered.stage, "owner/repo");
+        let findings_output = render_findings(&rendered.findings, "owner/repo");
 
-        assert!(output.contains("`@`reviewers"));
-        assert!(output.contains("`@`org/team"));
-        assert!(output.contains("`@`alice"));
-        assert!(!output.contains("@reviewers"));
-        assert!(!output.contains("@org/team"));
-        assert!(!output.contains("@alice"));
+        assert!(stage_output.contains("`@`reviewers"));
+        assert!(stage_output.contains("`@`org/team"));
+        assert!(findings_output.contains("`@`alice"));
+        assert!(!stage_output.contains("@reviewers"));
+        assert!(!stage_output.contains("@org/team"));
+        assert!(!findings_output.contains("@alice"));
     }
 
     #[test]

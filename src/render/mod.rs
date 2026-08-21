@@ -4,7 +4,6 @@ mod terminal;
 
 use std::collections::BTreeMap;
 use std::fmt;
-use std::io::IsTerminal;
 
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +25,8 @@ pub struct RenderDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_usage: Option<LlmUsage>,
     pub ordered_commits: Vec<CommitHash>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub findings: Vec<Finding>,
     pub stages: Vec<RenderStage>,
 }
 
@@ -46,13 +47,11 @@ pub enum RenderStageOutcome {
     },
     Issues {
         summary: String,
-        findings: Vec<Finding>,
         iterations: u32,
         usage: LlmUsage,
     },
     Exhausted {
         summary: String,
-        findings: Vec<Finding>,
         reason: String,
         iterations: u32,
         usage: LlmUsage,
@@ -67,7 +66,6 @@ pub enum RenderStageOutcome {
 pub enum RenderStageFailure {
     Stage {
         summary: String,
-        findings: Vec<Finding>,
         failure: StageFailure,
         iterations: u32,
         usage: LlmUsage,
@@ -120,20 +118,6 @@ impl RenderStage {
         }
     }
 
-    fn findings(&self) -> &[Finding] {
-        match &self.outcome {
-            RenderStageOutcome::Issues { findings, .. } => findings,
-            RenderStageOutcome::Exhausted { findings, .. } => findings,
-            RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Stage { findings, .. },
-            } => findings,
-            RenderStageOutcome::Clean { .. } => &[],
-            RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution { .. },
-            } => &[],
-        }
-    }
-
     fn iterations(&self) -> Option<u32> {
         match &self.outcome {
             RenderStageOutcome::Clean { iterations, .. } => Some(*iterations),
@@ -183,34 +167,61 @@ impl From<StageResult> for RenderDocument {
     fn from(mut result: StageResult) -> Self {
         let context_usage = result.context_usage.take();
         let ordered_commits = result.ordered_commits.clone();
+        let RenderStageParts { stage, findings } = result.into();
         Self {
             summary: None,
             context_usage,
             ordered_commits,
-            stages: vec![result.into()],
+            findings,
+            stages: vec![stage],
         }
     }
 }
 
 impl From<PipelineReviewResult> for RenderDocument {
     fn from(review: PipelineReviewResult) -> Self {
-        let mut stages = review
-            .stages
+        let PipelineReviewResult {
+            summary,
+            ordered_commits,
+            stages,
+            errors,
+        } = review;
+        let stage_parts = stages
             .into_iter()
-            .map(RenderStage::from)
-            .chain(review.errors.into_iter().map(RenderStage::from))
+            .map(RenderStageParts::from)
+            .chain(errors.into_iter().map(RenderStageParts::from))
             .collect::<Vec<_>>();
-        stages.sort_by_key(|stage| render_stage_order(stage, &review.ordered_commits));
+        let (stages, findings) = aggregate(stage_parts, &ordered_commits);
         Self {
-            summary: Some(review.summary),
+            summary: Some(summary),
             context_usage: None,
-            ordered_commits: review.ordered_commits,
+            ordered_commits,
+            findings,
             stages,
         }
     }
 }
 
-impl From<PipelineStageResult> for RenderStage {
+struct RenderStageParts {
+    stage: RenderStage,
+    findings: Vec<Finding>,
+}
+
+fn aggregate(
+    mut parts: Vec<RenderStageParts>,
+    ordered_commits: &[CommitHash],
+) -> (Vec<RenderStage>, Vec<Finding>) {
+    parts.sort_by_key(|parts| render_stage_order(&parts.stage, ordered_commits));
+    let (stages, findings): (Vec<_>, Vec<_>) = parts
+        .into_iter()
+        .map(|parts| (parts.stage, parts.findings))
+        .unzip();
+    let mut findings = findings.into_iter().flatten().collect::<Vec<_>>();
+    sort_findings_by_commit(&mut findings, ordered_commits);
+    (stages, findings)
+}
+
+impl From<PipelineStageResult> for RenderStageParts {
     fn from(stage: PipelineStageResult) -> Self {
         match stage {
             PipelineStageResult::ReviewContext(run) => {
@@ -299,17 +310,20 @@ impl From<PipelineStageResult> for RenderStage {
     }
 }
 
-impl From<PipelineExecutionError> for RenderStage {
+impl From<PipelineExecutionError> for RenderStageParts {
     fn from(error: PipelineExecutionError) -> Self {
         Self {
-            stage: error.stage.as_str().to_string(),
-            target: error.target,
-            outcome: RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution {
-                    reason: error.reason,
-                    usage: error.usage,
+            stage: RenderStage {
+                stage: error.stage.as_str().to_string(),
+                target: error.target,
+                outcome: RenderStageOutcome::Failed {
+                    failure: RenderStageFailure::Execution {
+                        reason: error.reason,
+                        usage: error.usage,
+                    },
                 },
             },
+            findings: Vec::new(),
         }
     }
 }
@@ -317,7 +331,7 @@ impl From<PipelineExecutionError> for RenderStage {
 fn render_typed_run<R>(
     run: StageRun<R>,
     completed: impl FnOnce(R) -> (String, Vec<Finding>),
-) -> RenderStage {
+) -> RenderStageParts {
     let StageRun {
         stage,
         target,
@@ -326,50 +340,62 @@ fn render_typed_run<R>(
         iterations,
         usage,
     } = run;
-    let outcome = match outcome {
+    let (outcome, findings) = match outcome {
         StageOutcome::Completed { report } => {
             let (summary, mut findings) = completed(report);
             sort_findings_by_commit(&mut findings, &ordered_commits);
             if findings.is_empty() {
-                RenderStageOutcome::Clean {
-                    summary,
-                    iterations,
-                    usage,
-                }
-            } else {
-                RenderStageOutcome::Issues {
-                    summary,
+                (
+                    RenderStageOutcome::Clean {
+                        summary,
+                        iterations,
+                        usage,
+                    },
                     findings,
-                    iterations,
-                    usage,
-                }
+                )
+            } else {
+                (
+                    RenderStageOutcome::Issues {
+                        summary,
+                        iterations,
+                        usage,
+                    },
+                    findings,
+                )
             }
         }
-        StageOutcome::Blocked { questions } => RenderStageOutcome::Failed {
-            failure: RenderStageFailure::Stage {
-                summary: "Additional review information is required.".to_string(),
-                findings: Vec::new(),
-                failure: StageFailure::ClarificationRequired { questions },
+        StageOutcome::Blocked { questions } => (
+            RenderStageOutcome::Failed {
+                failure: RenderStageFailure::Stage {
+                    summary: "Additional review information is required.".to_string(),
+                    failure: StageFailure::ClarificationRequired { questions },
+                    iterations,
+                    usage,
+                },
+            },
+            Vec::new(),
+        ),
+        StageOutcome::Exhausted { reason } => (
+            RenderStageOutcome::Exhausted {
+                summary: "Stage did not complete.".to_string(),
+                reason,
                 iterations,
                 usage,
             },
-        },
-        StageOutcome::Exhausted { reason } => RenderStageOutcome::Exhausted {
-            summary: "Stage did not complete.".to_string(),
-            findings: Vec::new(),
-            reason,
-            iterations,
-            usage,
-        },
+            Vec::new(),
+        ),
     };
-    RenderStage {
-        stage: stage.as_str().to_string(),
-        target,
-        outcome,
+    RenderStageParts {
+        stage: RenderStage {
+            stage: stage.as_str().to_string(),
+            target,
+            outcome,
+        },
+        findings,
     }
 }
 
-impl From<StageResult> for RenderStage {
+impl From<StageResult> for RenderStageParts {
     fn from(result: StageResult) -> Self {
         let StageResult {
             stage,
@@ -391,13 +417,11 @@ impl From<StageResult> for RenderStage {
             },
             None => RenderStageOutcome::Issues {
                 summary,
-                findings,
                 iterations,
                 usage,
             },
             Some(StageFailure::Exhausted { reason }) => RenderStageOutcome::Exhausted {
                 summary,
-                findings,
                 reason,
                 iterations,
                 usage,
@@ -405,7 +429,6 @@ impl From<StageResult> for RenderStage {
             Some(failure) => RenderStageOutcome::Failed {
                 failure: RenderStageFailure::Stage {
                     summary,
-                    findings,
                     failure,
                     iterations,
                     usage,
@@ -413,15 +436,18 @@ impl From<StageResult> for RenderStage {
             },
         };
         Self {
-            stage,
-            target,
-            outcome,
+            stage: RenderStage {
+                stage,
+                target,
+                outcome,
+            },
+            findings,
         }
     }
 }
 
 fn sort_findings_by_commit(findings: &mut [Finding], ordered_commits: &[CommitHash]) {
-    findings.sort_by_key(|finding| {
+    findings.sort_by_cached_key(|finding| {
         ordered_commits
             .iter()
             .position(|commit| commit.matches(&finding.commit))
@@ -565,86 +591,11 @@ impl RenderOptions {
 }
 
 pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
-    let counts = review_counts(&document);
     match options.format {
         RenderFormat::Json => Ok(serde_json::to_string_pretty(&document)?),
-        RenderFormat::Terminal => {
-            let use_color = std::io::stdout().is_terminal();
-            let stages = document
-                .stages
-                .iter()
-                .map(|result| terminal::render(result, use_color))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let summary = document.summary.as_ref().map(|summary| {
-                terminal::render_review_summary(
-                    summary,
-                    document.context_usage.as_ref(),
-                    &usage_by_model(&document),
-                    &counts,
-                    use_color,
-                )
-            });
-            let context = document
-                .summary
-                .is_none()
-                .then_some(document.context_usage.as_ref())
-                .flatten()
-                .map(terminal::render_context_usage);
-            Ok(join_review_sections(
-                summary.into_iter().chain(context).chain([stages]),
-            ))
-        }
-        RenderFormat::Markdown => {
-            let stages = document
-                .stages
-                .iter()
-                .map(markdown::render)
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let summary = document.summary.as_ref().map(|summary| {
-                markdown::render_review_summary(
-                    summary,
-                    document.context_usage.as_ref(),
-                    &usage_by_model(&document),
-                    &counts,
-                )
-            });
-            let context = document
-                .summary
-                .is_none()
-                .then_some(document.context_usage.as_ref())
-                .flatten()
-                .map(markdown::render_context_usage);
-            Ok(join_review_sections(
-                summary.into_iter().chain(context).chain([stages]),
-            ))
-        }
-        RenderFormat::Github { repo } => {
-            let stages = document
-                .stages
-                .iter()
-                .map(|result| github::render(result, &repo))
-                .collect::<Vec<_>>()
-                .join("\n\n");
-            let summary = document.summary.as_ref().map(|summary| {
-                github::render_review_summary(
-                    summary,
-                    document.context_usage.as_ref(),
-                    &usage_by_model(&document),
-                    &counts,
-                )
-            });
-            let context = document
-                .summary
-                .is_none()
-                .then_some(document.context_usage.as_ref())
-                .flatten()
-                .map(github::render_context_usage);
-            Ok(join_review_sections(
-                summary.into_iter().chain(context).chain([stages]),
-            ))
-        }
+        RenderFormat::Terminal => Ok(terminal::render(&document)),
+        RenderFormat::Markdown => Ok(markdown::render(&document)),
+        RenderFormat::Github { repo } => Ok(github::render(&document, &repo)),
     }
 }
 
@@ -652,24 +603,21 @@ pub fn render_pipeline(
     review: PipelineReviewResult,
     options: RenderOptions,
 ) -> Result<String, RenderError> {
-    if matches!(&options.format, RenderFormat::Json) {
-        return Ok(serde_json::to_string_pretty(&review)?);
-    }
     render(review.into(), options)
 }
 
 fn review_counts(document: &RenderDocument) -> ReviewCounts {
     let mut counts = ReviewCounts::default();
-    for stage in &document.stages {
-        for finding in stage.findings() {
-            match finding.severity {
-                Severity::Info => counts.info += 1,
-                Severity::Low => counts.low += 1,
-                Severity::Medium => counts.medium += 1,
-                Severity::High => counts.high += 1,
-                Severity::Critical => counts.critical += 1,
-            }
+    for severity in document.findings.iter().map(|finding| finding.severity) {
+        match severity {
+            Severity::Info => counts.info += 1,
+            Severity::Low => counts.low += 1,
+            Severity::Medium => counts.medium += 1,
+            Severity::High => counts.high += 1,
+            Severity::Critical => counts.critical += 1,
         }
+    }
+    for stage in &document.stages {
         match stage.outcome {
             RenderStageOutcome::Exhausted { .. } => counts.exhausted += 1,
             RenderStageOutcome::Failed { .. } => counts.failed += 1,
@@ -913,15 +861,16 @@ mod tests {
         context_usage: Option<LlmUsage>,
     ) -> RenderDocument {
         let ordered_commits = review_ordered_commits();
-        let mut stages = stages
+        let stage_parts = stages
             .into_iter()
-            .map(RenderStage::from)
+            .map(RenderStageParts::from)
             .collect::<Vec<_>>();
-        stages.sort_by_key(|stage| render_stage_order(stage, &ordered_commits));
+        let (stages, findings) = aggregate(stage_parts, &ordered_commits);
         RenderDocument {
             summary: Some(review_summary()),
             context_usage,
             ordered_commits,
+            findings,
             stages,
         }
     }
@@ -934,9 +883,9 @@ mod tests {
             CommitHash::new(&format!("def5678{}", "0".repeat(33))).unwrap(),
         ];
 
-        let result = RenderStage::from(result);
-        assert_eq!(result.findings()[0].commit.as_ref(), "abc1234");
-        assert_eq!(result.findings()[1].commit.as_ref(), "def5678");
+        let result = RenderStageParts::from(result);
+        assert_eq!(result.findings[0].commit.as_ref(), "abc1234");
+        assert_eq!(result.findings[1].commit.as_ref(), "def5678");
     }
 
     #[test]
@@ -983,16 +932,16 @@ mod tests {
             RenderStageOutcome::Issues { .. }
         );
         assert_eq!(
-            document.stages[0]
-                .findings()
+            document
+                .findings
                 .iter()
                 .map(|finding| finding.commit.as_ref())
                 .collect::<Vec<_>>(),
             ["abc1234", "def5678"]
         );
         assert!(
-            document.stages[0]
-                .findings()
+            document
+                .findings
                 .iter()
                 .all(|finding| finding.message == "Cross-commit issue.")
         );
@@ -1047,11 +996,11 @@ mod tests {
         ));
 
         assert_matches!(
-            RenderStage::from(clean).outcome,
+            RenderStageParts::from(clean).stage.outcome,
             RenderStageOutcome::Clean { summary, .. } if summary == "Context is sufficient."
         );
         assert_matches!(
-            RenderStage::from(blocked).outcome,
+            RenderStageParts::from(blocked).stage.outcome,
             RenderStageOutcome::Failed {
                 failure: RenderStageFailure::Stage {
                     failure: StageFailure::ClarificationRequired { questions },
@@ -1063,7 +1012,7 @@ mod tests {
             }]
         );
         assert_matches!(
-            RenderStage::from(exhausted).outcome,
+            RenderStageParts::from(exhausted).stage.outcome,
             RenderStageOutcome::Exhausted { reason, .. }
                 if reason == "iteration limit reached"
         );
@@ -1150,10 +1099,7 @@ mod tests {
         assert_eq!(value["summary"].get("usage_by_model"), None);
         assert_eq!(value["stages"].as_array().unwrap().len(), 2);
         assert_eq!(value["stages"][0]["stage"], "security");
-        assert_eq!(
-            value["stages"][0]["outcome"]["findings"][0]["commit"],
-            "abc1234"
-        );
+        assert_eq!(value["findings"][0]["commit"], "abc1234");
         assert_eq!(value["stages"][1]["target"], "fedcba9");
     }
 
@@ -1307,8 +1253,8 @@ mod tests {
             },
         };
 
-        assert!(!markdown::render(&stage).contains("### Metadata"));
-        assert!(!github::render(&stage, "owner/repo").contains("### Metadata"));
+        assert!(!markdown::render_stage(&stage).contains("### Metadata"));
+        assert!(!github::render_stage(&stage, "owner/repo").contains("### Metadata"));
     }
 
     #[test]
@@ -1324,7 +1270,7 @@ mod tests {
             },
         };
 
-        assert!(markdown::render(&stage).contains("### Metadata"));
+        assert!(markdown::render_stage(&stage).contains("### Metadata"));
     }
 
     #[test]
@@ -1340,7 +1286,7 @@ mod tests {
             },
         };
 
-        assert!(github::render(&stage, "owner/repo").contains("### Metadata"));
+        assert!(github::render_stage(&stage, "owner/repo").contains("### Metadata"));
     }
 
     #[test]
@@ -1362,17 +1308,7 @@ mod tests {
         let mut critical = result();
         critical.findings.truncate(1);
         critical.findings[0].severity = Severity::Critical;
-        let document = RenderDocument {
-            summary: Some(review_summary()),
-            context_usage: None,
-            ordered_commits: review_ordered_commits(),
-            stages: vec![
-                result().into(),
-                exhausted.into(),
-                failed.into(),
-                critical.into(),
-            ],
-        };
+        let document = review_document(vec![result(), exhausted, failed, critical], None);
 
         assert_eq!(
             review_counts(&document),
@@ -1422,12 +1358,7 @@ mod tests {
                 ],
             ),
         ] {
-            let document = RenderDocument {
-                summary: Some(review_summary()),
-                context_usage: None,
-                ordered_commits: review_ordered_commits(),
-                stages: vec![result().into()],
-            };
+            let document = review_document(vec![result()], None);
 
             let output = render(document, RenderOptions::from_cli(format, repo).unwrap()).unwrap();
 
@@ -1489,7 +1420,7 @@ mod tests {
         let ordered_commits = vec![first.clone(), second];
         let mut stages = vec![security_second, intent_second, security_first]
             .into_iter()
-            .map(RenderStage::from)
+            .map(|result| RenderStageParts::from(result).stage)
             .collect::<Vec<_>>();
         stages.push(RenderStage {
             stage: "quality".to_string(),
@@ -1506,6 +1437,7 @@ mod tests {
             summary: Some(review_summary()),
             context_usage: None,
             ordered_commits,
+            findings: Vec::new(),
             stages,
         };
 
@@ -1578,11 +1510,27 @@ mod tests {
                     StageTarget::Commit(first.clone()),
                     &ordered_commits,
                 )),
-                PipelineStageResult::Quality(exhausted_stage_run(
-                    StageKind::Quality,
-                    StageTarget::Commit(second.clone()),
-                    &ordered_commits,
-                )),
+                PipelineStageResult::Quality(StageRun {
+                    stage: StageKind::Quality,
+                    target: StageTarget::Commit(second.clone()),
+                    ordered_commits: ordered_commits.clone(),
+                    outcome: StageOutcome::Completed {
+                        report: crate::stage::QualityReport {
+                            summary: "Found a quality issue.".to_string(),
+                            findings: vec![Finding {
+                                commit: second.clone(),
+                                severity: Severity::High,
+                                message: "Unchecked pipeline output.".to_string(),
+                                location: Some(FileLocation {
+                                    file: "src/pipeline.rs".to_string(),
+                                    line: Some(42),
+                                }),
+                            }],
+                        },
+                    },
+                    iterations: 2,
+                    usage: result().usage,
+                }),
                 PipelineStageResult::Security(exhausted_stage_run(
                     StageKind::Security,
                     StageTarget::Commit(second),
@@ -1599,8 +1547,15 @@ mod tests {
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
         let stages = value["stages"].as_array().unwrap();
+        let findings = value["findings"].as_array().unwrap();
 
         assert_eq!(value["ordered_commits"][0], "abc1234");
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0]["commit"], "def5678");
+        assert_eq!(findings[0]["severity"], "high");
+        assert_eq!(findings[0]["message"], "Unchecked pipeline output.");
+        assert_eq!(findings[0]["file"], "src/pipeline.rs");
+        assert_eq!(findings[0]["line"], 42);
         assert_eq!(
             stages
                 .iter()
@@ -1617,12 +1572,18 @@ mod tests {
             ]
         );
         assert_eq!(stages.len(), 7);
-        for stage in stages {
-            let result = &stage["result"];
-            assert_eq!(result["outcome"]["status"], "exhausted");
-            assert_eq!(result["outcome"]["reason"], "iteration limit reached");
-            assert_eq!(result["iterations"], 3);
+        for stage in stages.iter().filter(|stage| stage["stage"] != "quality") {
+            assert_eq!(stage["outcome"]["status"], "exhausted");
+            assert_eq!(stage["outcome"]["reason"], "iteration limit reached");
+            assert_eq!(stage["outcome"]["iterations"], 3);
         }
+        let quality = stages
+            .iter()
+            .find(|stage| stage["stage"] == "quality")
+            .unwrap();
+        assert_eq!(quality["outcome"]["status"], "issues");
+        assert_eq!(quality["outcome"]["iterations"], 2);
+        assert!(quality["outcome"].get("findings").is_none());
     }
 
     #[test]
