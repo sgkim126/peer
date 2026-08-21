@@ -45,7 +45,7 @@ pub fn render(document: &RenderDocument) -> String {
     )
 }
 
-pub fn render_stage(result: &RenderStage) -> String {
+fn render_stage(result: &RenderStage) -> String {
     let mut output = String::new();
     writeln!(output, "## Stage: {}", escape_markdown(&result.stage)).unwrap();
     writeln!(output).unwrap();
@@ -82,13 +82,13 @@ pub fn render_stage(result: &RenderStage) -> String {
     output.trim_end().to_string()
 }
 
-pub fn render_context_usage(usage: &LlmUsage) -> String {
+fn render_context_usage(usage: &LlmUsage) -> String {
     let mut output = String::new();
     write_usage_markdown(&mut output, "Context usage", usage);
     output.trim().to_string()
 }
 
-pub fn render_review_summary(
+fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
@@ -321,6 +321,38 @@ mod tests {
 
         assert!(output.contains("- **Cache-read tokens:** 80"));
         assert!(output.contains("- **Cache-write tokens:** 10"));
+    }
+
+    #[test]
+    fn execution_failure_omits_empty_metadata() {
+        let stage = RenderStage {
+            stage: "quality".into(),
+            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            outcome: crate::render::RenderStageOutcome::Failed {
+                failure: crate::render::RenderStageFailure::Execution {
+                    reason: "provider unavailable".into(),
+                    usage: None,
+                },
+            },
+        };
+
+        assert!(!render_stage(&stage).contains("### Metadata"));
+    }
+
+    #[test]
+    fn execution_failure_renders_metadata_with_usage() {
+        let stage = RenderStage {
+            stage: "quality".into(),
+            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            outcome: crate::render::RenderStageOutcome::Failed {
+                failure: crate::render::RenderStageFailure::Execution {
+                    reason: "invalid typed stage report".into(),
+                    usage: Some(result().usage),
+                },
+            },
+        };
+
+        assert!(render_stage(&stage).contains("### Metadata"));
     }
 
     #[test]

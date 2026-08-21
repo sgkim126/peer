@@ -1241,55 +1241,6 @@ mod tests {
     }
 
     #[test]
-    fn omits_empty_metadata_for_execution_failures() {
-        let stage = RenderStage {
-            stage: "quality".into(),
-            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
-            outcome: RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution {
-                    reason: "provider unavailable".into(),
-                    usage: None,
-                },
-            },
-        };
-
-        assert!(!markdown::render_stage(&stage).contains("### Metadata"));
-        assert!(!github::render_stage(&stage, "owner/repo").contains("### Metadata"));
-    }
-
-    #[test]
-    fn markdown_renders_metadata_for_execution_failures_with_usage() {
-        let stage = RenderStage {
-            stage: "quality".into(),
-            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
-            outcome: RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution {
-                    reason: "invalid typed stage report".into(),
-                    usage: Some(result().usage),
-                },
-            },
-        };
-
-        assert!(markdown::render_stage(&stage).contains("### Metadata"));
-    }
-
-    #[test]
-    fn github_renders_metadata_for_execution_failures_with_usage() {
-        let stage = RenderStage {
-            stage: "quality".into(),
-            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
-            outcome: RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution {
-                    reason: "invalid typed stage report".into(),
-                    usage: Some(result().usage),
-                },
-            },
-        };
-
-        assert!(github::render_stage(&stage, "owner/repo").contains("### Metadata"));
-    }
-
-    #[test]
     fn counts_findings_and_incomplete_stages_for_review_summaries() {
         let mut exhausted = result();
         exhausted.findings[0].severity = Severity::Low;

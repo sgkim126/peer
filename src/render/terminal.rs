@@ -98,13 +98,13 @@ fn render_stage(result: &RenderStage, use_color: bool) -> String {
     output
 }
 
-pub fn render_context_usage(usage: &LlmUsage) -> String {
+fn render_context_usage(usage: &LlmUsage) -> String {
     let mut output = String::new();
     write_usage(&mut output, "Context usage", usage);
     output.trim().to_string()
 }
 
-pub fn render_review_summary(
+fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
