@@ -290,6 +290,7 @@ impl From<PipelineStageResult> for RenderStageParts {
                     .collect();
                 (report.summary, findings)
             }),
+            PipelineStageResult::Knowledge(run) => render_knowledge_run(run),
             PipelineStageResult::Quality(run) => {
                 render_typed_run(run, |report| (report.summary, report.findings))
             }
@@ -326,6 +327,55 @@ impl From<PipelineExecutionError> for RenderStageParts {
             findings: Vec::new(),
         }
     }
+}
+
+fn render_knowledge_run(run: StageRun<crate::stage::KnowledgeReport>) -> RenderStageParts {
+    render_typed_run(run, |report| {
+        let questions = report.questions.into_iter().flat_map(|question| {
+            let message = format!(
+                "question/{}: {} Evidence: {} Why it matters: {}",
+                question.category.as_str(),
+                question.question,
+                question.evidence,
+                question.why_it_matters,
+            );
+            question
+                .related_commits
+                .into_iter()
+                .map(move |commit| Finding {
+                    location: question.location.as_ref().and_then(|location| {
+                        location
+                            .commit
+                            .matches(&commit)
+                            .then(|| location.file.clone())
+                    }),
+                    commit,
+                    severity: Severity::Info,
+                    message: message.clone(),
+                })
+        });
+        let recommendations = report
+            .recommendations
+            .into_iter()
+            .flat_map(|recommendation| {
+                let message = format!(
+                    "recommendation/{}: {} Rationale: {}",
+                    recommendation.kind.as_str(),
+                    recommendation.message,
+                    recommendation.rationale,
+                );
+                recommendation
+                    .related_commits
+                    .into_iter()
+                    .map(move |commit| Finding {
+                        commit,
+                        severity: Severity::Info,
+                        message: message.clone(),
+                        location: None,
+                    })
+            });
+        (report.summary, questions.chain(recommendations).collect())
+    })
 }
 
 fn render_typed_run<R>(
@@ -946,6 +996,67 @@ mod tests {
                 .iter()
                 .all(|finding| finding.message == "Cross-commit issue.")
         );
+    }
+
+    #[test]
+    fn knowledge_questions_and_recommendations_share_the_feedback_level() {
+        let commit = CommitHash::new("abc1234").unwrap();
+        let report: crate::stage::KnowledgeReport = serde_json::from_value(serde_json::json!({
+            "summary": "One question and one recommendation.",
+            "questions": [{
+                "category": "rationale",
+                "question": "Why is the retry limit three?",
+                "evidence": "The diff introduces a literal retry limit.",
+                "why_it_matters": "Future tuning needs the original constraint.",
+                "related_commits": [commit]
+            }],
+            "recommendations": [{
+                "kind": "split_commit",
+                "message": "Split the migration from the retry change.",
+                "rationale": "The migration is independently reviewable.",
+                "related_commits": [commit]
+            }]
+        }))
+        .unwrap();
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: vec![commit.clone()],
+            stages: vec![PipelineStageResult::Knowledge(StageRun {
+                stage: StageKind::Knowledge,
+                target: StageTarget::Commit(commit.clone()),
+                ordered_commits: vec![commit],
+                outcome: StageOutcome::Completed { report },
+                iterations: 1,
+                usage: LlmUsage::zero("test-model"),
+            })],
+            errors: Vec::new(),
+        };
+
+        let document = RenderDocument::from(review);
+
+        assert_eq!(document.findings.len(), 2);
+        assert_matches!(
+            &document.stages[0].outcome,
+            RenderStageOutcome::Issues { .. }
+        );
+        assert!(
+            document.findings[0]
+                .message
+                .starts_with("question/rationale:")
+        );
+        assert!(
+            document.findings[1]
+                .message
+                .starts_with("recommendation/split_commit:")
+        );
+        let output = render(
+            document,
+            RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(output.matches("## Review feedback").count(), 1);
+        assert!(output.contains("question/rationale:"));
+        assert!(output.contains("recommendation/split\\_commit:"));
     }
 
     #[test]

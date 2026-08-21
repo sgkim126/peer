@@ -34,7 +34,6 @@ pub enum KnowledgeQuestionCategory {
 }
 
 impl KnowledgeQuestionCategory {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Objective => "objective",
@@ -81,7 +80,6 @@ pub enum StructuralRecommendationKind {
 }
 
 impl StructuralRecommendationKind {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::SplitPullRequest => "split_pull_request",
@@ -119,7 +117,6 @@ pub struct KnowledgeStage {
 }
 
 impl KnowledgeStage {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn new(input: ReviewInput, context: ReviewContextReport) -> Self {
         let commits = input
             .commits
