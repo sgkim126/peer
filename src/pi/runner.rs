@@ -42,7 +42,7 @@ pub struct PiRunResult {
 #[derive(Debug)]
 pub struct PiRunFailure {
     pub error: PiRunError,
-    pub usage: Option<LlmUsage>,
+    pub usage: Option<Box<LlmUsage>>,
 }
 
 impl From<PiRunError> for PiRunFailure {
@@ -421,7 +421,10 @@ impl PiRunner {
                         None
                     }
                 };
-                return Err(PiRunFailure { error, usage });
+                return Err(PiRunFailure {
+                    error,
+                    usage: usage.map(Box::new),
+                });
             }
         };
         match outcome {
@@ -453,7 +456,7 @@ impl PiRunner {
                 };
                 Err(PiRunFailure {
                     error: PiRunError::Exhausted { turns },
-                    usage: Some(usage),
+                    usage: Some(Box::new(usage)),
                 })
             }
         }
