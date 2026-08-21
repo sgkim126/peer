@@ -47,6 +47,8 @@ pub struct StagesConfig {
     #[serde(default)]
     pub intent: StageConfig,
     #[serde(default)]
+    pub knowledge: StageConfig,
+    #[serde(default)]
     pub quality: StageConfig,
     #[serde(default)]
     pub security: StageConfig,
@@ -67,6 +69,7 @@ impl Config {
             "commit_sequence" => self.stages.commit_sequence.max_iterations,
             "size" => self.stages.size.max_iterations,
             "intent" => self.stages.intent.max_iterations,
+            "knowledge" => self.stages.knowledge.max_iterations,
             "quality" => self.stages.quality.max_iterations,
             "security" => self.stages.security.max_iterations,
             _ => None,
