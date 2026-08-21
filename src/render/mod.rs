@@ -437,8 +437,9 @@ fn render_stage_order(stage: &RenderStage, ordered_commits: &[CommitHash]) -> (u
             StageKind::CommitSequence => 2,
             StageKind::Size => 3,
             StageKind::Intent => 4,
-            StageKind::Quality => 5,
-            StageKind::Security => 6,
+            StageKind::Knowledge => 5,
+            StageKind::Quality => 6,
+            StageKind::Security => 7,
         }
     }
 

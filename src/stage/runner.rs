@@ -333,6 +333,7 @@ impl From<StageKind> for PiStageKind {
             StageKind::CommitSequence => Self::CommitSequence,
             StageKind::Size => Self::Size,
             StageKind::Intent => Self::Intent,
+            StageKind::Knowledge => Self::Knowledge,
             StageKind::Quality => Self::Quality,
             StageKind::Security => Self::Security,
         }
@@ -347,6 +348,7 @@ impl From<StageKind> for TerminalTool {
             StageKind::CommitSequence => Self::SubmitCommitSequence,
             StageKind::Size => Self::SubmitSize,
             StageKind::Intent => Self::SubmitIntent,
+            StageKind::Knowledge => Self::SubmitKnowledge,
             StageKind::Quality => Self::SubmitQuality,
             StageKind::Security => Self::SubmitSecurity,
         }
@@ -495,6 +497,14 @@ mod tests {
     }
 
     #[test]
+    fn converts_knowledge_stage_kind_for_pi_protocol() {
+        assert_eq!(
+            PiStageKind::from(StageKind::Knowledge),
+            PiStageKind::Knowledge
+        );
+    }
+
+    #[test]
     fn converts_quality_stage_kind_for_pi_protocol() {
         assert_eq!(PiStageKind::from(StageKind::Quality), PiStageKind::Quality);
     }
@@ -544,6 +554,14 @@ mod tests {
         assert_eq!(
             TerminalTool::from(StageKind::Intent),
             TerminalTool::SubmitIntent,
+        );
+    }
+
+    #[test]
+    fn maps_knowledge_stage_to_submit_tool() {
+        assert_eq!(
+            TerminalTool::from(StageKind::Knowledge),
+            TerminalTool::SubmitKnowledge,
         );
     }
 
