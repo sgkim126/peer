@@ -1,9 +1,5 @@
 const STAGE_KINDS = [
     "review_context",
-    "commit_scope",
-    "commit_sequence",
-    "size",
-    "intent",
     "knowledge",
     "quality",
     "security",
@@ -23,10 +19,6 @@ const READ_TOOLS = [
 const STAGE_TERMINAL_TOOLS = [
     "request_clarification",
     "submit_review_context",
-    "submit_commit_scope",
-    "submit_commit_sequence",
-    "submit_size",
-    "submit_intent",
     "submit_knowledge",
     "submit_quality",
     "submit_security",
@@ -39,10 +31,6 @@ export type TerminalTool = StageTerminalTool;
 
 const STAGE_SUBMISSION_TOOLS: Record<StageKind, StageTerminalTool> = {
     review_context: "submit_review_context",
-    commit_scope: "submit_commit_scope",
-    commit_sequence: "submit_commit_sequence",
-    size: "submit_size",
-    intent: "submit_intent",
     knowledge: "submit_knowledge",
     quality: "submit_quality",
     security: "submit_security",

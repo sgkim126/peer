@@ -10,10 +10,9 @@ use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::pi::{ModelRef, ModelRefError, PiRuntime};
 use crate::stage::{
-    CommitScopeReport, CommitSequenceReport, IntentReport, KnowledgeReport, KnowledgeStage,
-    QualityReport, QualityStage, ReviewContextReport, ReviewContextStage, ReviewStage,
-    SecurityReport, SecurityStage, SizeReport, StageKind, StageOutcome, StageRun, StageRunConfig,
-    StageRunError, StageTarget,
+    KnowledgeReport, KnowledgeStage, QualityReport, QualityStage, ReviewContextReport,
+    ReviewContextStage, ReviewStage, SecurityReport, SecurityStage, StageKind, StageOutcome,
+    StageRun, StageRunConfig, StageRunError, StageTarget,
 };
 
 use super::{ReviewInput, ReviewSummary, ReviewTarget};
@@ -22,10 +21,6 @@ use super::{ReviewInput, ReviewSummary, ReviewTarget};
 #[serde(tag = "stage", content = "result", rename_all = "snake_case")]
 pub enum PipelineStageResult {
     ReviewContext(StageRun<ReviewContextReport>),
-    CommitScope(StageRun<CommitScopeReport>),
-    CommitSequence(StageRun<CommitSequenceReport>),
-    Size(StageRun<SizeReport>),
-    Intent(StageRun<IntentReport>),
     Knowledge(StageRun<KnowledgeReport>),
     Quality(StageRun<QualityReport>),
     Security(StageRun<SecurityReport>),
@@ -35,10 +30,6 @@ impl PipelineStageResult {
     pub fn is_success(&self) -> bool {
         match self {
             Self::ReviewContext(run) => is_complete(run),
-            Self::CommitScope(run) => is_complete(run),
-            Self::CommitSequence(run) => is_complete(run),
-            Self::Size(run) => is_complete(run),
-            Self::Intent(run) => is_complete(run),
             Self::Knowledge(run) => is_complete(run),
             Self::Quality(run) => is_complete(run),
             Self::Security(run) => is_complete(run),
@@ -48,10 +39,6 @@ impl PipelineStageResult {
     pub fn stage(&self) -> StageKind {
         match self {
             Self::ReviewContext(run) => run.stage,
-            Self::CommitScope(run) => run.stage,
-            Self::CommitSequence(run) => run.stage,
-            Self::Size(run) => run.stage,
-            Self::Intent(run) => run.stage,
             Self::Knowledge(run) => run.stage,
             Self::Quality(run) => run.stage,
             Self::Security(run) => run.stage,
@@ -61,10 +48,6 @@ impl PipelineStageResult {
     pub fn target(&self) -> &StageTarget {
         match self {
             Self::ReviewContext(run) => &run.target,
-            Self::CommitScope(run) => &run.target,
-            Self::CommitSequence(run) => &run.target,
-            Self::Size(run) => &run.target,
-            Self::Intent(run) => &run.target,
             Self::Knowledge(run) => &run.target,
             Self::Quality(run) => &run.target,
             Self::Security(run) => &run.target,
@@ -74,10 +57,6 @@ impl PipelineStageResult {
     pub fn usage(&self) -> &crate::llm::LlmUsage {
         match self {
             Self::ReviewContext(run) => &run.usage,
-            Self::CommitScope(run) => &run.usage,
-            Self::CommitSequence(run) => &run.usage,
-            Self::Size(run) => &run.usage,
-            Self::Intent(run) => &run.usage,
             Self::Knowledge(run) => &run.usage,
             Self::Quality(run) => &run.usage,
             Self::Security(run) => &run.usage,

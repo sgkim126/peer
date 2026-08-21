@@ -14,8 +14,8 @@ use crate::review::{
     PipelineExecutionError, PipelineReviewResult, PipelineStageResult, ReviewSummary,
 };
 use crate::stage::{
-    ClarificationQuestion, Finding, ScopeDisposition, Severity, StageFailure, StageKind,
-    StageOutcome, StageResult, StageRun, StageTarget,
+    ClarificationQuestion, Finding, Severity, StageFailure, StageKind, StageOutcome, StageResult,
+    StageRun, StageTarget,
 };
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -227,69 +227,6 @@ impl From<PipelineStageResult> for RenderStageParts {
             PipelineStageResult::ReviewContext(run) => {
                 render_typed_run(run, |report| (report.summary, Vec::new()))
             }
-            PipelineStageResult::CommitScope(run) => render_typed_run(run, |report| {
-                let findings = report
-                    .commits
-                    .into_iter()
-                    .filter(|entry| entry.disposition != ScopeDisposition::Keep)
-                    .map(|entry| Finding {
-                        commit: entry.commit,
-                        severity: Severity::Info,
-                        message: format!("{}: {}", entry.purpose, entry.rationale),
-                        location: None,
-                    })
-                    .collect();
-                (report.summary, findings)
-            }),
-            PipelineStageResult::CommitSequence(run) => render_typed_run(run, |report| {
-                let findings = report
-                    .issues
-                    .into_iter()
-                    .flat_map(|issue| {
-                        issue.commits.into_iter().map(move |commit| Finding {
-                            commit,
-                            severity: Severity::Info,
-                            message: issue.message.clone(),
-                            location: None,
-                        })
-                    })
-                    .collect();
-                (report.summary, findings)
-            }),
-            PipelineStageResult::Size(run) => {
-                let target = run.run_commit().clone();
-                render_typed_run(run, |report| {
-                    let findings = report
-                        .issues
-                        .iter()
-                        .map(|issue| Finding {
-                            commit: target.clone(),
-                            severity: Severity::Info,
-                            message: issue.message.clone(),
-                            location: None,
-                        })
-                        .collect();
-                    (report.summary, findings)
-                })
-            }
-            PipelineStageResult::Intent(run) => render_typed_run(run, |report| {
-                let findings = report
-                    .issues
-                    .iter()
-                    .map(|issue| Finding {
-                        commit: issue.commit.clone(),
-                        severity: Severity::Info,
-                        message: issue.message.clone(),
-                        location: issue.location.clone().map(|location| {
-                            crate::stage::FileLocation {
-                                file: location.file,
-                                line: location.line,
-                            }
-                        }),
-                    })
-                    .collect();
-                (report.summary, findings)
-            }),
             PipelineStageResult::Knowledge(run) => render_knowledge_run(run),
             PipelineStageResult::Quality(run) => {
                 render_typed_run(run, |report| (report.summary, report.findings))
@@ -509,13 +446,9 @@ fn render_stage_order(stage: &RenderStage, ordered_commits: &[CommitHash]) -> (u
     fn stage_rank(stage: StageKind) -> usize {
         match stage {
             StageKind::ReviewContext => 0,
-            StageKind::CommitScope => 1,
-            StageKind::CommitSequence => 2,
-            StageKind::Size => 3,
-            StageKind::Intent => 4,
-            StageKind::Knowledge => 5,
-            StageKind::Quality => 6,
-            StageKind::Security => 7,
+            StageKind::Knowledge => 100,
+            StageKind::Quality => 200,
+            StageKind::Security => 300,
         }
     }
 
@@ -940,65 +873,6 @@ mod tests {
     }
 
     #[test]
-    fn pipeline_preserves_sequence_issue_commits_and_orders_findings() {
-        let first = CommitHash::new("abc1234").unwrap();
-        let second = CommitHash::new("def5678").unwrap();
-        let report =
-            serde_json::from_value::<crate::stage::CommitSequenceReport>(serde_json::json!({
-                "summary": "Found sequence issues.",
-                "progression": [],
-                "issues": [
-                    {
-                        "kind": "reorder",
-                        "commits": [second, first],
-                        "message": "Cross-commit issue."
-                    }
-                ]
-            }))
-            .unwrap();
-        let review = PipelineReviewResult {
-            summary: review_summary(),
-            ordered_commits: vec![first.clone(), second.clone()],
-            stages: vec![PipelineStageResult::CommitSequence(StageRun {
-                stage: crate::stage::StageKind::CommitSequence,
-                target: StageTarget::Range {
-                    from: first,
-                    to: second,
-                },
-                ordered_commits: vec![
-                    CommitHash::new("abc1234").unwrap(),
-                    CommitHash::new("def5678").unwrap(),
-                ],
-                outcome: StageOutcome::Completed { report },
-                iterations: 1,
-                usage: result().usage,
-            })],
-            errors: Vec::new(),
-        };
-
-        let document = RenderDocument::from(review);
-
-        assert_matches!(
-            &document.stages[0].outcome,
-            RenderStageOutcome::Issues { .. }
-        );
-        assert_eq!(
-            document
-                .findings
-                .iter()
-                .map(|finding| finding.commit.as_ref())
-                .collect::<Vec<_>>(),
-            ["abc1234", "def5678"]
-        );
-        assert!(
-            document
-                .findings
-                .iter()
-                .all(|finding| finding.message == "Cross-commit issue.")
-        );
-    }
-
-    #[test]
     fn knowledge_questions_and_recommendations_share_the_feedback_level() {
         let commit = CommitHash::new("abc1234").unwrap();
         let report: crate::stage::KnowledgeReport = serde_json::from_value(serde_json::json!({
@@ -1151,12 +1025,8 @@ mod tests {
             ))],
             errors: vec![
                 pipeline_error(StageKind::Security, StageTarget::Commit(second.clone())),
-                pipeline_error(StageKind::Size, StageTarget::Commit(second.clone())),
-                pipeline_error(StageKind::CommitSequence, range.clone()),
+                pipeline_error(StageKind::Knowledge, range.clone()),
                 pipeline_error(StageKind::Quality, StageTarget::Commit(first.clone())),
-                pipeline_error(StageKind::Intent, StageTarget::Commit(second.clone())),
-                pipeline_error(StageKind::CommitScope, range.clone()),
-                pipeline_error(StageKind::Size, StageTarget::Commit(first.clone())),
                 pipeline_error(StageKind::Security, StageTarget::Commit(first.clone())),
             ],
         };
@@ -1171,11 +1041,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             [
                 ("review_context", "abc1234..def5678".to_string()),
-                ("commit_scope", "abc1234..def5678".to_string()),
-                ("commit_sequence", "abc1234..def5678".to_string()),
-                ("size", "abc1234".to_string()),
-                ("size", "def5678".to_string()),
-                ("intent", "def5678".to_string()),
+                ("knowledge", "abc1234..def5678".to_string()),
                 ("quality", "abc1234".to_string()),
                 ("security", "abc1234".to_string()),
                 ("security", "def5678".to_string()),
@@ -1475,13 +1341,13 @@ mod tests {
         let second = CommitHash::new("def5678").unwrap();
         let mut security_second = result();
         security_second.target = StageTarget::Commit(second.clone());
-        let mut intent_second = result();
-        intent_second.stage = "intent".into();
-        intent_second.target = StageTarget::Commit(second.clone());
+        let mut knowledge_second = result();
+        knowledge_second.stage = "knowledge".into();
+        knowledge_second.target = StageTarget::Commit(second.clone());
         let mut security_first = result();
         security_first.target = StageTarget::Commit(first.clone());
         let ordered_commits = vec![first.clone(), second];
-        let mut stages = vec![security_second, intent_second, security_first]
+        let mut stages = vec![security_second, knowledge_second, security_first]
             .into_iter()
             .map(|result| RenderStageParts::from(result).stage)
             .collect::<Vec<_>>();
@@ -1511,7 +1377,7 @@ mod tests {
                 .map(|stage| (stage.stage.as_str(), stage.target.to_string()))
                 .collect::<Vec<_>>(),
             [
-                ("intent", "def5678".to_string()),
+                ("knowledge", "def5678".to_string()),
                 ("quality", "abc1234".to_string()),
                 ("security", "abc1234".to_string()),
                 ("security", "def5678".to_string()),
@@ -1553,47 +1419,16 @@ mod tests {
                     range.clone(),
                     &ordered_commits,
                 )),
-                PipelineStageResult::CommitScope(exhausted_stage_run(
-                    StageKind::CommitScope,
-                    range.clone(),
-                    &ordered_commits,
-                )),
-                PipelineStageResult::CommitSequence(exhausted_stage_run(
-                    StageKind::CommitSequence,
+                PipelineStageResult::Knowledge(exhausted_stage_run(
+                    StageKind::Knowledge,
                     range,
                     &ordered_commits,
                 )),
-                PipelineStageResult::Size(exhausted_stage_run(
-                    StageKind::Size,
-                    StageTarget::Commit(first.clone()),
+                PipelineStageResult::Quality(exhausted_stage_run(
+                    StageKind::Quality,
+                    StageTarget::Commit(second.clone()),
                     &ordered_commits,
                 )),
-                PipelineStageResult::Intent(exhausted_stage_run(
-                    StageKind::Intent,
-                    StageTarget::Commit(first.clone()),
-                    &ordered_commits,
-                )),
-                PipelineStageResult::Quality(StageRun {
-                    stage: StageKind::Quality,
-                    target: StageTarget::Commit(second.clone()),
-                    ordered_commits: ordered_commits.clone(),
-                    outcome: StageOutcome::Completed {
-                        report: crate::stage::QualityReport {
-                            summary: "Found a quality issue.".to_string(),
-                            findings: vec![Finding {
-                                commit: second.clone(),
-                                severity: Severity::High,
-                                message: "Unchecked pipeline output.".to_string(),
-                                location: Some(FileLocation {
-                                    file: "src/pipeline.rs".to_string(),
-                                    line: Some(42),
-                                }),
-                            }],
-                        },
-                    },
-                    iterations: 2,
-                    usage: result().usage,
-                }),
                 PipelineStageResult::Security(exhausted_stage_run(
                     StageKind::Security,
                     StageTarget::Commit(second),
@@ -1610,43 +1445,22 @@ mod tests {
         .unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
         let stages = value["stages"].as_array().unwrap();
-        let findings = value["findings"].as_array().unwrap();
 
         assert_eq!(value["ordered_commits"][0], "abc1234");
-        assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0]["commit"], "def5678");
-        assert_eq!(findings[0]["severity"], "high");
-        assert_eq!(findings[0]["message"], "Unchecked pipeline output.");
-        assert_eq!(findings[0]["file"], "src/pipeline.rs");
-        assert_eq!(findings[0]["line"], 42);
+        assert_eq!(value.get("findings"), None);
         assert_eq!(
             stages
                 .iter()
                 .map(|stage| stage["stage"].as_str().unwrap())
                 .collect::<Vec<_>>(),
-            [
-                "review_context",
-                "commit_scope",
-                "commit_sequence",
-                "size",
-                "intent",
-                "quality",
-                "security",
-            ]
+            ["review_context", "knowledge", "quality", "security"]
         );
-        assert_eq!(stages.len(), 7);
-        for stage in stages.iter().filter(|stage| stage["stage"] != "quality") {
+        assert_eq!(stages.len(), 4);
+        for stage in stages {
             assert_eq!(stage["outcome"]["status"], "exhausted");
             assert_eq!(stage["outcome"]["reason"], "iteration limit reached");
             assert_eq!(stage["outcome"]["iterations"], 3);
         }
-        let quality = stages
-            .iter()
-            .find(|stage| stage["stage"] == "quality")
-            .unwrap();
-        assert_eq!(quality["outcome"]["status"], "issues");
-        assert_eq!(quality["outcome"]["iterations"], 2);
-        assert!(quality["outcome"].get("findings").is_none());
     }
 
     #[test]

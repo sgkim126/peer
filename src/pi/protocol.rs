@@ -11,10 +11,6 @@ const TOOL_CONTRACT: &str = include_str!(concat!(
 #[serde(rename_all = "snake_case")]
 pub enum StageKind {
     ReviewContext,
-    CommitScope,
-    CommitSequence,
-    Size,
-    Intent,
     Knowledge,
     Quality,
     Security,
@@ -38,10 +34,6 @@ pub enum ReadTool {
 pub enum TerminalTool {
     RequestClarification,
     SubmitReviewContext,
-    SubmitCommitScope,
-    SubmitCommitSequence,
-    SubmitSize,
-    SubmitIntent,
     SubmitKnowledge,
     SubmitQuality,
     SubmitSecurity,
@@ -118,10 +110,6 @@ mod tests {
         let terminal_tools = [
             TerminalTool::RequestClarification,
             TerminalTool::SubmitReviewContext,
-            TerminalTool::SubmitCommitScope,
-            TerminalTool::SubmitCommitSequence,
-            TerminalTool::SubmitSize,
-            TerminalTool::SubmitIntent,
             TerminalTool::SubmitKnowledge,
             TerminalTool::SubmitQuality,
             TerminalTool::SubmitSecurity,
