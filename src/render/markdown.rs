@@ -1,17 +1,51 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 
+use crate::git::CommitHash;
 use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
+use crate::stage::Finding;
 #[cfg(test)]
 use crate::stage::StageResult;
-use crate::stage::{Finding, Severity, StageFailure, StageTarget};
+use crate::stage::{FileLocation, Severity, StageFailure, StageTarget};
 
 use super::{
-    RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message, escape_markdown,
+    RenderDocument, RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message,
+    escape_markdown, join_review_sections, review_counts, usage_by_model,
 };
 
-pub fn render(result: &RenderStage) -> String {
+pub fn render(document: &RenderDocument) -> String {
+    let stages = document
+        .stages
+        .iter()
+        .map(render_stage)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let summary = document.summary.as_ref().map(|summary| {
+        render_review_summary(
+            summary,
+            document.context_usage.as_ref(),
+            &usage_by_model(document),
+            &review_counts(document),
+        )
+    });
+    let context = document
+        .summary
+        .is_none()
+        .then_some(document.context_usage.as_ref())
+        .flatten()
+        .map(render_context_usage);
+    let findings = render_findings(&document.findings);
+    join_review_sections(
+        summary
+            .into_iter()
+            .chain([findings])
+            .chain(context)
+            .chain([stages]),
+    )
+}
+
+fn render_stage(result: &RenderStage) -> String {
     let mut output = String::new();
     writeln!(output, "## Stage: {}", escape_markdown(&result.stage)).unwrap();
     writeln!(output).unwrap();
@@ -26,15 +60,6 @@ pub fn render(result: &RenderStage) -> String {
     if let Some(summary) = result.summary() {
         writeln!(output, "{}", escape_markdown(summary)).unwrap();
         writeln!(output).unwrap();
-    }
-    writeln!(output, "### Findings").unwrap();
-    writeln!(output).unwrap();
-    if result.findings().is_empty() {
-        writeln!(output, "None.").unwrap();
-    } else {
-        for finding in result.findings() {
-            writeln!(output, "- {}", render_finding(finding)).unwrap();
-        }
     }
     if let Some(error) = result.error() {
         writeln!(output).unwrap();
@@ -57,13 +82,13 @@ pub fn render(result: &RenderStage) -> String {
     output.trim_end().to_string()
 }
 
-pub fn render_context_usage(usage: &LlmUsage) -> String {
+fn render_context_usage(usage: &LlmUsage) -> String {
     let mut output = String::new();
     write_usage_markdown(&mut output, "Context usage", usage);
     output.trim().to_string()
 }
 
-pub fn render_review_summary(
+fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
@@ -115,15 +140,6 @@ pub fn render_review_summary(
     output.trim_end().to_string()
 }
 
-fn render_finding(finding: &Finding) -> String {
-    format!(
-        "**{}** — {} ({})",
-        severity_name(finding.severity),
-        escape_markdown(&finding.message),
-        escape_markdown(&finding_context(finding))
-    )
-}
-
 fn display_error(error: RenderStageErrorRef<'_>) -> String {
     match error {
         RenderStageErrorRef::Exhausted(reason) | RenderStageErrorRef::Execution(reason) => {
@@ -153,13 +169,31 @@ fn severity_name(severity: Severity) -> &'static str {
     }
 }
 
-fn finding_context(finding: &Finding) -> String {
-    match &finding.location {
+fn render_findings(findings: &[Finding]) -> String {
+    if findings.is_empty() {
+        return String::new();
+    }
+    let mut output = "## Review feedback\n".to_string();
+    for finding in findings {
+        writeln!(
+            output,
+            "- **finding/{}** — {} ({})",
+            severity_name(finding.severity),
+            escape_markdown(&finding.message),
+            escape_markdown(&finding_context(&finding.commit, finding.location.as_ref()))
+        )
+        .unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn finding_context(commit: &CommitHash, location: Option<&FileLocation>) -> String {
+    match location {
         Some(location) => match location.line {
-            Some(line) => format!("{} · {}:{line}", finding.commit, location.file),
-            None => format!("{} · {}", finding.commit, location.file),
+            Some(line) => format!("{commit} · {}:{line}", location.file),
+            None => format!("{commit} · {}", location.file),
         },
-        None => finding.commit.to_string(),
+        None => commit.to_string(),
     }
 }
 
@@ -243,7 +277,8 @@ mod tests {
         let mut result = result();
         result.findings = vec![result.findings.pop().unwrap()];
         result.findings[0].severity = Severity::Info;
-        assert!(render(&result.into()).contains("- **Status:** issues"));
+        let rendered = crate::render::RenderStageParts::from(result);
+        assert!(render_stage(&rendered.stage).contains("- **Status:** issues"));
     }
 
     #[test]
@@ -256,7 +291,8 @@ mod tests {
                 reason: "The policy affects the finding.".into(),
             }],
         });
-        let output = render(&result.into());
+        let rendered = crate::render::RenderStageParts::from(result);
+        let output = render_stage(&rendered.stage);
 
         assert!(output.contains("- **Status:** failed"));
         assert!(output.contains("> Which deployment policy applies?"));
@@ -265,7 +301,8 @@ mod tests {
 
     #[test]
     fn includes_usage() {
-        let output = render(&result().into());
+        let rendered = crate::render::RenderStageParts::from(result());
+        let output = render_stage(&rendered.stage);
 
         assert!(output.contains("### Stage usage"));
         assert!(output.contains("- **Cost:** $0.001000"));
@@ -279,10 +316,43 @@ mod tests {
         result.usage.cache_read_tokens = 80;
         result.usage.cache_write_tokens = 10;
 
-        let output = render(&result.into());
+        let rendered = crate::render::RenderStageParts::from(result);
+        let output = render_stage(&rendered.stage);
 
         assert!(output.contains("- **Cache-read tokens:** 80"));
         assert!(output.contains("- **Cache-write tokens:** 10"));
+    }
+
+    #[test]
+    fn execution_failure_omits_empty_metadata() {
+        let stage = RenderStage {
+            stage: "quality".into(),
+            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            outcome: crate::render::RenderStageOutcome::Failed {
+                failure: crate::render::RenderStageFailure::Execution {
+                    reason: "provider unavailable".into(),
+                    usage: None,
+                },
+            },
+        };
+
+        assert!(!render_stage(&stage).contains("### Metadata"));
+    }
+
+    #[test]
+    fn execution_failure_renders_metadata_with_usage() {
+        let stage = RenderStage {
+            stage: "quality".into(),
+            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            outcome: crate::render::RenderStageOutcome::Failed {
+                failure: crate::render::RenderStageFailure::Execution {
+                    reason: "invalid typed stage report".into(),
+                    usage: Some(result().usage),
+                },
+            },
+        };
+
+        assert!(render_stage(&stage).contains("### Metadata"));
     }
 
     #[test]
@@ -315,13 +385,40 @@ mod tests {
             line: None,
         });
 
-        let output = render(&result.into());
+        let rendered = crate::render::RenderStageParts::from(result);
+        let stage_output = render_stage(&rendered.stage);
+        let findings_output = render_findings(&rendered.findings);
 
-        assert!(output.contains("## Stage: stage \\<unsafe\\>"));
-        assert!(output.contains("Summary \\# injected heading \\[link\\]\\(url\\) \\~struck\\~"));
-        assert!(output.contains("message \\- injected finding \\*\\*bold\\*\\*"));
-        assert!(output.contains("src/\\[unsafe\\]\\.rs"));
-        assert!(!output.contains("\n# injected heading"));
-        assert!(!output.contains("\n- injected finding"));
+        assert!(stage_output.contains("## Stage: stage \\<unsafe\\>"));
+        assert!(
+            stage_output.contains("Summary \\# injected heading \\[link\\]\\(url\\) \\~struck\\~")
+        );
+        assert!(findings_output.contains("message \\- injected finding \\*\\*bold\\*\\*"));
+        assert!(findings_output.contains("src/\\[unsafe\\]\\.rs"));
+        assert!(!stage_output.contains("\n# injected heading"));
+        assert!(!findings_output.contains("\n- injected finding"));
+    }
+
+    #[test]
+    fn renders_unified_feedback_as_a_tight_list() {
+        let findings = vec![
+            Finding {
+                commit: CommitHash::new("abc1234").unwrap(),
+                severity: Severity::High,
+                message: "First.".to_string(),
+                location: None,
+            },
+            Finding {
+                commit: CommitHash::new("def5678").unwrap(),
+                severity: Severity::Low,
+                message: "Second.".to_string(),
+                location: None,
+            },
+        ];
+
+        let output = render_findings(&findings);
+
+        assert!(output.starts_with("## Review feedback\n- "));
+        assert!(!output.contains("\n\n- "));
     }
 }

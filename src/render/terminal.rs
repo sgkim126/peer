@@ -1,19 +1,56 @@
 use std::collections::BTreeMap;
 use std::fmt::{self, Write};
+use std::io::IsTerminal;
 
 use owo_colors::Style;
 
+use crate::git::CommitHash;
 use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
+use crate::stage::Finding;
 #[cfg(test)]
 use crate::stage::StageResult;
-use crate::stage::{Finding, Severity, StageFailure, StageTarget};
+use crate::stage::{FileLocation, Severity, StageFailure, StageTarget};
 
 use super::{
-    RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message, escape_terminal,
+    RenderDocument, RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message,
+    escape_terminal, join_review_sections, review_counts, usage_by_model,
 };
 
-pub fn render(result: &RenderStage, use_color: bool) -> String {
+pub fn render(document: &RenderDocument) -> String {
+    let use_color = std::io::stdout().is_terminal();
+    let stages = document
+        .stages
+        .iter()
+        .map(|stage| render_stage(stage, use_color))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    let summary = document.summary.as_ref().map(|summary| {
+        render_review_summary(
+            summary,
+            document.context_usage.as_ref(),
+            &usage_by_model(document),
+            &review_counts(document),
+            use_color,
+        )
+    });
+    let context = document
+        .summary
+        .is_none()
+        .then_some(document.context_usage.as_ref())
+        .flatten()
+        .map(render_context_usage);
+    let findings = render_findings(&document.findings, use_color);
+    join_review_sections(
+        summary
+            .into_iter()
+            .chain([findings])
+            .chain(context)
+            .chain([stages]),
+    )
+}
+
+fn render_stage(result: &RenderStage, use_color: bool) -> String {
     let mut output = String::new();
     writeln!(
         output,
@@ -41,14 +78,6 @@ pub fn render(result: &RenderStage, use_color: bool) -> String {
         writeln!(output, "{}", escape_terminal(summary)).unwrap();
         writeln!(output).unwrap();
     }
-    writeln!(output, "{}", label("Findings:", use_color)).unwrap();
-    if result.findings().is_empty() {
-        writeln!(output, "- none").unwrap();
-    } else {
-        for finding in result.findings() {
-            writeln!(output, "- {}", render_finding(finding, use_color)).unwrap();
-        }
-    }
     if let Some(error) = result.error() {
         writeln!(output).unwrap();
         writeln!(
@@ -69,13 +98,13 @@ pub fn render(result: &RenderStage, use_color: bool) -> String {
     output
 }
 
-pub fn render_context_usage(usage: &LlmUsage) -> String {
+fn render_context_usage(usage: &LlmUsage) -> String {
     let mut output = String::new();
     write_usage(&mut output, "Context usage", usage);
     output.trim().to_string()
 }
 
-pub fn render_review_summary(
+fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
     usage_by_model: &BTreeMap<String, ModelUsage>,
@@ -122,23 +151,6 @@ pub fn render_review_summary(
         }
     }
     output.trim_end().to_string()
-}
-
-fn render_finding(finding: &Finding, use_color: bool) -> String {
-    format!(
-        "[{}] {} ({})",
-        styled(
-            severity_name(finding.severity),
-            severity_style(finding.severity),
-            use_color
-        ),
-        escape_terminal(&finding.message),
-        styled(
-            escape_terminal(&finding_context(finding)),
-            Style::new().dimmed(),
-            use_color
-        )
-    )
 }
 
 fn write_usage(output: &mut String, label: &str, usage: &LlmUsage) {
@@ -231,13 +243,40 @@ fn severity_name(severity: Severity) -> &'static str {
     }
 }
 
-fn finding_context(finding: &Finding) -> String {
-    match &finding.location {
+fn render_findings(findings: &[Finding], use_color: bool) -> String {
+    if findings.is_empty() {
+        return String::new();
+    }
+    let mut output = String::new();
+    writeln!(output, "{}", label("Review feedback:", use_color)).unwrap();
+    for finding in findings {
+        writeln!(
+            output,
+            "- [finding/{}] {} ({})",
+            styled(
+                severity_name(finding.severity),
+                severity_style(finding.severity),
+                use_color
+            ),
+            escape_terminal(&finding.message),
+            styled(
+                escape_terminal(&finding_context(&finding.commit, finding.location.as_ref())),
+                Style::new().dimmed(),
+                use_color
+            )
+        )
+        .unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn finding_context(commit: &CommitHash, location: Option<&FileLocation>) -> String {
+    match location {
         Some(location) => match location.line {
-            Some(line) => format!("{} · {}:{line}", finding.commit, location.file),
-            None => format!("{} · {}", finding.commit, location.file),
+            Some(line) => format!("{commit} · {}:{line}", location.file),
+            None => format!("{commit} · {}", location.file),
         },
-        None => finding.commit.to_string(),
+        None => commit.to_string(),
     }
 }
 
@@ -294,7 +333,8 @@ mod tests {
 
     #[test]
     fn has_no_ansi_codes_without_tty() {
-        let output = render(&result().into(), false);
+        let rendered = crate::render::RenderStageParts::from(result());
+        let output = render_stage(&rendered.stage, false);
 
         assert!(output.contains("Stage usage: 100 input, 20 output, $0.001000 (test-model)"));
         assert!(!output.contains("\u{1b}["));
@@ -319,21 +359,38 @@ mod tests {
     }
 
     #[test]
+    fn colors_unified_feedback_severity() {
+        let findings = vec![Finding {
+            commit: CommitHash::new("abc1234").unwrap(),
+            severity: Severity::High,
+            message: "High-risk finding.".to_string(),
+            location: None,
+        }];
+
+        let output = render_findings(&findings, true);
+        let colored_severity = styled("high", severity_style(Severity::High), true);
+
+        assert!(output.contains(&format!("[finding/{colored_severity}]")));
+    }
+
+    #[test]
     fn escapes_control_characters_and_flattens_newlines() {
         let mut result = result();
         result.stage = "security\u{1b}[2J".to_string();
         result.summary = "Summary\nforged output\u{7}".to_string();
         result.findings[0].message = "message\u{1b}[31m\nnext line".to_string();
 
-        let output = render(&result.into(), true);
+        let rendered = crate::render::RenderStageParts::from(result);
+        let stage_output = render_stage(&rendered.stage, true);
+        let findings_output = render_findings(&rendered.findings, true);
 
-        assert!(output.contains(r"security\u{1b}[2J"));
-        assert!(output.contains(r"Summary forged output\u{7}"));
-        assert!(output.contains(r"message\u{1b}[31m next line"));
-        assert!(!output.contains("security\u{1b}[2J"));
-        assert!(!output.contains("message\u{1b}[31m"));
-        assert!(!output.contains("\nforged output"));
-        assert!(!output.contains("\nnext line"));
+        assert!(stage_output.contains(r"security\u{1b}[2J"));
+        assert!(stage_output.contains(r"Summary forged output\u{7}"));
+        assert!(findings_output.contains(r"message\u{1b}[31m next line"));
+        assert!(!stage_output.contains("security\u{1b}[2J"));
+        assert!(!findings_output.contains("message\u{1b}[31m"));
+        assert!(!stage_output.contains("\nforged output"));
+        assert!(!findings_output.contains("\nnext line"));
     }
 
     #[test]
@@ -341,7 +398,8 @@ mod tests {
         let mut result = result();
         result.summary = "변경 사항을 확인했습니다.".to_string();
 
-        let output = render(&result.into(), false);
+        let rendered = crate::render::RenderStageParts::from(result);
+        let output = render_stage(&rendered.stage, false);
 
         assert!(output.contains("변경 사항을 확인했습니다."));
     }
