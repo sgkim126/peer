@@ -2,6 +2,7 @@ mod commit_scope;
 mod commit_sequence;
 mod contract;
 mod intent;
+mod knowledge;
 mod quality;
 mod result;
 mod review_context;
