@@ -41,7 +41,7 @@ impl StageRunError {
     pub fn usage(&self) -> Option<&LlmUsage> {
         match self {
             Self::CacheKey(_) => None,
-            Self::Pi(failure) => failure.usage.as_ref(),
+            Self::Pi(failure) => failure.usage.as_deref(),
             Self::InvalidOutput { usage, .. } => Some(usage),
             Self::InvalidQuestions { usage, .. } => Some(usage),
             Self::InvalidReport { usage, .. } => Some(usage),
@@ -200,7 +200,7 @@ where
                     reason: format!("Pi did not submit an outcome within {turns} turns"),
                 },
                 iterations: turns,
-                usage,
+                usage: *usage,
             });
         }
         Err(error) => {
@@ -413,7 +413,7 @@ mod tests {
         let usage = LlmUsage::zero("test-model");
         let error = StageRunError::from(PiRunFailure {
             error: PiRunError::InvalidState("missing outcome".to_string()),
-            usage: Some(usage.clone()),
+            usage: Some(Box::new(usage.clone())),
         });
 
         assert_eq!(error.usage(), Some(&usage));
