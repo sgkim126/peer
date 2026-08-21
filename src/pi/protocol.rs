@@ -122,6 +122,7 @@ mod tests {
             TerminalTool::SubmitCommitSequence,
             TerminalTool::SubmitSize,
             TerminalTool::SubmitIntent,
+            TerminalTool::SubmitKnowledge,
             TerminalTool::SubmitQuality,
             TerminalTool::SubmitSecurity,
         ];
