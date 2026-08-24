@@ -11,7 +11,7 @@ use crate::stage::{
 use crate::stage::{Finding, StageResult};
 
 use super::{
-    RenderDocument, RenderFinding, RenderStage, RenderStageErrorRef, ReviewCounts,
+    RenderDocument, RenderFinding, RenderInput, RenderStage, RenderStageErrorRef, ReviewCounts,
     clarification_message, escape_html, escape_markdown, join_review_sections, review_counts,
     usage_by_model,
 };
@@ -152,18 +152,20 @@ fn render_questions(questions: &[KnowledgeQuestion], repo: &str) -> String {
     }
     let mut output = "## Review questions\n".to_string();
     for question in questions {
-        writeln!(
-            output,
-            "- **question/{}** — {} Evidence: {} Why it matters: {} ({})",
-            question.category.as_str(),
-            escape_github_markdown(&question.question),
-            escape_github_markdown(&question.evidence),
-            escape_github_markdown(&question.why_it_matters),
-            related_context(&question.related_commits, question.location.as_ref(), repo,),
-        )
-        .unwrap();
+        writeln!(output, "{}", render_question(question, repo)).unwrap();
     }
     output.trim_end().to_string()
+}
+
+fn render_question(question: &KnowledgeQuestion, repo: &str) -> String {
+    format!(
+        "- **question/{}** — {} Evidence: {} Why it matters: {} ({})",
+        question.category.as_str(),
+        escape_github_markdown(&question.question),
+        escape_github_markdown(&question.evidence),
+        escape_github_markdown(&question.why_it_matters),
+        related_context(&question.related_commits, question.location.as_ref(), repo,),
+    )
 }
 
 fn render_recommendations(recommendations: &[StructuralRecommendation], repo: &str) -> String {
@@ -172,17 +174,19 @@ fn render_recommendations(recommendations: &[StructuralRecommendation], repo: &s
     }
     let mut output = "## Structural recommendations\n".to_string();
     for recommendation in recommendations {
-        writeln!(
-            output,
-            "- **recommendation/{}** — {} Rationale: {} ({})",
-            recommendation.kind.as_str(),
-            escape_github_markdown(&recommendation.message),
-            escape_github_markdown(&recommendation.rationale),
-            related_context(&recommendation.related_commits, None, repo),
-        )
-        .unwrap();
+        writeln!(output, "{}", render_recommendation(recommendation, repo)).unwrap();
     }
     output.trim_end().to_string()
+}
+
+fn render_recommendation(recommendation: &StructuralRecommendation, repo: &str) -> String {
+    format!(
+        "- **recommendation/{}** — {} Rationale: {} ({})",
+        recommendation.kind.as_str(),
+        escape_github_markdown(&recommendation.message),
+        escape_github_markdown(&recommendation.rationale),
+        related_context(&recommendation.related_commits, None, repo),
+    )
 }
 
 fn render_findings(findings: &[RenderFinding], repo: &str) -> String {
@@ -191,31 +195,34 @@ fn render_findings(findings: &[RenderFinding], repo: &str) -> String {
     }
     let mut output = "## Review findings\n".to_string();
     for finding in findings {
+        writeln!(output, "{}", render_finding(finding, repo)).unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn render_finding(finding: &RenderFinding, repo: &str) -> String {
+    let mut output = format!(
+        "- **finding/{}** — {}",
+        severity_name(finding.severity),
+        escape_github_markdown(&finding.message),
+    );
+    if let Some(security) = &finding.security {
         write!(
             output,
-            "- **finding/{}** — {}",
-            severity_name(finding.severity),
-            escape_github_markdown(&finding.message),
-        )
-        .unwrap();
-        if let Some(security) = &finding.security {
-            write!(
-                output,
-                " Attacker control: {} Sensitive operation: {} Impact: {}",
-                escape_github_markdown(&security.attacker_control),
-                escape_github_markdown(&security.sensitive_operation),
-                escape_github_markdown(&security.impact),
-            )
-            .unwrap();
-        }
-        writeln!(
-            output,
-            " ({})",
-            finding_context(&finding.commit, finding.location.as_ref(), repo)
+            " Attacker control: {} Sensitive operation: {} Impact: {}",
+            escape_github_markdown(&security.attacker_control),
+            escape_github_markdown(&security.sensitive_operation),
+            escape_github_markdown(&security.impact),
         )
         .unwrap();
     }
-    output.trim_end().to_string()
+    write!(
+        output,
+        " ({})",
+        finding_context(&finding.commit, finding.location.as_ref(), repo)
+    )
+    .unwrap();
+    output
 }
 
 fn related_context(
