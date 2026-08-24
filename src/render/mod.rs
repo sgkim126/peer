@@ -683,17 +683,6 @@ pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String
     }
 }
 
-pub fn render_pipeline(
-    review: PipelineReviewResult,
-    options: RenderOptions,
-) -> Result<String, RenderError> {
-    if options.format == RenderFormat::Json {
-        render_pipeline_json(review)
-    } else {
-        render(review.into(), options)
-    }
-}
-
 pub fn render_pipeline_json(review: PipelineReviewResult) -> Result<String, RenderError> {
     render_json(review.into())
 }
@@ -1761,7 +1750,7 @@ mod tests {
     #[test]
     fn pipeline_exhaustion_reason_appears_once_in_terminal() {
         let commit = CommitHash::new("abc1234").unwrap();
-        let output = render_pipeline(
+        let output = render(
             PipelineReviewResult {
                 summary: review_summary(),
                 ordered_commits: vec![commit.clone()],
@@ -1771,7 +1760,8 @@ mod tests {
                     &[],
                 ))],
                 errors: Vec::new(),
-            },
+            }
+            .into(),
             RenderOptions::from_cli(OutputFormat::Terminal, None).unwrap(),
         )
         .unwrap();
@@ -1782,7 +1772,7 @@ mod tests {
     #[test]
     fn pipeline_exhaustion_reason_appears_once_in_markdown() {
         let commit = CommitHash::new("abc1234").unwrap();
-        let output = render_pipeline(
+        let output = render(
             PipelineReviewResult {
                 summary: review_summary(),
                 ordered_commits: vec![commit.clone()],
@@ -1792,7 +1782,8 @@ mod tests {
                     &[],
                 ))],
                 errors: Vec::new(),
-            },
+            }
+            .into(),
             RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
         )
         .unwrap();
@@ -1803,7 +1794,7 @@ mod tests {
     #[test]
     fn pipeline_exhaustion_reason_appears_once_in_github() {
         let commit = CommitHash::new("abc1234").unwrap();
-        let output = render_pipeline(
+        let output = render(
             PipelineReviewResult {
                 summary: review_summary(),
                 ordered_commits: vec![commit.clone()],
@@ -1813,7 +1804,8 @@ mod tests {
                     &[],
                 ))],
                 errors: Vec::new(),
-            },
+            }
+            .into(),
             RenderOptions::from_cli(OutputFormat::Github, Some("owner/repo".to_string())).unwrap(),
         )
         .unwrap();

@@ -41,12 +41,6 @@ pub enum Command {
         /// Start resumable stages from the beginning.
         #[arg(long)]
         no_resume: bool,
-
-        #[arg(long, default_value = "terminal")]
-        format: OutputFormat,
-
-        #[arg(long, required_if_eq("format", "github"))]
-        repo: Option<String>,
     },
 
     Render {
@@ -98,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn review_with_default_format() {
+    fn review() {
         let cli = parse(&["peer", "review", "HEAD~3..HEAD"]);
 
         assert_eq!(
@@ -111,85 +105,15 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 no_resume: false,
-                format: OutputFormat::Terminal,
-                repo: None,
             }
         );
     }
 
     #[test]
-    fn review_with_json_format() {
-        let cli = parse(&["peer", "review", "abc123", "--format", "json"]);
-
-        assert_eq!(
-            cli.command,
-            Command::Review {
-                target: "abc123".into(),
-                provider: None,
-                model: None,
-                title: None,
-                body_file: None,
-                comments_file: None,
-                no_resume: false,
-                format: OutputFormat::Json,
-                repo: None,
-            }
-        );
-    }
-
-    #[test]
-    fn review_with_markdown_format() {
-        let cli = parse(&["peer", "review", "main", "--format", "markdown"]);
-
-        assert_eq!(
-            cli.command,
-            Command::Review {
-                target: "main".into(),
-                provider: None,
-                model: None,
-                title: None,
-                body_file: None,
-                comments_file: None,
-                no_resume: false,
-                format: OutputFormat::Markdown,
-                repo: None,
-            }
-        );
-    }
-
-    #[test]
-    fn review_with_github_format_requires_repo() {
-        let result = Cli::try_parse_from(["peer", "review", "HEAD", "--format", "github"]);
+    fn review_rejects_format() {
+        let result = Cli::try_parse_from(["peer", "review", "HEAD", "--format", "json"]);
 
         assert_matches!(result, Err(_));
-    }
-
-    #[test]
-    fn review_with_github_format_and_repo() {
-        let cli = parse(&[
-            "peer",
-            "review",
-            "HEAD",
-            "--format",
-            "github",
-            "--repo",
-            "owner/repository",
-        ]);
-
-        assert_eq!(
-            cli.command,
-            Command::Review {
-                target: "HEAD".into(),
-                provider: None,
-                model: None,
-                title: None,
-                body_file: None,
-                comments_file: None,
-                no_resume: false,
-                format: OutputFormat::Github,
-                repo: Some("owner/repository".into()),
-            }
-        );
     }
 
     #[test]
@@ -216,8 +140,6 @@ mod tests {
                 body_file: Some("body.md".into()),
                 comments_file: Some("comments.json".into()),
                 no_resume: false,
-                format: OutputFormat::Terminal,
-                repo: None,
             }
         );
     }
@@ -244,8 +166,6 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 no_resume: false,
-                format: OutputFormat::Terminal,
-                repo: None,
             }
         );
     }
