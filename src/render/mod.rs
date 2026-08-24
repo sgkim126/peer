@@ -14,20 +14,45 @@ use crate::review::{
     PipelineExecutionError, PipelineReviewResult, PipelineStageResult, ReviewSummary,
 };
 use crate::stage::{
-    ClarificationQuestion, Finding, Severity, StageFailure, StageKind, StageOutcome, StageResult,
-    StageRun, StageTarget,
+    ClarificationQuestion, FileLocation, Finding, KnowledgeQuestion, Severity, StageFailure,
+    StageKind, StageOutcome, StageResult, StageRun, StageTarget, StructuralRecommendation,
 };
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RenderDocument {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<ReviewSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context_usage: Option<LlmUsage>,
     pub ordered_commits: Vec<CommitHash>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub findings: Vec<Finding>,
+    #[serde(default)]
+    pub questions: Vec<KnowledgeQuestion>,
+    #[serde(default)]
+    pub recommendations: Vec<StructuralRecommendation>,
+    #[serde(default)]
+    pub findings: Vec<RenderFinding>,
     pub stages: Vec<RenderStage>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenderFinding {
+    pub commit: CommitHash,
+    pub severity: Severity,
+    pub message: String,
+    #[serde(flatten)]
+    pub location: Option<FileLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub security: Option<RenderSecurityContext>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RenderSecurityContext {
+    pub attacker_control: String,
+    pub sensitive_operation: String,
+    pub impact: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -167,11 +192,18 @@ impl From<StageResult> for RenderDocument {
     fn from(mut result: StageResult) -> Self {
         let context_usage = result.context_usage.take();
         let ordered_commits = result.ordered_commits.clone();
-        let RenderStageParts { stage, findings } = result.into();
+        let RenderStageParts {
+            stage,
+            questions,
+            recommendations,
+            findings,
+        } = result.into();
         Self {
             summary: None,
             context_usage,
             ordered_commits,
+            questions,
+            recommendations,
             findings,
             stages: vec![stage],
         }
@@ -191,11 +223,14 @@ impl From<PipelineReviewResult> for RenderDocument {
             .map(RenderStageParts::from)
             .chain(errors.into_iter().map(RenderStageParts::from))
             .collect::<Vec<_>>();
-        let (stages, findings) = aggregate(stage_parts, &ordered_commits);
+        let (stages, questions, recommendations, findings) =
+            aggregate(stage_parts, &ordered_commits);
         Self {
             summary: Some(summary),
             context_usage: None,
             ordered_commits,
+            questions,
+            recommendations,
             findings,
             stages,
         }
@@ -204,45 +239,94 @@ impl From<PipelineReviewResult> for RenderDocument {
 
 struct RenderStageParts {
     stage: RenderStage,
-    findings: Vec<Finding>,
+    questions: Vec<KnowledgeQuestion>,
+    recommendations: Vec<StructuralRecommendation>,
+    findings: Vec<RenderFinding>,
 }
 
 fn aggregate(
     mut parts: Vec<RenderStageParts>,
     ordered_commits: &[CommitHash],
-) -> (Vec<RenderStage>, Vec<Finding>) {
+) -> (
+    Vec<RenderStage>,
+    Vec<KnowledgeQuestion>,
+    Vec<StructuralRecommendation>,
+    Vec<RenderFinding>,
+) {
     parts.sort_by_key(|parts| render_stage_order(&parts.stage, ordered_commits));
-    let (stages, findings): (Vec<_>, Vec<_>) = parts
-        .into_iter()
-        .map(|parts| (parts.stage, parts.findings))
-        .unzip();
-    let mut findings = findings.into_iter().flatten().collect::<Vec<_>>();
-    sort_findings_by_commit(&mut findings, ordered_commits);
-    (stages, findings)
+    let mut stages = Vec::with_capacity(parts.len());
+    let mut questions = Vec::new();
+    let mut recommendations = Vec::new();
+    let mut findings = Vec::new();
+    for part in parts {
+        stages.push(part.stage);
+        questions.extend(part.questions);
+        recommendations.extend(part.recommendations);
+        findings.extend(part.findings);
+    }
+    sort_by_related_commits(&mut questions, ordered_commits, |question| {
+        &question.related_commits
+    });
+    sort_by_related_commits(&mut recommendations, ordered_commits, |recommendation| {
+        &recommendation.related_commits
+    });
+    sort_render_findings(&mut findings, ordered_commits);
+    (stages, questions, recommendations, findings)
+}
+
+#[derive(Default)]
+struct RenderStageOutput {
+    questions: Vec<KnowledgeQuestion>,
+    recommendations: Vec<StructuralRecommendation>,
+    findings: Vec<RenderFinding>,
+}
+
+impl RenderStageOutput {
+    fn has_issues(&self) -> bool {
+        !self.questions.is_empty() || !self.recommendations.is_empty() || !self.findings.is_empty()
+    }
 }
 
 impl From<PipelineStageResult> for RenderStageParts {
     fn from(stage: PipelineStageResult) -> Self {
         match stage {
             PipelineStageResult::ReviewContext(run) => {
-                render_typed_run(run, |report| (report.summary, Vec::new()))
+                render_typed_run(run, |report| (report.summary, RenderStageOutput::default()))
             }
             PipelineStageResult::Knowledge(run) => render_knowledge_run(run),
-            PipelineStageResult::Quality(run) => {
-                render_typed_run(run, |report| (report.summary, report.findings))
-            }
+            PipelineStageResult::Quality(run) => render_typed_run(run, |report| {
+                let findings = report.findings.into_iter().map(render_finding).collect();
+                (
+                    report.summary,
+                    RenderStageOutput {
+                        findings,
+                        ..RenderStageOutput::default()
+                    },
+                )
+            }),
             PipelineStageResult::Security(run) => render_typed_run(run, |report| {
                 let findings = report
                     .findings
                     .into_iter()
-                    .map(|finding| Finding {
+                    .map(|finding| RenderFinding {
                         commit: finding.commit,
                         severity: finding.severity,
                         message: finding.message,
                         location: finding.location,
+                        security: Some(RenderSecurityContext {
+                            attacker_control: finding.attacker_control,
+                            sensitive_operation: finding.sensitive_operation,
+                            impact: finding.impact,
+                        }),
                     })
                     .collect();
-                (report.summary, findings)
+                (
+                    report.summary,
+                    RenderStageOutput {
+                        findings,
+                        ..RenderStageOutput::default()
+                    },
+                )
             }),
         }
     }
@@ -261,6 +345,8 @@ impl From<PipelineExecutionError> for RenderStageParts {
                     },
                 },
             },
+            questions: Vec::new(),
+            recommendations: Vec::new(),
             findings: Vec::new(),
         }
     }
@@ -268,56 +354,20 @@ impl From<PipelineExecutionError> for RenderStageParts {
 
 fn render_knowledge_run(run: StageRun<crate::stage::KnowledgeReport>) -> RenderStageParts {
     render_typed_run(run, |report| {
-        let questions = report.questions.into_iter().flat_map(|question| {
-            let message = format!(
-                "question/{}: {} Evidence: {} Why it matters: {}",
-                question.category.as_str(),
-                question.question,
-                question.evidence,
-                question.why_it_matters,
-            );
-            question
-                .related_commits
-                .into_iter()
-                .map(move |commit| Finding {
-                    location: question.location.as_ref().and_then(|location| {
-                        location
-                            .commit
-                            .matches(&commit)
-                            .then(|| location.file.clone())
-                    }),
-                    commit,
-                    severity: Severity::Info,
-                    message: message.clone(),
-                })
-        });
-        let recommendations = report
-            .recommendations
-            .into_iter()
-            .flat_map(|recommendation| {
-                let message = format!(
-                    "recommendation/{}: {} Rationale: {}",
-                    recommendation.kind.as_str(),
-                    recommendation.message,
-                    recommendation.rationale,
-                );
-                recommendation
-                    .related_commits
-                    .into_iter()
-                    .map(move |commit| Finding {
-                        commit,
-                        severity: Severity::Info,
-                        message: message.clone(),
-                        location: None,
-                    })
-            });
-        (report.summary, questions.chain(recommendations).collect())
+        (
+            report.summary,
+            RenderStageOutput {
+                questions: report.questions,
+                recommendations: report.recommendations,
+                findings: Vec::new(),
+            },
+        )
     })
 }
 
 fn render_typed_run<R>(
     run: StageRun<R>,
-    completed: impl FnOnce(R) -> (String, Vec<Finding>),
+    completed: impl FnOnce(R) -> (String, RenderStageOutput),
 ) -> RenderStageParts {
     let StageRun {
         stage,
@@ -327,27 +377,35 @@ fn render_typed_run<R>(
         iterations,
         usage,
     } = run;
-    let (outcome, findings) = match outcome {
+    let (outcome, output) = match outcome {
         StageOutcome::Completed { report } => {
-            let (summary, mut findings) = completed(report);
-            sort_findings_by_commit(&mut findings, &ordered_commits);
-            if findings.is_empty() {
-                (
-                    RenderStageOutcome::Clean {
-                        summary,
-                        iterations,
-                        usage,
-                    },
-                    findings,
-                )
-            } else {
+            let (summary, mut output) = completed(report);
+            sort_by_related_commits(&mut output.questions, &ordered_commits, |question| {
+                &question.related_commits
+            });
+            sort_by_related_commits(
+                &mut output.recommendations,
+                &ordered_commits,
+                |recommendation| &recommendation.related_commits,
+            );
+            sort_render_findings(&mut output.findings, &ordered_commits);
+            if output.has_issues() {
                 (
                     RenderStageOutcome::Issues {
                         summary,
                         iterations,
                         usage,
                     },
-                    findings,
+                    output,
+                )
+            } else {
+                (
+                    RenderStageOutcome::Clean {
+                        summary,
+                        iterations,
+                        usage,
+                    },
+                    output,
                 )
             }
         }
@@ -360,7 +418,7 @@ fn render_typed_run<R>(
                     usage,
                 },
             },
-            Vec::new(),
+            RenderStageOutput::default(),
         ),
         StageOutcome::Exhausted { reason } => (
             RenderStageOutcome::Exhausted {
@@ -369,7 +427,7 @@ fn render_typed_run<R>(
                 iterations,
                 usage,
             },
-            Vec::new(),
+            RenderStageOutput::default(),
         ),
     };
     RenderStageParts {
@@ -378,7 +436,9 @@ fn render_typed_run<R>(
             target,
             outcome,
         },
-        findings,
+        questions: output.questions,
+        recommendations: output.recommendations,
+        findings: output.findings,
     }
 }
 
@@ -396,6 +456,7 @@ impl From<StageResult> for RenderStageParts {
             usage,
         } = result;
         sort_findings_by_commit(&mut findings, &ordered_commits);
+        let findings = findings.into_iter().map(render_finding).collect::<Vec<_>>();
         let outcome = match failure {
             None if findings.is_empty() => RenderStageOutcome::Clean {
                 summary,
@@ -428,12 +489,51 @@ impl From<StageResult> for RenderStageParts {
                 target,
                 outcome,
             },
+            questions: Vec::new(),
+            recommendations: Vec::new(),
             findings,
         }
     }
 }
 
 fn sort_findings_by_commit(findings: &mut [Finding], ordered_commits: &[CommitHash]) {
+    findings.sort_by_cached_key(|finding| {
+        ordered_commits
+            .iter()
+            .position(|commit| commit.matches(&finding.commit))
+            .unwrap_or(usize::MAX)
+    });
+}
+
+fn render_finding(finding: Finding) -> RenderFinding {
+    RenderFinding {
+        commit: finding.commit,
+        severity: finding.severity,
+        message: finding.message,
+        location: finding.location,
+        security: None,
+    }
+}
+
+fn sort_by_related_commits<T>(
+    items: &mut [T],
+    ordered_commits: &[CommitHash],
+    commits: impl Fn(&T) -> &[CommitHash],
+) {
+    items.sort_by_cached_key(|item| {
+        commits(item)
+            .iter()
+            .filter_map(|commit| {
+                ordered_commits
+                    .iter()
+                    .position(|ordered| ordered.matches(commit))
+            })
+            .min()
+            .unwrap_or(usize::MAX)
+    });
+}
+
+fn sort_render_findings(findings: &mut [RenderFinding], ordered_commits: &[CommitHash]) {
     findings.sort_by_cached_key(|finding| {
         ordered_commits
             .iter()
@@ -849,11 +949,14 @@ mod tests {
             .into_iter()
             .map(RenderStageParts::from)
             .collect::<Vec<_>>();
-        let (stages, findings) = aggregate(stage_parts, &ordered_commits);
+        let (stages, questions, recommendations, findings) =
+            aggregate(stage_parts, &ordered_commits);
         RenderDocument {
             summary: Some(review_summary()),
             context_usage,
             ordered_commits,
+            questions,
+            recommendations,
             findings,
             stages,
         }
@@ -868,12 +971,18 @@ mod tests {
         ];
 
         let result = RenderStageParts::from(result);
-        assert_eq!(result.findings[0].commit.as_ref(), "abc1234");
-        assert_eq!(result.findings[1].commit.as_ref(), "def5678");
+        assert_matches!(
+            &result.findings[0],
+            RenderFinding { commit, .. } if commit.as_ref() == "abc1234"
+        );
+        assert_matches!(
+            &result.findings[1],
+            RenderFinding { commit, .. } if commit.as_ref() == "def5678"
+        );
     }
 
     #[test]
-    fn knowledge_questions_and_recommendations_share_the_feedback_level() {
+    fn knowledge_questions_and_recommendations_are_stored_and_rendered_separately() {
         let commit = CommitHash::new("abc1234").unwrap();
         let report: crate::stage::KnowledgeReport = serde_json::from_value(serde_json::json!({
             "summary": "One question and one recommendation.",
@@ -908,29 +1017,200 @@ mod tests {
 
         let document = RenderDocument::from(review);
 
-        assert_eq!(document.findings.len(), 2);
+        assert_eq!(document.questions.len(), 1);
+        assert_eq!(document.recommendations.len(), 1);
+        assert!(document.findings.is_empty());
         assert_matches!(
             &document.stages[0].outcome,
             RenderStageOutcome::Issues { .. }
         );
-        assert!(
-            document.findings[0]
-                .message
-                .starts_with("question/rationale:")
+        assert_matches!(
+            &document.questions[0],
+            crate::stage::KnowledgeQuestion { question, .. }
+                if question == "Why is the retry limit three?"
         );
-        assert!(
-            document.findings[1]
-                .message
-                .starts_with("recommendation/split_commit:")
+        assert_matches!(
+            &document.recommendations[0],
+            crate::stage::StructuralRecommendation { message, .. }
+                if message == "Split the migration from the retry change."
         );
         let output = render(
             document,
             RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
         )
         .unwrap();
-        assert_eq!(output.matches("## Review feedback").count(), 1);
-        assert!(output.contains("question/rationale:"));
-        assert!(output.contains("recommendation/split\\_commit:"));
+        assert_eq!(output.matches("## Review questions").count(), 1);
+        assert_eq!(output.matches("## Structural recommendations").count(), 1);
+        assert!(!output.contains("## Review findings"));
+        assert!(output.contains("**question/rationale**"));
+        assert!(output.contains("**recommendation/split_commit**"));
+    }
+
+    #[test]
+    fn pipeline_outputs_preserve_separate_stage_data_without_duplicating_knowledge_items() {
+        let first = CommitHash::new("abc1234").unwrap();
+        let second = CommitHash::new("def5678").unwrap();
+        let ordered_commits = vec![first.clone(), second.clone()];
+        let range = StageTarget::Range {
+            from: first.clone(),
+            to: second.clone(),
+        };
+        let knowledge: crate::stage::KnowledgeReport = serde_json::from_value(serde_json::json!({
+            "summary": "Knowledge feedback found.",
+            "questions": [{
+                "category": "rationale",
+                "question": "Why is the retry limit three?",
+                "evidence": "The diff introduces a literal limit.",
+                "why_it_matters": "Future tuning needs the constraint.",
+                "related_commits": [first, second],
+                "location": {
+                    "commit": second,
+                    "file": "src/retry.rs",
+                    "line": 12
+                }
+            }],
+            "recommendations": [{
+                "kind": "split_commit",
+                "message": "Split the migration from the retry change.",
+                "rationale": "They are independently reviewable.",
+                "related_commits": [first, second]
+            }]
+        }))
+        .unwrap();
+        let quality: crate::stage::QualityReport = serde_json::from_value(serde_json::json!({
+            "summary": "One quality issue.",
+            "findings": [{
+                "commit": first,
+                "severity": "low",
+                "message": "The fallback is unreachable.",
+                "file": "src/main.rs",
+                "line": 7
+            }]
+        }))
+        .unwrap();
+        let security: crate::stage::SecurityReport = serde_json::from_value(serde_json::json!({
+            "summary": "One security issue.",
+            "findings": [{
+                "commit": second,
+                "severity": "high",
+                "message": "Untrusted input reaches a shell.",
+                "attacker_control": "A request parameter controls the command.",
+                "sensitive_operation": "The parameter is passed to a shell.",
+                "impact": "Arbitrary command execution.",
+                "file": "src/command.rs",
+                "line": 42
+            }]
+        }))
+        .unwrap();
+        let usage = LlmUsage::zero("test-model");
+        let review = PipelineReviewResult {
+            summary: review_summary(),
+            ordered_commits: ordered_commits.clone(),
+            stages: vec![
+                PipelineStageResult::Knowledge(StageRun {
+                    stage: StageKind::Knowledge,
+                    target: range,
+                    ordered_commits: ordered_commits.clone(),
+                    outcome: StageOutcome::Completed { report: knowledge },
+                    iterations: 1,
+                    usage: usage.clone(),
+                }),
+                PipelineStageResult::Quality(StageRun {
+                    stage: StageKind::Quality,
+                    target: StageTarget::Commit(first),
+                    ordered_commits: ordered_commits.clone(),
+                    outcome: StageOutcome::Completed { report: quality },
+                    iterations: 1,
+                    usage: usage.clone(),
+                }),
+                PipelineStageResult::Security(StageRun {
+                    stage: StageKind::Security,
+                    target: StageTarget::Commit(second),
+                    ordered_commits,
+                    outcome: StageOutcome::Completed { report: security },
+                    iterations: 1,
+                    usage,
+                }),
+            ],
+            errors: Vec::new(),
+        };
+
+        let document = RenderDocument::from(review);
+
+        assert_eq!(document.questions.len(), 1);
+        assert_eq!(document.recommendations.len(), 1);
+        assert_eq!(document.findings.len(), 2);
+        assert_eq!(
+            review_counts(&document),
+            ReviewCounts {
+                low: 1,
+                high: 1,
+                ..ReviewCounts::default()
+            }
+        );
+
+        let json = render(
+            document.clone(),
+            RenderOptions::from_cli(OutputFormat::Json, None).unwrap(),
+        )
+        .unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(value.get("feedback"), None);
+        assert_eq!(
+            value["questions"][0]["related_commits"]
+                .as_array()
+                .unwrap()
+                .len(),
+            2
+        );
+        assert_eq!(value["recommendations"].as_array().unwrap().len(), 1);
+        assert_eq!(value["findings"].as_array().unwrap().len(), 2);
+        assert_eq!(value["findings"][0].get("security"), None);
+        assert_eq!(
+            value["findings"][1]["security"]["attacker_control"],
+            "A request parameter controls the command."
+        );
+        assert_eq!(
+            value["findings"][1]["security"]["sensitive_operation"],
+            "The parameter is passed to a shell."
+        );
+        assert_eq!(
+            value["findings"][1]["security"]["impact"],
+            "Arbitrary command execution."
+        );
+
+        for (format, repo) in [
+            (OutputFormat::Terminal, None),
+            (OutputFormat::Markdown, None),
+            (OutputFormat::Github, Some("owner/repo".to_string())),
+        ] {
+            let output = render(
+                document.clone(),
+                RenderOptions::from_cli(format, repo).unwrap(),
+            )
+            .unwrap();
+            assert_eq!(output.matches("question/rationale").count(), 1);
+            assert_eq!(output.matches("recommendation/split_commit").count(), 1);
+            assert!(output.contains("finding/high"));
+            assert!(output.contains("Attacker control:"));
+            assert!(output.contains("Sensitive operation:"));
+            assert!(output.contains("Impact:"));
+            assert!(output.contains("Review questions"));
+            assert!(output.contains("Structural recommendations"));
+            assert!(output.contains("Review findings"));
+        }
+    }
+
+    #[test]
+    fn rejects_unified_render_documents_with_feedback() {
+        let error = serde_json::from_value::<RenderDocument>(serde_json::json!({
+            "ordered_commits": [],
+            "feedback": [],
+            "stages": []
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("unknown field `feedback`"));
     }
 
     #[test]
@@ -1077,6 +1357,8 @@ mod tests {
         assert_eq!(value["summary"].get("usage_by_model"), None);
         assert_eq!(value["stages"].as_array().unwrap().len(), 2);
         assert_eq!(value["stages"][0]["stage"], "security");
+        assert_eq!(value["questions"], serde_json::json!([]));
+        assert_eq!(value["recommendations"], serde_json::json!([]));
         assert_eq!(value["findings"][0]["commit"], "abc1234");
         assert_eq!(value["stages"][1]["target"], "fedcba9");
     }
@@ -1366,6 +1648,8 @@ mod tests {
             summary: Some(review_summary()),
             context_usage: None,
             ordered_commits,
+            questions: Vec::new(),
+            recommendations: Vec::new(),
             findings: Vec::new(),
             stages,
         };
@@ -1447,7 +1731,9 @@ mod tests {
         let stages = value["stages"].as_array().unwrap();
 
         assert_eq!(value["ordered_commits"][0], "abc1234");
-        assert_eq!(value.get("findings"), None);
+        assert_eq!(value["questions"], serde_json::json!([]));
+        assert_eq!(value["recommendations"], serde_json::json!([]));
+        assert_eq!(value["findings"], serde_json::json!([]));
         assert_eq!(
             stages
                 .iter()

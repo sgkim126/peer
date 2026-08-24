@@ -7,14 +7,15 @@ use owo_colors::Style;
 use crate::git::CommitHash;
 use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
-use crate::stage::Finding;
+use crate::stage::{
+    FileLocation, KnowledgeQuestion, Severity, StageFailure, StageTarget, StructuralRecommendation,
+};
 #[cfg(test)]
-use crate::stage::StageResult;
-use crate::stage::{FileLocation, Severity, StageFailure, StageTarget};
+use crate::stage::{Finding, StageResult};
 
 use super::{
-    RenderDocument, RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message,
-    escape_terminal, join_review_sections, review_counts, usage_by_model,
+    RenderDocument, RenderFinding, RenderStage, RenderStageErrorRef, ReviewCounts,
+    clarification_message, escape_terminal, join_review_sections, review_counts, usage_by_model,
 };
 
 pub fn render(document: &RenderDocument) -> String {
@@ -40,11 +41,13 @@ pub fn render(document: &RenderDocument) -> String {
         .then_some(document.context_usage.as_ref())
         .flatten()
         .map(render_context_usage);
+    let questions = render_questions(&document.questions, use_color);
+    let recommendations = render_recommendations(&document.recommendations, use_color);
     let findings = render_findings(&document.findings, use_color);
     join_review_sections(
         summary
             .into_iter()
-            .chain([findings])
+            .chain([questions, recommendations, findings])
             .chain(context)
             .chain([stages]),
     )
@@ -243,31 +246,125 @@ fn severity_name(severity: Severity) -> &'static str {
     }
 }
 
-fn render_findings(findings: &[Finding], use_color: bool) -> String {
+fn render_questions(questions: &[KnowledgeQuestion], use_color: bool) -> String {
+    if questions.is_empty() {
+        return String::new();
+    }
+    let mut output = String::new();
+    writeln!(output, "{}", label("Review questions:", use_color)).unwrap();
+    for question in questions {
+        writeln!(
+            output,
+            "- [{}] {} Evidence: {} Why it matters: {} ({})",
+            bold(
+                &format!("question/{}", question.category.as_str()),
+                use_color,
+            ),
+            escape_terminal(&question.question),
+            escape_terminal(&question.evidence),
+            escape_terminal(&question.why_it_matters),
+            styled(
+                escape_terminal(&related_context(
+                    &question.related_commits,
+                    question.location.as_ref(),
+                )),
+                Style::new().dimmed(),
+                use_color,
+            ),
+        )
+        .unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn render_recommendations(recommendations: &[StructuralRecommendation], use_color: bool) -> String {
+    if recommendations.is_empty() {
+        return String::new();
+    }
+    let mut output = String::new();
+    writeln!(
+        output,
+        "{}",
+        label("Structural recommendations:", use_color)
+    )
+    .unwrap();
+    for recommendation in recommendations {
+        writeln!(
+            output,
+            "- [{}] {} Rationale: {} ({})",
+            bold(
+                &format!("recommendation/{}", recommendation.kind.as_str()),
+                use_color,
+            ),
+            escape_terminal(&recommendation.message),
+            escape_terminal(&recommendation.rationale),
+            styled(
+                escape_terminal(&related_context(&recommendation.related_commits, None)),
+                Style::new().dimmed(),
+                use_color,
+            ),
+        )
+        .unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn render_findings(findings: &[RenderFinding], use_color: bool) -> String {
     if findings.is_empty() {
         return String::new();
     }
     let mut output = String::new();
-    writeln!(output, "{}", label("Review feedback:", use_color)).unwrap();
+    writeln!(output, "{}", label("Review findings:", use_color)).unwrap();
     for finding in findings {
-        writeln!(
+        write!(
             output,
-            "- [finding/{}] {} ({})",
+            "- [finding/{}] {}",
             styled(
                 severity_name(finding.severity),
                 severity_style(finding.severity),
                 use_color
             ),
             escape_terminal(&finding.message),
+        )
+        .unwrap();
+        if let Some(security) = &finding.security {
+            write!(
+                output,
+                " Attacker control: {} Sensitive operation: {} Impact: {}",
+                escape_terminal(&security.attacker_control),
+                escape_terminal(&security.sensitive_operation),
+                escape_terminal(&security.impact),
+            )
+            .unwrap();
+        }
+        writeln!(
+            output,
+            " ({})",
             styled(
-                escape_terminal(&finding_context(&finding.commit, finding.location.as_ref())),
+                escape_terminal(&finding_context(&finding.commit, finding.location.as_ref(),)),
                 Style::new().dimmed(),
-                use_color
+                use_color,
             )
         )
         .unwrap();
     }
     output.trim_end().to_string()
+}
+
+fn related_context(
+    commits: &[CommitHash],
+    location: Option<&crate::stage::KnowledgeLocation>,
+) -> String {
+    commits
+        .iter()
+        .map(|commit| {
+            let file = location
+                .filter(|location| location.commit.matches(commit))
+                .map(|location| &location.file);
+            finding_context(commit, file)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn finding_context(commit: &CommitHash, location: Option<&FileLocation>) -> String {
@@ -359,7 +456,7 @@ mod tests {
     }
 
     #[test]
-    fn colors_unified_feedback_severity() {
+    fn colors_finding_severity() {
         let findings = vec![Finding {
             commit: CommitHash::new("abc1234").unwrap(),
             severity: Severity::High,
@@ -367,6 +464,10 @@ mod tests {
             location: None,
         }];
 
+        let findings = findings
+            .into_iter()
+            .map(crate::render::render_finding)
+            .collect::<Vec<_>>();
         let output = render_findings(&findings, true);
         let colored_severity = styled("high", severity_style(Severity::High), true);
 
