@@ -11,11 +11,22 @@ use crate::stage::{
 use crate::stage::{Finding, StageResult};
 
 use super::{
-    RenderDocument, RenderFinding, RenderStage, RenderStageErrorRef, ReviewCounts,
+    RenderDocument, RenderFinding, RenderInput, RenderStage, RenderStageErrorRef, ReviewCounts,
     clarification_message, escape_markdown, join_review_sections, review_counts, usage_by_model,
 };
 
-pub fn render(document: &RenderDocument) -> String {
+pub fn render(input: &RenderInput) -> String {
+    match input {
+        RenderInput::Document(document) => render_document(document),
+        RenderInput::KnowledgeQuestion(question) => render_question(question),
+        RenderInput::StructuralRecommendation(recommendation) => {
+            render_recommendation(recommendation)
+        }
+        RenderInput::Finding(finding) => render_finding(finding),
+    }
+}
+
+fn render_document(document: &RenderDocument) -> String {
     let stages = document
         .stages
         .iter()
@@ -178,21 +189,23 @@ fn render_questions(questions: &[KnowledgeQuestion]) -> String {
     }
     let mut output = "## Review questions\n".to_string();
     for question in questions {
-        writeln!(
-            output,
-            "- **question/{}** — {} Evidence: {} Why it matters: {} ({})",
-            question.category.as_str(),
-            escape_markdown(&question.question),
-            escape_markdown(&question.evidence),
-            escape_markdown(&question.why_it_matters),
-            escape_markdown(&related_context(
-                &question.related_commits,
-                question.location.as_ref(),
-            )),
-        )
-        .unwrap();
+        writeln!(output, "{}", render_question(question)).unwrap();
     }
     output.trim_end().to_string()
+}
+
+fn render_question(question: &KnowledgeQuestion) -> String {
+    format!(
+        "- **question/{}** — {} Evidence: {} Why it matters: {} ({})",
+        question.category.as_str(),
+        escape_markdown(&question.question),
+        escape_markdown(&question.evidence),
+        escape_markdown(&question.why_it_matters),
+        escape_markdown(&related_context(
+            &question.related_commits,
+            question.location.as_ref(),
+        )),
+    )
 }
 
 fn render_recommendations(recommendations: &[StructuralRecommendation]) -> String {
@@ -201,17 +214,19 @@ fn render_recommendations(recommendations: &[StructuralRecommendation]) -> Strin
     }
     let mut output = "## Structural recommendations\n".to_string();
     for recommendation in recommendations {
-        writeln!(
-            output,
-            "- **recommendation/{}** — {} Rationale: {} ({})",
-            recommendation.kind.as_str(),
-            escape_markdown(&recommendation.message),
-            escape_markdown(&recommendation.rationale),
-            escape_markdown(&related_context(&recommendation.related_commits, None)),
-        )
-        .unwrap();
+        writeln!(output, "{}", render_recommendation(recommendation)).unwrap();
     }
     output.trim_end().to_string()
+}
+
+fn render_recommendation(recommendation: &StructuralRecommendation) -> String {
+    format!(
+        "- **recommendation/{}** — {} Rationale: {} ({})",
+        recommendation.kind.as_str(),
+        escape_markdown(&recommendation.message),
+        escape_markdown(&recommendation.rationale),
+        escape_markdown(&related_context(&recommendation.related_commits, None)),
+    )
 }
 
 fn render_findings(findings: &[RenderFinding]) -> String {
@@ -220,31 +235,34 @@ fn render_findings(findings: &[RenderFinding]) -> String {
     }
     let mut output = "## Review findings\n".to_string();
     for finding in findings {
+        writeln!(output, "{}", render_finding(finding)).unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn render_finding(finding: &RenderFinding) -> String {
+    let mut output = format!(
+        "- **finding/{}** — {}",
+        severity_name(finding.severity),
+        escape_markdown(&finding.message),
+    );
+    if let Some(security) = &finding.security {
         write!(
             output,
-            "- **finding/{}** — {}",
-            severity_name(finding.severity),
-            escape_markdown(&finding.message),
-        )
-        .unwrap();
-        if let Some(security) = &finding.security {
-            write!(
-                output,
-                " Attacker control: {} Sensitive operation: {} Impact: {}",
-                escape_markdown(&security.attacker_control),
-                escape_markdown(&security.sensitive_operation),
-                escape_markdown(&security.impact),
-            )
-            .unwrap();
-        }
-        writeln!(
-            output,
-            " ({})",
-            escape_markdown(&finding_context(&finding.commit, finding.location.as_ref(),))
+            " Attacker control: {} Sensitive operation: {} Impact: {}",
+            escape_markdown(&security.attacker_control),
+            escape_markdown(&security.sensitive_operation),
+            escape_markdown(&security.impact),
         )
         .unwrap();
     }
-    output.trim_end().to_string()
+    write!(
+        output,
+        " ({})",
+        escape_markdown(&finding_context(&finding.commit, finding.location.as_ref(),))
+    )
+    .unwrap();
+    output
 }
 
 fn related_context(

@@ -47,6 +47,49 @@ pub struct RenderFinding {
     pub security: Option<RenderSecurityContext>,
 }
 
+/// A JSON value accepted by the `render` command.
+///
+/// Individual review items are promoted to a minimal render document so they
+/// use the same formatting and escaping rules as a complete review.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+pub enum RenderInput {
+    Document(RenderDocument),
+    KnowledgeQuestion(KnowledgeQuestion),
+    StructuralRecommendation(StructuralRecommendation),
+    Finding(RenderFinding),
+}
+
+impl From<RenderDocument> for RenderInput {
+    fn from(document: RenderDocument) -> Self {
+        Self::Document(document)
+    }
+}
+
+impl From<PipelineReviewResult> for RenderInput {
+    fn from(review: PipelineReviewResult) -> Self {
+        Self::Document(review.into())
+    }
+}
+
+impl From<KnowledgeQuestion> for RenderInput {
+    fn from(question: KnowledgeQuestion) -> Self {
+        Self::KnowledgeQuestion(question)
+    }
+}
+
+impl From<StructuralRecommendation> for RenderInput {
+    fn from(recommendation: StructuralRecommendation) -> Self {
+        Self::StructuralRecommendation(recommendation)
+    }
+}
+
+impl From<RenderFinding> for RenderInput {
+    fn from(finding: RenderFinding) -> Self {
+        Self::Finding(finding)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderSecurityContext {
@@ -641,7 +684,6 @@ pub struct RenderOptions {
 
 #[derive(Clone, Debug, PartialEq)]
 enum RenderFormat {
-    Json,
     Terminal,
     Markdown,
     Github { repo: String },
@@ -653,9 +695,6 @@ impl RenderOptions {
         repo: Option<String>,
     ) -> Result<Self, RenderOptionsError> {
         match (format, repo) {
-            (OutputFormat::Json, None) => Ok(Self {
-                format: RenderFormat::Json,
-            }),
             (OutputFormat::Terminal, None) => Ok(Self {
                 format: RenderFormat::Terminal,
             }),
@@ -674,20 +713,20 @@ impl RenderOptions {
     }
 }
 
-pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
+pub fn render(input: RenderInput, options: RenderOptions) -> Result<String, RenderError> {
     match options.format {
-        RenderFormat::Json => Ok(serde_json::to_string_pretty(&document)?),
-        RenderFormat::Terminal => Ok(terminal::render(&document)),
-        RenderFormat::Markdown => Ok(markdown::render(&document)),
-        RenderFormat::Github { repo } => Ok(github::render(&document, &repo)),
+        RenderFormat::Terminal => Ok(terminal::render(&input)),
+        RenderFormat::Markdown => Ok(markdown::render(&input)),
+        RenderFormat::Github { repo } => Ok(github::render(&input, &repo)),
     }
 }
 
-pub fn render_pipeline(
-    review: PipelineReviewResult,
-    options: RenderOptions,
-) -> Result<String, RenderError> {
-    render(review.into(), options)
+pub fn render_pipeline_json(review: PipelineReviewResult) -> Result<String, RenderError> {
+    render_json(review.into())
+}
+
+fn render_json(document: RenderDocument) -> Result<String, RenderError> {
+    Ok(serde_json::to_string_pretty(&document)?)
 }
 
 fn review_counts(document: &RenderDocument) -> ReviewCounts {
@@ -1035,7 +1074,7 @@ mod tests {
                 if message == "Split the migration from the retry change."
         );
         let output = render(
-            document,
+            document.into(),
             RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
         )
         .unwrap();
@@ -1149,11 +1188,7 @@ mod tests {
             }
         );
 
-        let json = render(
-            document.clone(),
-            RenderOptions::from_cli(OutputFormat::Json, None).unwrap(),
-        )
-        .unwrap();
+        let json = render_json(document.clone()).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value.get("feedback"), None);
         assert_eq!(
@@ -1185,7 +1220,7 @@ mod tests {
             (OutputFormat::Github, Some("owner/repo".to_string())),
         ] {
             let output = render(
-                document.clone(),
+                document.clone().into(),
                 RenderOptions::from_cli(format, repo).unwrap(),
             )
             .unwrap();
@@ -1333,7 +1368,7 @@ mod tests {
     #[test]
     fn render_orders_findings_by_commit_order() {
         let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
-        let output = render(result().into(), options).unwrap();
+        let output = render(RenderDocument::from(result()).into(), options).unwrap();
 
         assert!(
             output.find(r"High\-risk finding\.").unwrap()
@@ -1346,9 +1381,8 @@ mod tests {
         let mut second = result();
         second.target = StageTarget::Commit(CommitHash::new("fedcba9").unwrap());
         let review = review_document(vec![result(), second], None);
-        let options = RenderOptions::from_cli(OutputFormat::Json, None).unwrap();
 
-        let output = render(review, options).unwrap();
+        let output = render_json(review).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert!(output.starts_with("{\n  \"summary\""));
@@ -1391,7 +1425,7 @@ mod tests {
             let review = review_document(vec![result(), second], Some(review_context_usage()));
             let options = RenderOptions::from_cli(format, repo).unwrap();
 
-            let output = render(review, options).unwrap();
+            let output = render(review.into(), options).unwrap();
 
             assert_eq!(output.matches(expected_context_usage).count(), 1);
             assert!(output.contains(expected_total_usage));
@@ -1401,9 +1435,8 @@ mod tests {
     #[test]
     fn includes_review_context_usage_in_json_output() {
         let review = review_document(vec![result()], Some(review_context_usage()));
-        let options = RenderOptions::from_cli(OutputFormat::Json, None).unwrap();
 
-        let output = render(review, options).unwrap();
+        let output = render_json(review).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(value["context_usage"]["input_tokens"], 40);
@@ -1439,7 +1472,7 @@ mod tests {
             let review = review_document(vec![result(), second.clone()], None);
             let options = RenderOptions::from_cli(format, repo).unwrap();
 
-            let output = render(review, options).unwrap();
+            let output = render(review.into(), options).unwrap();
 
             assert!(output.contains("security"));
             assert!(output.contains("quality"));
@@ -1484,6 +1517,96 @@ mod tests {
         assert_eq!(decoded, document);
         assert_eq!(value.get("summary"), None);
         assert_eq!(value.get("context_usage"), None);
+    }
+
+    #[test]
+    fn render_input_deserializes_render_document() {
+        let document = RenderDocument::from(result());
+        let document_json = serde_json::to_string(&document).unwrap();
+
+        let input = serde_json::from_str::<RenderInput>(&document_json).unwrap();
+
+        assert_eq!(input, RenderInput::Document(document));
+    }
+
+    #[test]
+    fn render_input_deserializes_knowledge_question() {
+        let input = serde_json::from_str::<RenderInput>(
+            r#"{"category":"rationale","question":"Why?","evidence":"The choice is not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#,
+        )
+        .unwrap();
+
+        assert_matches!(input, RenderInput::KnowledgeQuestion(question) if question.question == "Why?");
+    }
+
+    #[test]
+    fn render_input_deserializes_structural_recommendation() {
+        let input = serde_json::from_str::<RenderInput>(
+            r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#,
+        )
+        .unwrap();
+
+        assert_matches!(
+            input,
+            RenderInput::StructuralRecommendation(recommendation)
+                if recommendation.message == "Split this commit."
+        );
+    }
+
+    #[test]
+    fn render_input_deserializes_render_finding() {
+        let input = serde_json::from_str::<RenderInput>(
+            r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#,
+        )
+        .unwrap();
+
+        assert_matches!(input, RenderInput::Finding(finding) if finding.message == "Validate the input.");
+    }
+
+    #[test]
+    fn individual_inputs_render_without_document_section_headings() {
+        let inputs = [
+            (
+                serde_json::from_str::<RenderInput>(
+                    r#"{"category":"rationale","question":"Why?","evidence":"Not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#,
+                )
+                .unwrap(),
+                "Why",
+            ),
+            (
+                serde_json::from_str::<RenderInput>(
+                    r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#,
+                )
+                .unwrap(),
+                "Split this commit",
+            ),
+            (
+                serde_json::from_str::<RenderInput>(
+                    r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#,
+                )
+                .unwrap(),
+                "Validate the input",
+            ),
+        ];
+
+        for (input, expected) in inputs {
+            for (format, repo) in [
+                (OutputFormat::Terminal, None),
+                (OutputFormat::Markdown, None),
+                (OutputFormat::Github, Some("owner/repo".to_string())),
+            ] {
+                let output = render(
+                    input.clone(),
+                    RenderOptions::from_cli(format, repo).unwrap(),
+                )
+                .unwrap();
+
+                assert!(output.contains(expected));
+                assert!(!output.contains("Review questions"));
+                assert!(!output.contains("Structural recommendations"));
+                assert!(!output.contains("Review findings"));
+            }
+        }
     }
 
     #[test]
@@ -1572,7 +1695,11 @@ mod tests {
         ] {
             let document = review_document(vec![result()], None);
 
-            let output = render(document, RenderOptions::from_cli(format, repo).unwrap()).unwrap();
+            let output = render(
+                document.into(),
+                RenderOptions::from_cli(format, repo).unwrap(),
+            )
+            .unwrap();
 
             for line in expected {
                 assert!(output.contains(line));
@@ -1723,11 +1850,7 @@ mod tests {
             errors: Vec::new(),
         };
 
-        let output = render_pipeline(
-            review,
-            RenderOptions::from_cli(OutputFormat::Json, None).unwrap(),
-        )
-        .unwrap();
+        let output = render_pipeline_json(review).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
         let stages = value["stages"].as_array().unwrap();
 
@@ -1753,7 +1876,7 @@ mod tests {
     #[test]
     fn pipeline_exhaustion_reason_appears_once_in_terminal() {
         let commit = CommitHash::new("abc1234").unwrap();
-        let output = render_pipeline(
+        let output = render(
             PipelineReviewResult {
                 summary: review_summary(),
                 ordered_commits: vec![commit.clone()],
@@ -1763,7 +1886,8 @@ mod tests {
                     &[],
                 ))],
                 errors: Vec::new(),
-            },
+            }
+            .into(),
             RenderOptions::from_cli(OutputFormat::Terminal, None).unwrap(),
         )
         .unwrap();
@@ -1774,7 +1898,7 @@ mod tests {
     #[test]
     fn pipeline_exhaustion_reason_appears_once_in_markdown() {
         let commit = CommitHash::new("abc1234").unwrap();
-        let output = render_pipeline(
+        let output = render(
             PipelineReviewResult {
                 summary: review_summary(),
                 ordered_commits: vec![commit.clone()],
@@ -1784,7 +1908,8 @@ mod tests {
                     &[],
                 ))],
                 errors: Vec::new(),
-            },
+            }
+            .into(),
             RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
         )
         .unwrap();
@@ -1795,7 +1920,7 @@ mod tests {
     #[test]
     fn pipeline_exhaustion_reason_appears_once_in_github() {
         let commit = CommitHash::new("abc1234").unwrap();
-        let output = render_pipeline(
+        let output = render(
             PipelineReviewResult {
                 summary: review_summary(),
                 ordered_commits: vec![commit.clone()],
@@ -1805,7 +1930,8 @@ mod tests {
                     &[],
                 ))],
                 errors: Vec::new(),
-            },
+            }
+            .into(),
             RenderOptions::from_cli(OutputFormat::Github, Some("owner/repo".to_string())).unwrap(),
         )
         .unwrap();

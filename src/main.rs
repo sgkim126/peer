@@ -83,16 +83,7 @@ async fn main() -> ExitCode {
             body_file,
             comments_file,
             no_resume,
-            format,
-            repo,
         } => {
-            let options = match render::RenderOptions::from_cli(format, repo) {
-                Ok(options) => options,
-                Err(error) => {
-                    eprintln!("failed to configure render: {error}");
-                    return ExitCode::FAILURE;
-                }
-            };
             let review_context = match context::ReviewContext::load(
                 title,
                 body_file.as_deref(),
@@ -197,7 +188,7 @@ async fn main() -> ExitCode {
             }
             let is_success = result.is_success();
 
-            match render::render_pipeline(result, options) {
+            match render::render_pipeline_json(result) {
                 Ok(output) => {
                     println!("{output}");
                     if is_success {
@@ -228,15 +219,15 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            let document = match serde_json::from_str::<render::RenderDocument>(&input) {
-                Ok(document) => document,
+            let input = match serde_json::from_str::<render::RenderInput>(&input) {
+                Ok(input) => input,
                 Err(error) => {
-                    eprintln!("failed to parse render document: {error}");
+                    eprintln!("failed to parse render input: {error}");
                     debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
-            match render::render(document, options) {
+            match render::render(input, options) {
                 Ok(output) => {
                     println!("{output}");
                     ExitCode::SUCCESS

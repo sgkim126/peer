@@ -178,13 +178,12 @@ Model prices in that file are used only to estimate cost; the provider's billing
 
 ## Output and exit status
 
-Terminal output is the default.
-The other formats are selected with `--format`.
+`peer review` always outputs JSON. Pipe that document to `peer render` to produce a human-readable format; terminal output is the renderer's default. `peer render` also accepts a single `KnowledgeQuestion`, `StructuralRecommendation`, or `RenderFinding` JSON object.
 
 ```bash
-peer review main..HEAD --format json
-peer review main..HEAD --format markdown
-peer review main..HEAD --format github --repo owner/repository
+peer review main..HEAD
+peer review main..HEAD | peer render --format markdown
+peer review main..HEAD | peer render --format github --repo owner/repository
 ```
 
 The GitHub format requires `--repo` so that feedback can link to repository files.
