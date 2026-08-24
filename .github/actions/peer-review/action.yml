@@ -12,17 +12,9 @@ inputs:
     description: LLM model name to pass to peer review.
     required: false
   no-resume:
-    description: Start checks without resuming cached checkpoints.
+    description: Start stages without resuming cached checkpoints.
     required: false
     default: "false"
-  skip-checks:
-    description: Comma-separated checks to skip.
-    required: false
-    default: ""
-  only-checks:
-    description: Comma-separated checks to run exclusively.
-    required: false
-    default: ""
   cache-key:
     description: Cache key for peer's review cache. Leave empty to disable caching.
     required: false
@@ -45,12 +37,8 @@ inputs:
     description: Path to a JSON file containing review comment threads.
     required: false
     default: ""
-  debug:
-    description: Enable peer debug logging.
-    required: false
-    default: "false"
-  verbose:
-    description: Enable peer verbose logging.
+  trace:
+    description: Enable peer trace logging.
     required: false
     default: "false"
 outputs:
@@ -67,6 +55,19 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Install Node.js
+      uses: actions/setup-node@v7
+      with:
+        node-version: 24
+
+    - name: Install Pi
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.83.0
+        pi --version
+
     - name: Install peer binary
       shell: bash
       env:
@@ -142,15 +143,12 @@ runs:
         PEER_REVIEW_PROVIDER: ${{ inputs.provider }}
         PEER_REVIEW_MODEL: ${{ inputs.model }}
         PEER_REVIEW_NO_RESUME: ${{ inputs.no-resume }}
-        PEER_REVIEW_SKIP_CHECKS: ${{ inputs.skip-checks }}
-        PEER_REVIEW_ONLY_CHECKS: ${{ inputs.only-checks }}
         PEER_REVIEW_TARGET: ${{ inputs.target }}
         PEER_REVIEW_REPO: ${{ inputs.repo }}
         PEER_REVIEW_TITLE: ${{ inputs.title }}
         PEER_REVIEW_BODY_FILE: ${{ inputs.body-file }}
         PEER_REVIEW_COMMENTS_FILE: ${{ inputs.comments-file }}
-        PEER_REVIEW_DEBUG: ${{ inputs.debug }}
-        PEER_REVIEW_VERBOSE: ${{ inputs.verbose }}
+        PEER_REVIEW_TRACE: ${{ inputs.trace }}
       run: |
         set -euo pipefail
 
@@ -189,21 +187,8 @@ runs:
         if [ "$PEER_REVIEW_NO_RESUME" = "true" ]; then
           args+=(--no-resume)
         fi
-        if [ -n "$PEER_REVIEW_SKIP_CHECKS" ] && [ -n "$PEER_REVIEW_ONLY_CHECKS" ]; then
-          echo 'Only one of skip-checks or only-checks may be specified.' >&2
-          exit 2
-        fi
-        if [ -n "$PEER_REVIEW_SKIP_CHECKS" ]; then
-          args+=(--skip-check "$PEER_REVIEW_SKIP_CHECKS")
-        fi
-        if [ -n "$PEER_REVIEW_ONLY_CHECKS" ]; then
-          args+=(--only-check "$PEER_REVIEW_ONLY_CHECKS")
-        fi
-        if [ "$PEER_REVIEW_DEBUG" = "true" ]; then
-          args=(--debug "${args[@]}")
-        fi
-        if [ "$PEER_REVIEW_VERBOSE" = "true" ]; then
-          args=(--verbose "${args[@]}")
+        if [ "$PEER_REVIEW_TRACE" = "true" ]; then
+          export RUST_LOG=trace
         fi
         if [ -n "$PEER_REVIEW_TITLE" ]; then
           args+=(--title "$PEER_REVIEW_TITLE")

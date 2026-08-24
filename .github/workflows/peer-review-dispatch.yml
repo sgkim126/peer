@@ -22,41 +22,12 @@ on:
         default: ""
         type: string
       no_resume:
-        description: Start checks without resuming cached checkpoints.
+        description: Start stages without resuming cached checkpoints.
         required: false
         default: false
         type: boolean
-      check_mode:
-        description: How to apply the selected review checks.
-        required: true
-        default: all
-        type: choice
-        options:
-          - all
-          - skip-check
-          - only-check
-      check_size:
-        description: Select the size check for the chosen mode.
-        required: false
-        default: false
-        type: boolean
-      check_intent:
-        description: Select the intent check for the chosen mode.
-        required: false
-        default: false
-        type: boolean
-      check_quality:
-        description: Select the quality check for the chosen mode.
-        required: false
-        default: false
-        type: boolean
-      check_security:
-        description: Select the security check for the chosen mode.
-        required: false
-        default: false
-        type: boolean
-      check_coherence:
-        description: Select the coherence check for the chosen mode.
+      trace:
+        description: Enable peer trace logging.
         required: false
         default: false
         type: boolean
@@ -67,7 +38,7 @@ permissions:
   pull-requests: write
 
 env:
-  PEER_VERSION: "0.11.2"
+  PEER_VERSION: "0.12.0"
 
 jobs:
   review:
@@ -93,23 +64,6 @@ jobs:
               return;
             }
 
-            const checkMode = ${{ toJSON(inputs.check_mode) }};
-            const checks = [
-              ['size', ${{ toJSON(inputs.check_size) }}],
-              ['intent', ${{ toJSON(inputs.check_intent) }}],
-              ['quality', ${{ toJSON(inputs.check_quality) }}],
-              ['security', ${{ toJSON(inputs.check_security) }}],
-              ['coherence', ${{ toJSON(inputs.check_coherence) }}],
-            ].filter(([, selected]) => selected).map(([check]) => check);
-            if (checkMode === 'all' && checks.length > 0) {
-              core.setFailed('Select checks only with skip-check or only-check mode.');
-              return;
-            }
-            if ((checkMode === 'skip-check' || checkMode === 'only-check') && checks.length === 0) {
-              core.setFailed(`Select at least one check when using ${checkMode}.`);
-              return;
-            }
-
             const { data: pull } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -122,8 +76,6 @@ jobs:
             core.setOutput('title', pull.title ?? '');
             core.setOutput('provider', provider);
             core.setOutput('model', (${{ toJSON(inputs.model) }} ?? '').trim());
-            core.setOutput('skip-checks', checkMode === 'skip-check' ? checks.join(',') : '');
-            core.setOutput('only-checks', checkMode === 'only-check' ? checks.join(',') : '');
 
       - name: Create peer review placeholder
         id: placeholder
@@ -132,27 +84,18 @@ jobs:
           PEER_VERSION: ${{ env.PEER_VERSION }}
           REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
           REVIEW_MODEL: ${{ steps.review.outputs.model }}
-          REVIEW_SKIP_CHECKS: ${{ steps.review.outputs.skip-checks }}
-          REVIEW_ONLY_CHECKS: ${{ steps.review.outputs.only-checks }}
         with:
           script: |
             const peerVersion = process.env.PEER_VERSION;
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
-            const skipChecks = process.env.REVIEW_SKIP_CHECKS;
-            const onlyChecks = process.env.REVIEW_ONLY_CHECKS;
             const triggeredBy = context.actor;
-            const checkMetadata = [
-              ...(onlyChecks ? [`checks run (--only-check): ${onlyChecks}`] : []),
-              ...(skipChecks ? [`checks skipped (--skip-check): ${skipChecks}`] : []),
-            ];
             const metadata = [
               `peer version: ${peerVersion}`,
               `provider: ${provider}`,
               model
                 ? `model: ${model}`
                 : 'model: provider default',
-              ...checkMetadata,
             ].join('\n');
             const commentMetadata = [
               metadata,
@@ -170,7 +113,6 @@ jobs:
             core.setOutput('comment-id', String(comment.id));
             core.setOutput('comment-url', comment.html_url);
             core.setOutput('metadata', metadata);
-            core.setOutput('check-metadata', checkMetadata.join('\n'));
 
       - name: Checkout pull request
         uses: actions/checkout@v7
@@ -259,16 +201,13 @@ jobs:
           provider: ${{ steps.review.outputs.provider }}
           model: ${{ steps.review.outputs.model }}
           no-resume: ${{ inputs.no_resume }}
-          skip-checks: ${{ steps.review.outputs.skip-checks }}
-          only-checks: ${{ steps.review.outputs.only-checks }}
           cache-key: peer-cache-${{ runner.os }}-${{ github.repository }}-pr-${{ steps.review.outputs.pr-number }}
           target: ${{ steps.review.outputs.base-sha }}..${{ steps.review.outputs.head-sha }}
           repo: ${{ github.repository }}
           title: ${{ steps.review.outputs.title }}
           body-file: ${{ steps.context.outputs.body-file }}
           comments-file: ${{ steps.context.outputs.comments-file }}
-          debug: "true"
-          verbose: "true"
+          trace: ${{ inputs.trace }}
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
@@ -280,14 +219,11 @@ jobs:
         uses: actions/github-script@v9
         env:
           REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
-          REVIEW_CHECK_METADATA: ${{ steps.placeholder.outputs.check-metadata }}
         with:
           script: |
             const fs = require('fs');
             const exitCode = '${{ steps.peer.outputs.exit-code }}';
-            const metadata = exitCode === '0'
-              ? process.env.REVIEW_CHECK_METADATA
-              : process.env.REVIEW_METADATA;
+            const metadata = exitCode === '0' ? '' : process.env.REVIEW_METADATA;
             const commentMetadata = [
               metadata,
               `Triggered by @${context.actor}`,
