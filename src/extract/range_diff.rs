@@ -9,6 +9,7 @@ use super::{ExtractError, Extractor};
 pub struct RangeDiff {
     pub from: CommitHash,
     pub to: CommitHash,
+    pub files: Vec<String>,
     pub diff: String,
 }
 
@@ -35,7 +36,31 @@ impl Extractor {
         )
         .await?;
 
-        Ok(RangeDiff { from, to, diff })
+        let files = run_git(
+            &[
+                "diff",
+                "--name-only",
+                "-z",
+                "--no-renames",
+                from.as_ref(),
+                to.as_ref(),
+                "--",
+            ],
+            &self.project_root,
+        )
+        .await?;
+        let files = files
+            .split('\0')
+            .filter(|path| !path.is_empty())
+            .map(str::to_string)
+            .collect();
+
+        Ok(RangeDiff {
+            from,
+            to,
+            files,
+            diff,
+        })
     }
 }
 
