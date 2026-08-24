@@ -641,7 +641,6 @@ pub struct RenderOptions {
 
 #[derive(Clone, Debug, PartialEq)]
 enum RenderFormat {
-    Json,
     Terminal,
     Markdown,
     Github { repo: String },
@@ -653,9 +652,6 @@ impl RenderOptions {
         repo: Option<String>,
     ) -> Result<Self, RenderOptionsError> {
         match (format, repo) {
-            (OutputFormat::Json, None) => Ok(Self {
-                format: RenderFormat::Json,
-            }),
             (OutputFormat::Terminal, None) => Ok(Self {
                 format: RenderFormat::Terminal,
             }),
@@ -676,7 +672,6 @@ impl RenderOptions {
 
 pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
     match options.format {
-        RenderFormat::Json => render_json(document),
         RenderFormat::Terminal => Ok(terminal::render(&document)),
         RenderFormat::Markdown => Ok(markdown::render(&document)),
         RenderFormat::Github { repo } => Ok(github::render(&document, &repo)),
@@ -1150,11 +1145,7 @@ mod tests {
             }
         );
 
-        let json = render(
-            document.clone(),
-            RenderOptions::from_cli(OutputFormat::Json, None).unwrap(),
-        )
-        .unwrap();
+        let json = render_json(document.clone()).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value.get("feedback"), None);
         assert_eq!(
@@ -1347,9 +1338,8 @@ mod tests {
         let mut second = result();
         second.target = StageTarget::Commit(CommitHash::new("fedcba9").unwrap());
         let review = review_document(vec![result(), second], None);
-        let options = RenderOptions::from_cli(OutputFormat::Json, None).unwrap();
 
-        let output = render(review, options).unwrap();
+        let output = render_json(review).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert!(output.starts_with("{\n  \"summary\""));
@@ -1402,9 +1392,8 @@ mod tests {
     #[test]
     fn includes_review_context_usage_in_json_output() {
         let review = review_document(vec![result()], Some(review_context_usage()));
-        let options = RenderOptions::from_cli(OutputFormat::Json, None).unwrap();
 
-        let output = render(review, options).unwrap();
+        let output = render_json(review).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert_eq!(value["context_usage"]["input_tokens"], 40);

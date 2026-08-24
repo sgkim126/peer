@@ -54,7 +54,6 @@ pub enum Command {
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq)]
 pub enum OutputFormat {
-    Json,
     Terminal,
     Markdown,
     Github,
@@ -217,16 +216,10 @@ mod tests {
     }
 
     #[test]
-    fn render_with_json_format() {
-        let cli = parse(&["peer", "render", "--format", "json"]);
+    fn render_rejects_json_format() {
+        let result = Cli::try_parse_from(["peer", "render", "--format", "json"]);
 
-        assert_eq!(
-            cli.command,
-            Command::Render {
-                format: OutputFormat::Json,
-                repo: None,
-            }
-        );
+        assert_matches!(result, Err(_));
     }
 
     #[test]
