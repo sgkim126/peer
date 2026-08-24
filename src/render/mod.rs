@@ -47,6 +47,50 @@ pub struct RenderFinding {
     pub security: Option<RenderSecurityContext>,
 }
 
+/// A JSON value accepted by the `render` command.
+///
+/// Individual review items are promoted to a minimal render document so they
+/// use the same formatting and escaping rules as a complete review.
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(untagged)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub enum RenderInput {
+    Document(RenderDocument),
+    KnowledgeQuestion(KnowledgeQuestion),
+    StructuralRecommendation(StructuralRecommendation),
+    Finding(RenderFinding),
+}
+
+impl From<RenderDocument> for RenderInput {
+    fn from(document: RenderDocument) -> Self {
+        Self::Document(document)
+    }
+}
+
+impl From<PipelineReviewResult> for RenderInput {
+    fn from(review: PipelineReviewResult) -> Self {
+        Self::Document(review.into())
+    }
+}
+
+impl From<KnowledgeQuestion> for RenderInput {
+    fn from(question: KnowledgeQuestion) -> Self {
+        Self::KnowledgeQuestion(question)
+    }
+}
+
+impl From<StructuralRecommendation> for RenderInput {
+    fn from(recommendation: StructuralRecommendation) -> Self {
+        Self::StructuralRecommendation(recommendation)
+    }
+}
+
+impl From<RenderFinding> for RenderInput {
+    fn from(finding: RenderFinding) -> Self {
+        Self::Finding(finding)
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderSecurityContext {
@@ -1474,6 +1518,50 @@ mod tests {
         assert_eq!(decoded, document);
         assert_eq!(value.get("summary"), None);
         assert_eq!(value.get("context_usage"), None);
+    }
+
+    #[test]
+    fn render_input_deserializes_render_document() {
+        let document = RenderDocument::from(result());
+        let document_json = serde_json::to_string(&document).unwrap();
+
+        let input = serde_json::from_str::<RenderInput>(&document_json).unwrap();
+
+        assert_eq!(input, RenderInput::Document(document));
+    }
+
+    #[test]
+    fn render_input_deserializes_knowledge_question() {
+        let input = serde_json::from_str::<RenderInput>(
+            r#"{"category":"rationale","question":"Why?","evidence":"The choice is not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#,
+        )
+        .unwrap();
+
+        assert_matches!(input, RenderInput::KnowledgeQuestion(question) if question.question == "Why?");
+    }
+
+    #[test]
+    fn render_input_deserializes_structural_recommendation() {
+        let input = serde_json::from_str::<RenderInput>(
+            r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#,
+        )
+        .unwrap();
+
+        assert_matches!(
+            input,
+            RenderInput::StructuralRecommendation(recommendation)
+                if recommendation.message == "Split this commit."
+        );
+    }
+
+    #[test]
+    fn render_input_deserializes_render_finding() {
+        let input = serde_json::from_str::<RenderInput>(
+            r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#,
+        )
+        .unwrap();
+
+        assert_matches!(input, RenderInput::Finding(finding) if finding.message == "Validate the input.");
     }
 
     #[test]
