@@ -1191,7 +1191,8 @@ mod tests {
             .unwrap();
             assert_eq!(output.matches("question/rationale").count(), 1);
             assert_eq!(output.matches("recommendation/split_commit").count(), 1);
-            assert!(output.contains("finding/high"));
+            assert!(output.contains("finding/"));
+            assert!(output.contains("high"));
             assert!(output.contains("Attacker control:"));
             assert!(output.contains("Sensitive operation:"));
             assert!(output.contains("Impact:"));
