@@ -14,10 +14,10 @@ on:
         options:
           - openai
           - anthropic
-          - gemini
+          - google
           - mistral
       model:
-        description: Optional model override. Leave empty to use the provider default.
+        description: Optional model override. Leave empty to use Peer Review's default for the selected provider.
         required: false
         default: ""
         type: string
@@ -58,11 +58,19 @@ jobs:
             }
 
             const provider = ${{ toJSON(inputs.provider) }};
-            const allowedProviders = new Set(['openai', 'anthropic', 'gemini', 'mistral']);
-            if (!allowedProviders.has(provider)) {
+            const defaultModels = {
+              openai: 'gpt-5.6-terra',
+              anthropic: 'claude-sonnet-5',
+              google: 'gemini-3.6-flash',
+              mistral: 'mistral-medium-latest',
+            };
+            if (!Object.hasOwn(defaultModels, provider)) {
               core.setFailed(`Unsupported provider: ${provider}`);
               return;
             }
+
+            const requestedModel = (${{ toJSON(inputs.model) }} ?? '').trim();
+            const model = requestedModel || defaultModels[provider];
 
             const { data: pull } = await github.rest.pulls.get({
               owner: context.repo.owner,
@@ -75,7 +83,7 @@ jobs:
             core.setOutput('head-sha', pull.head.sha);
             core.setOutput('title', pull.title ?? '');
             core.setOutput('provider', provider);
-            core.setOutput('model', (${{ toJSON(inputs.model) }} ?? '').trim());
+            core.setOutput('model', model);
 
       - name: Create peer review placeholder
         id: placeholder
@@ -93,9 +101,7 @@ jobs:
             const metadata = [
               `peer version: ${peerVersion}`,
               `provider: ${provider}`,
-              model
-                ? `model: ${model}`
-                : 'model: provider default',
+              `model: ${model}`,
             ].join('\n');
             const commentMetadata = [
               metadata,
