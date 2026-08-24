@@ -676,7 +676,7 @@ impl RenderOptions {
 
 pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
     match options.format {
-        RenderFormat::Json => Ok(serde_json::to_string_pretty(&document)?),
+        RenderFormat::Json => render_json(document),
         RenderFormat::Terminal => Ok(terminal::render(&document)),
         RenderFormat::Markdown => Ok(markdown::render(&document)),
         RenderFormat::Github { repo } => Ok(github::render(&document, &repo)),
@@ -687,7 +687,19 @@ pub fn render_pipeline(
     review: PipelineReviewResult,
     options: RenderOptions,
 ) -> Result<String, RenderError> {
-    render(review.into(), options)
+    if options.format == RenderFormat::Json {
+        render_pipeline_json(review)
+    } else {
+        render(review.into(), options)
+    }
+}
+
+pub fn render_pipeline_json(review: PipelineReviewResult) -> Result<String, RenderError> {
+    render_json(review.into())
+}
+
+fn render_json(document: RenderDocument) -> Result<String, RenderError> {
+    Ok(serde_json::to_string_pretty(&document)?)
 }
 
 fn review_counts(document: &RenderDocument) -> ReviewCounts {
@@ -1723,11 +1735,7 @@ mod tests {
             errors: Vec::new(),
         };
 
-        let output = render_pipeline(
-            review,
-            RenderOptions::from_cli(OutputFormat::Json, None).unwrap(),
-        )
-        .unwrap();
+        let output = render_pipeline_json(review).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
         let stages = value["stages"].as_array().unwrap();
 
