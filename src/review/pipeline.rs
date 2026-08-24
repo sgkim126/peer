@@ -10,10 +10,9 @@ use crate::extract::{ExtractError, Extractor};
 use crate::git::CommitHash;
 use crate::pi::{ModelRef, ModelRefError, PiRuntime};
 use crate::stage::{
-    CommitScopeReport, CommitScopeStage, CommitSequenceReport, CommitSequenceStage, IntentReport,
-    IntentStage, QualityReport, QualityStage, ReviewContextReport, ReviewContextStage, ReviewStage,
-    SecurityReport, SecurityStage, SizeReport, SizeStage, StageKind, StageOutcome, StageRun,
-    StageRunConfig, StageRunError, StageTarget,
+    KnowledgeReport, KnowledgeStage, QualityReport, QualityStage, ReviewContextReport,
+    ReviewContextStage, ReviewStage, SecurityReport, SecurityStage, StageKind, StageOutcome,
+    StageRun, StageRunConfig, StageRunError, StageTarget,
 };
 
 use super::{ReviewInput, ReviewSummary, ReviewTarget};
@@ -22,10 +21,7 @@ use super::{ReviewInput, ReviewSummary, ReviewTarget};
 #[serde(tag = "stage", content = "result", rename_all = "snake_case")]
 pub enum PipelineStageResult {
     ReviewContext(StageRun<ReviewContextReport>),
-    CommitScope(StageRun<CommitScopeReport>),
-    CommitSequence(StageRun<CommitSequenceReport>),
-    Size(StageRun<SizeReport>),
-    Intent(StageRun<IntentReport>),
+    Knowledge(StageRun<KnowledgeReport>),
     Quality(StageRun<QualityReport>),
     Security(StageRun<SecurityReport>),
 }
@@ -34,10 +30,7 @@ impl PipelineStageResult {
     pub fn is_success(&self) -> bool {
         match self {
             Self::ReviewContext(run) => is_complete(run),
-            Self::CommitScope(run) => is_complete(run),
-            Self::CommitSequence(run) => is_complete(run),
-            Self::Size(run) => is_complete(run),
-            Self::Intent(run) => is_complete(run),
+            Self::Knowledge(run) => is_complete(run),
             Self::Quality(run) => is_complete(run),
             Self::Security(run) => is_complete(run),
         }
@@ -46,10 +39,7 @@ impl PipelineStageResult {
     pub fn stage(&self) -> StageKind {
         match self {
             Self::ReviewContext(run) => run.stage,
-            Self::CommitScope(run) => run.stage,
-            Self::CommitSequence(run) => run.stage,
-            Self::Size(run) => run.stage,
-            Self::Intent(run) => run.stage,
+            Self::Knowledge(run) => run.stage,
             Self::Quality(run) => run.stage,
             Self::Security(run) => run.stage,
         }
@@ -58,10 +48,7 @@ impl PipelineStageResult {
     pub fn target(&self) -> &StageTarget {
         match self {
             Self::ReviewContext(run) => &run.target,
-            Self::CommitScope(run) => &run.target,
-            Self::CommitSequence(run) => &run.target,
-            Self::Size(run) => &run.target,
-            Self::Intent(run) => &run.target,
+            Self::Knowledge(run) => &run.target,
             Self::Quality(run) => &run.target,
             Self::Security(run) => &run.target,
         }
@@ -70,10 +57,7 @@ impl PipelineStageResult {
     pub fn usage(&self) -> &crate::llm::LlmUsage {
         match self {
             Self::ReviewContext(run) => &run.usage,
-            Self::CommitScope(run) => &run.usage,
-            Self::CommitSequence(run) => &run.usage,
-            Self::Size(run) => &run.usage,
-            Self::Intent(run) => &run.usage,
+            Self::Knowledge(run) => &run.usage,
             Self::Quality(run) => &run.usage,
             Self::Security(run) => &run.usage,
         }
@@ -199,77 +183,31 @@ pub async fn run_pipeline(
         .stages
         .push(PipelineStageResult::ReviewContext(context_run));
 
-    let scope_stage = CommitScopeStage::new(input.clone(), context_report.clone());
-    let scope_run = match execute(cache, runtime, config, &model, resume, &scope_stage).await {
-        Ok(run) => run,
-        Err(error) => {
-            push_error(&mut result, &scope_stage, error);
-            return Ok(result);
-        }
-    };
-    let Some(scope_report) = cloned_completed_report(&scope_run) else {
+    let knowledge_stage = KnowledgeStage::new(input.clone(), context_report.clone());
+    let knowledge_run =
+        match execute(cache, runtime, config, &model, resume, &knowledge_stage).await {
+            Ok(run) => run,
+            Err(error) => {
+                push_error(&mut result, &knowledge_stage, error);
+                return Ok(result);
+            }
+        };
+    let Some(knowledge_report) = cloned_completed_report(&knowledge_run) else {
         result
             .stages
-            .push(PipelineStageResult::CommitScope(scope_run));
+            .push(PipelineStageResult::Knowledge(knowledge_run));
         return Ok(result);
     };
     result
         .stages
-        .push(PipelineStageResult::CommitScope(scope_run));
+        .push(PipelineStageResult::Knowledge(knowledge_run));
 
-    let sequence_stage =
-        CommitSequenceStage::new(input.clone(), context_report.clone(), scope_report.clone());
-    let sequence_run = match execute(cache, runtime, config, &model, resume, &sequence_stage).await
-    {
-        Ok(run) => run,
-        Err(error) => {
-            push_error(&mut result, &sequence_stage, error);
-            return Ok(result);
-        }
-    };
-    let Some(sequence_report) = cloned_completed_report(&sequence_run) else {
-        result
-            .stages
-            .push(PipelineStageResult::CommitSequence(sequence_run));
-        return Ok(result);
-    };
-    result
-        .stages
-        .push(PipelineStageResult::CommitSequence(sequence_run));
-
-    let review_commits = result.ordered_commits.clone();
-    for commit in &input.commits {
-        let stage = SizeStage::new(
-            commit.clone(),
-            review_commits.clone(),
-            context_report.clone(),
-            scope_report.clone(),
-            sequence_report.clone(),
-        );
-        match execute(cache, runtime, config, &model, resume, &stage).await {
-            Ok(run) => result.stages.push(PipelineStageResult::Size(run)),
-            Err(error) => push_error(&mut result, &stage, error),
-        }
-    }
-    for commit in &input.commits {
-        let stage = IntentStage::new(
-            commit.clone(),
-            context_report.clone(),
-            scope_report.clone(),
-            sequence_report.clone(),
-        );
-        match execute(cache, runtime, config, &model, resume, &stage).await {
-            Ok(run) => result.stages.push(PipelineStageResult::Intent(run)),
-            Err(error) => push_error(&mut result, &stage, error),
-        }
-    }
     for commit in &input.commits {
         let stage = QualityStage::new(
             commit.clone(),
             input.head.clone(),
             context_report.clone(),
-            scope_report.clone(),
-            sequence_report.clone(),
+            knowledge_report.clone(),
         );
         match execute(cache, runtime, config, &model, resume, &stage).await {
             Ok(run) => result.stages.push(PipelineStageResult::Quality(run)),
@@ -281,8 +219,7 @@ pub async fn run_pipeline(
             commit.clone(),
             input.head.clone(),
             context_report.clone(),
-            scope_report.clone(),
-            sequence_report.clone(),
+            knowledge_report.clone(),
         );
         match execute(cache, runtime, config, &model, resume, &stage).await {
             Ok(run) => result.stages.push(PipelineStageResult::Security(run)),

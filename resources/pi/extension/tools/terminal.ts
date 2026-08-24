@@ -45,70 +45,6 @@ const ReviewContextReport = Type.Object({
     unresolved: Type.Array(SourcedStatement),
 });
 
-const CommitScopeEntry = Type.Object({
-    commit: Type.String({ minLength: 1 }),
-    purpose: Type.String({ minLength: 1 }),
-    role: Type.Union([
-        Type.Literal("primary"),
-        Type.Literal("supporting"),
-        Type.Literal("prerequisite"),
-        Type.Literal("unrelated"),
-    ]),
-    disposition: Type.Union([
-        Type.Literal("keep"),
-        Type.Literal("split_pr"),
-        Type.Literal("extract_prerequisite"),
-    ]),
-    rationale: Type.String({ minLength: 1 }),
-});
-
-const CommitProgress = Type.Object({
-    commit: Type.String({ minLength: 1 }),
-    direction: Type.String({ minLength: 1 }),
-    change_kind: Type.Union([
-        Type.Literal("forward"),
-        Type.Literal("fixup"),
-        Type.Literal("reversion"),
-    ]),
-    depends_on: Type.Array(Type.String({ minLength: 1 })),
-});
-
-const SequenceIssue = Type.Object({
-    kind: Type.Union([
-        Type.Literal("reorder"),
-        Type.Literal("dependency_direction"),
-        Type.Literal("confusing_progression"),
-    ]),
-    commits: Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
-    message: Type.String({ minLength: 1 }),
-});
-
-const SizeIssue = Type.Object({
-    kind: Type.Union([
-        Type.Literal("split"),
-        Type.Literal("move"),
-        Type.Literal("merge_squash"),
-    ]),
-    message: Type.String({ minLength: 1 }),
-    related_commits: Type.Array(Type.String({ minLength: 1 })),
-});
-
-const IntentIssue = Type.Intersect([
-    Type.Object({
-        commit: Type.String({ minLength: 1 }),
-        kind: Type.Union([
-            Type.Literal("undocumented_change"),
-            Type.Literal("missing_claimed_change"),
-            Type.Literal("misstated_effect"),
-        ]),
-        message: Type.String({ minLength: 1 }),
-    }),
-    Type.Partial(Type.Object({
-        file: Type.String(),
-        line: Type.Integer({ minimum: 1 }),
-    })),
-]);
-
 const KnowledgeLocation = Type.Object({
     commit: Type.String({ minLength: 1 }),
     file: Type.String({ minLength: 1 }),
@@ -228,63 +164,6 @@ export function registerTerminalTools(pi: ExtensionAPI, getConfig: GetConfig) {
         async execute(_id, params) {
             requireStage(getConfig, "review_context", "submit_review_context");
             return completed(params, "Submitted review context.");
-        },
-    });
-
-    pi.registerTool({
-        name: "submit_commit_scope",
-        label: "Submit Commit Scope",
-        description: "Submit pull-request scope classifications for every commit.",
-        parameters: Type.Object({
-            summary: Type.String({ minLength: 1 }),
-            commits: Type.Array(CommitScopeEntry),
-        }),
-        async execute(_id, params) {
-            requireStage(getConfig, "commit_scope", "submit_commit_scope");
-            return completed(params, "Submitted commit scope.");
-        },
-    });
-
-    pi.registerTool({
-        name: "submit_commit_sequence",
-        label: "Submit Commit Sequence",
-        description: "Submit the ordered commit progression and sequence issues.",
-        parameters: Type.Object({
-            summary: Type.String({ minLength: 1 }),
-            progression: Type.Array(CommitProgress),
-            issues: Type.Array(SequenceIssue),
-        }),
-        async execute(_id, params) {
-            requireStage(getConfig, "commit_sequence", "submit_commit_sequence");
-            return completed(params, "Submitted commit sequence.");
-        },
-    });
-
-    pi.registerTool({
-        name: "submit_size",
-        label: "Submit Size Stage",
-        description: "Submit atomicity issues for the target commit.",
-        parameters: Type.Object({
-            summary: Type.String({ minLength: 1 }),
-            issues: Type.Array(SizeIssue),
-        }),
-        async execute(_id, params) {
-            requireStage(getConfig, "size", "submit_size");
-            return completed(params, "Submitted size stage.");
-        },
-    });
-
-    pi.registerTool({
-        name: "submit_intent",
-        label: "Submit Intent Stage",
-        description: "Submit message-to-diff intent mismatches.",
-        parameters: Type.Object({
-            summary: Type.String({ minLength: 1 }),
-            issues: Type.Array(IntentIssue),
-        }),
-        async execute(_id, params) {
-            requireStage(getConfig, "intent", "submit_intent");
-            return completed(params, "Submitted intent stage.");
         },
     });
 

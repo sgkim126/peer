@@ -39,13 +39,7 @@ pub struct StagesConfig {
     #[serde(default)]
     pub review_context: StageConfig,
     #[serde(default)]
-    pub commit_scope: StageConfig,
-    #[serde(default)]
-    pub commit_sequence: StageConfig,
-    #[serde(default)]
-    pub size: StageConfig,
-    #[serde(default)]
-    pub intent: StageConfig,
+    pub knowledge: StageConfig,
     #[serde(default)]
     pub quality: StageConfig,
     #[serde(default)]
@@ -63,10 +57,7 @@ impl Config {
     pub fn max_iterations_for(&self, stage: &str) -> NonZeroU32 {
         let override_value = match stage {
             "review_context" => self.stages.review_context.max_iterations,
-            "commit_scope" => self.stages.commit_scope.max_iterations,
-            "commit_sequence" => self.stages.commit_sequence.max_iterations,
-            "size" => self.stages.size.max_iterations,
-            "intent" => self.stages.intent.max_iterations,
+            "knowledge" => self.stages.knowledge.max_iterations,
             "quality" => self.stages.quality.max_iterations,
             "security" => self.stages.security.max_iterations,
             _ => None,
@@ -300,15 +291,13 @@ mod tests {
         assert_eq!(config.llm.default_provider, "mistral");
         assert_eq!(config.llm.default_model, "mistral-medium-3.5");
         assert_eq!(config.max_iterations_for("quality").get(), 10);
-        assert_eq!(config.max_iterations_for("size").get(), 3);
         assert_eq!(config.max_iterations_for("review_context").get(), 3);
-        assert_eq!(config.max_iterations_for("commit_scope").get(), 10);
-        assert_eq!(config.max_iterations_for("commit_sequence").get(), 10);
+        assert_eq!(config.max_iterations_for("knowledge").get(), 10);
     }
 
     #[test]
-    fn stage_overrides_fall_back_to_the_shared_iteration_limit() {
-        let config: Config = toml::from_str(
+    fn removed_stage_overrides_are_rejected() {
+        let error = toml::from_str::<Config>(
             r#"
 version = 2
 [review]
@@ -321,9 +310,8 @@ max_iterations = 3
 max_iterations = 4
 "#,
         )
-        .unwrap();
+        .unwrap_err();
 
-        assert_eq!(config.max_iterations_for("commit_scope").get(), 4);
-        assert_eq!(config.max_iterations_for("commit_sequence").get(), 3);
+        assert!(error.to_string().contains("unknown field `commit_scope`"));
     }
 }

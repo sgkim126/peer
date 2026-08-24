@@ -13,10 +13,6 @@
   "terminal_tools": [
     "request_clarification",
     "submit_review_context",
-    "submit_commit_scope",
-    "submit_commit_sequence",
-    "submit_size",
-    "submit_intent",
     "submit_knowledge",
     "submit_quality",
     "submit_security"

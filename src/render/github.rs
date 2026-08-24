@@ -4,14 +4,16 @@ use std::fmt::Write;
 use crate::git::CommitHash;
 use crate::llm::LlmUsage;
 use crate::review::{ModelUsage, ReviewSummary};
-use crate::stage::Finding;
+use crate::stage::{
+    FileLocation, KnowledgeQuestion, Severity, StageFailure, StageTarget, StructuralRecommendation,
+};
 #[cfg(test)]
-use crate::stage::StageResult;
-use crate::stage::{FileLocation, Severity, StageFailure, StageTarget};
+use crate::stage::{Finding, StageResult};
 
 use super::{
-    RenderDocument, RenderStage, RenderStageErrorRef, ReviewCounts, clarification_message,
-    escape_html, escape_markdown, join_review_sections, review_counts, usage_by_model,
+    RenderDocument, RenderFinding, RenderStage, RenderStageErrorRef, ReviewCounts,
+    clarification_message, escape_html, escape_markdown, join_review_sections, review_counts,
+    usage_by_model,
 };
 
 pub fn render(document: &RenderDocument, repo: &str) -> String {
@@ -35,11 +37,13 @@ pub fn render(document: &RenderDocument, repo: &str) -> String {
         .then_some(document.context_usage.as_ref())
         .flatten()
         .map(render_context_usage);
+    let questions = render_questions(&document.questions, repo);
+    let recommendations = render_recommendations(&document.recommendations, repo);
     let findings = render_findings(&document.findings, repo);
     join_review_sections(
         summary
             .into_iter()
-            .chain([findings])
+            .chain([questions, recommendations, findings])
             .chain(context)
             .chain([stages]),
     )
@@ -142,22 +146,93 @@ fn render_review_summary(
     output.trim_end().to_string()
 }
 
-fn render_findings(findings: &[Finding], repo: &str) -> String {
-    if findings.is_empty() {
+fn render_questions(questions: &[KnowledgeQuestion], repo: &str) -> String {
+    if questions.is_empty() {
         return String::new();
     }
-    let mut output = "## Review feedback\n".to_string();
-    for finding in findings {
-        let context = finding_context(&finding.commit, finding.location.as_ref(), repo);
+    let mut output = "## Review questions\n".to_string();
+    for question in questions {
         writeln!(
             output,
-            "- **finding/{}** — {} ({context})",
-            severity_name(finding.severity),
-            escape_github_markdown(&finding.message)
+            "- **question/{}** — {} Evidence: {} Why it matters: {} ({})",
+            question.category.as_str(),
+            escape_github_markdown(&question.question),
+            escape_github_markdown(&question.evidence),
+            escape_github_markdown(&question.why_it_matters),
+            related_context(&question.related_commits, question.location.as_ref(), repo,),
         )
         .unwrap();
     }
     output.trim_end().to_string()
+}
+
+fn render_recommendations(recommendations: &[StructuralRecommendation], repo: &str) -> String {
+    if recommendations.is_empty() {
+        return String::new();
+    }
+    let mut output = "## Structural recommendations\n".to_string();
+    for recommendation in recommendations {
+        writeln!(
+            output,
+            "- **recommendation/{}** — {} Rationale: {} ({})",
+            recommendation.kind.as_str(),
+            escape_github_markdown(&recommendation.message),
+            escape_github_markdown(&recommendation.rationale),
+            related_context(&recommendation.related_commits, None, repo),
+        )
+        .unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn render_findings(findings: &[RenderFinding], repo: &str) -> String {
+    if findings.is_empty() {
+        return String::new();
+    }
+    let mut output = "## Review findings\n".to_string();
+    for finding in findings {
+        write!(
+            output,
+            "- **finding/{}** — {}",
+            severity_name(finding.severity),
+            escape_github_markdown(&finding.message),
+        )
+        .unwrap();
+        if let Some(security) = &finding.security {
+            write!(
+                output,
+                " Attacker control: {} Sensitive operation: {} Impact: {}",
+                escape_github_markdown(&security.attacker_control),
+                escape_github_markdown(&security.sensitive_operation),
+                escape_github_markdown(&security.impact),
+            )
+            .unwrap();
+        }
+        writeln!(
+            output,
+            " ({})",
+            finding_context(&finding.commit, finding.location.as_ref(), repo)
+        )
+        .unwrap();
+    }
+    output.trim_end().to_string()
+}
+
+fn related_context(
+    commits: &[CommitHash],
+    location: Option<&crate::stage::KnowledgeLocation>,
+    repo: &str,
+) -> String {
+    commits
+        .iter()
+        .map(|commit| {
+            let file = location
+                .filter(|location| location.commit.matches(commit))
+                .map(|location| &location.file);
+            finding_context(commit, file, repo)
+        })
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn finding_context(commit: &CommitHash, location: Option<&FileLocation>, repo: &str) -> String {
@@ -356,7 +431,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_unified_feedback_without_reformatting_a_finding() {
+    fn renders_finding_without_reformatting_it() {
         let findings = vec![Finding {
             commit: CommitHash::new("abc1234").unwrap(),
             severity: Severity::High,
@@ -367,6 +442,10 @@ mod tests {
             }),
         }];
 
+        let findings = findings
+            .into_iter()
+            .map(crate::render::render_finding)
+            .collect::<Vec<_>>();
         let output = render_findings(&findings, "owner/repo");
 
         assert!(output.contains(r"**finding/high** — High\-risk finding\."));
@@ -375,7 +454,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_unified_feedback_as_a_tight_list() {
+    fn renders_findings_as_a_tight_list() {
         let findings = vec![
             Finding {
                 commit: CommitHash::new("abc1234").unwrap(),
@@ -391,9 +470,13 @@ mod tests {
             },
         ];
 
+        let findings = findings
+            .into_iter()
+            .map(crate::render::render_finding)
+            .collect::<Vec<_>>();
         let output = render_findings(&findings, "owner/repo");
 
-        assert!(output.starts_with("## Review feedback\n- "));
+        assert!(output.starts_with("## Review findings\n- "));
         assert!(!output.contains("\n\n- "));
     }
 

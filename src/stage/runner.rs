@@ -329,10 +329,6 @@ impl From<StageKind> for PiStageKind {
     fn from(kind: StageKind) -> Self {
         match kind {
             StageKind::ReviewContext => Self::ReviewContext,
-            StageKind::CommitScope => Self::CommitScope,
-            StageKind::CommitSequence => Self::CommitSequence,
-            StageKind::Size => Self::Size,
-            StageKind::Intent => Self::Intent,
             StageKind::Knowledge => Self::Knowledge,
             StageKind::Quality => Self::Quality,
             StageKind::Security => Self::Security,
@@ -344,10 +340,6 @@ impl From<StageKind> for TerminalTool {
     fn from(stage: StageKind) -> Self {
         match stage {
             StageKind::ReviewContext => Self::SubmitReviewContext,
-            StageKind::CommitScope => Self::SubmitCommitScope,
-            StageKind::CommitSequence => Self::SubmitCommitSequence,
-            StageKind::Size => Self::SubmitSize,
-            StageKind::Intent => Self::SubmitIntent,
             StageKind::Knowledge => Self::SubmitKnowledge,
             StageKind::Quality => Self::SubmitQuality,
             StageKind::Security => Self::SubmitSecurity,
@@ -471,32 +463,6 @@ mod tests {
     }
 
     #[test]
-    fn converts_commit_scope_stage_kind_for_pi_protocol() {
-        assert_eq!(
-            PiStageKind::from(StageKind::CommitScope),
-            PiStageKind::CommitScope,
-        );
-    }
-
-    #[test]
-    fn converts_commit_sequence_stage_kind_for_pi_protocol() {
-        assert_eq!(
-            PiStageKind::from(StageKind::CommitSequence),
-            PiStageKind::CommitSequence,
-        );
-    }
-
-    #[test]
-    fn converts_size_stage_kind_for_pi_protocol() {
-        assert_eq!(PiStageKind::from(StageKind::Size), PiStageKind::Size);
-    }
-
-    #[test]
-    fn converts_intent_stage_kind_for_pi_protocol() {
-        assert_eq!(PiStageKind::from(StageKind::Intent), PiStageKind::Intent);
-    }
-
-    #[test]
     fn converts_knowledge_stage_kind_for_pi_protocol() {
         assert_eq!(
             PiStageKind::from(StageKind::Knowledge),
@@ -522,38 +488,6 @@ mod tests {
         assert_eq!(
             TerminalTool::from(StageKind::ReviewContext),
             TerminalTool::SubmitReviewContext,
-        );
-    }
-
-    #[test]
-    fn maps_commit_scope_stage_to_submit_tool() {
-        assert_eq!(
-            TerminalTool::from(StageKind::CommitScope),
-            TerminalTool::SubmitCommitScope,
-        );
-    }
-
-    #[test]
-    fn maps_commit_sequence_stage_to_submit_tool() {
-        assert_eq!(
-            TerminalTool::from(StageKind::CommitSequence),
-            TerminalTool::SubmitCommitSequence,
-        );
-    }
-
-    #[test]
-    fn maps_size_stage_to_submit_tool() {
-        assert_eq!(
-            TerminalTool::from(StageKind::Size),
-            TerminalTool::SubmitSize
-        );
-    }
-
-    #[test]
-    fn maps_intent_stage_to_submit_tool() {
-        assert_eq!(
-            TerminalTool::from(StageKind::Intent),
-            TerminalTool::SubmitIntent,
         );
     }
 

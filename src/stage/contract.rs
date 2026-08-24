@@ -12,10 +12,6 @@ use super::StageTarget;
 #[serde(rename_all = "snake_case")]
 pub enum StageKind {
     ReviewContext,
-    CommitScope,
-    CommitSequence,
-    Size,
-    Intent,
     Knowledge,
     Quality,
     Security,
@@ -25,10 +21,6 @@ impl StageKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::ReviewContext => "review_context",
-            Self::CommitScope => "commit_scope",
-            Self::CommitSequence => "commit_sequence",
-            Self::Size => "size",
-            Self::Intent => "intent",
             Self::Knowledge => "knowledge",
             Self::Quality => "quality",
             Self::Security => "security",
@@ -42,10 +34,6 @@ impl FromStr for StageKind {
     fn from_str(name: &str) -> Result<Self, Self::Err> {
         match name {
             "review_context" => Ok(Self::ReviewContext),
-            "commit_scope" => Ok(Self::CommitScope),
-            "commit_sequence" => Ok(Self::CommitSequence),
-            "size" => Ok(Self::Size),
-            "intent" => Ok(Self::Intent),
             "knowledge" => Ok(Self::Knowledge),
             "quality" => Ok(Self::Quality),
             "security" => Ok(Self::Security),
@@ -93,15 +81,6 @@ pub struct StageRun<R> {
     pub usage: LlmUsage,
 }
 
-impl<R> StageRun<R> {
-    pub fn run_commit(&self) -> &CommitHash {
-        match &self.target {
-            StageTarget::Commit(commit) => commit,
-            StageTarget::Range { to, .. } => to,
-        }
-    }
-}
-
 pub trait ReviewStage {
     type Report: Serialize + DeserializeOwned;
 
@@ -123,36 +102,6 @@ mod tests {
             serde_json::to_value(StageKind::ReviewContext).unwrap(),
             "review_context",
         );
-    }
-
-    #[test]
-    fn commit_scope_string_matches_serialized_name() {
-        assert_eq!(StageKind::CommitScope.as_str(), "commit_scope");
-        assert_eq!(
-            serde_json::to_value(StageKind::CommitScope).unwrap(),
-            "commit_scope",
-        );
-    }
-
-    #[test]
-    fn commit_sequence_string_matches_serialized_name() {
-        assert_eq!(StageKind::CommitSequence.as_str(), "commit_sequence");
-        assert_eq!(
-            serde_json::to_value(StageKind::CommitSequence).unwrap(),
-            "commit_sequence",
-        );
-    }
-
-    #[test]
-    fn size_string_matches_serialized_name() {
-        assert_eq!(StageKind::Size.as_str(), "size");
-        assert_eq!(serde_json::to_value(StageKind::Size).unwrap(), "size");
-    }
-
-    #[test]
-    fn intent_string_matches_serialized_name() {
-        assert_eq!(StageKind::Intent.as_str(), "intent");
-        assert_eq!(serde_json::to_value(StageKind::Intent).unwrap(), "intent");
     }
 
     #[test]

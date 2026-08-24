@@ -24,34 +24,26 @@ If your primary goal is to detect as many implementation bugs as possible, consi
 Problems that can be detected by compilers, linters, type checkers, formatters, or dedicated security scanners should primarily be handled by those deterministic tools.
 Using an LLM as the primary mechanism for finding the same problems is unnecessarily expensive, while relying on nondeterministic output for repeatable enforcement is inherently unreliable.
 
-Instead, `peer` focuses on questions that require contextual judgment: whether a change matches its stated intent, whether important reasoning remains undocumented, whether the implementation introduces maintainability concerns, and whether a series of commits forms a coherent change.
+Instead, `peer` focuses on questions that surface undocumented intent, constraints, rationale, tradeoffs, operational expectations, and verification knowledge. It reports implementation problems as a secondary benefit, but it is not designed to maximize bug-finding coverage.
 
 The security review is intended to identify contextual risks that may not be captured by mechanical rules.
 It is not a replacement for SAST, dependency scanning, secret scanning, or other dedicated security tooling.
 
 ## Features
 
-Every review starts with three mandatory stages:
+Every review uses four stages:
 
-- `review_context` assesses whether the title, description, commit messages, and cumulative diff provide enough information to review the change. If essential facts are missing, it requests them before continuing; otherwise it produces a source-backed summary for later stages.
+- `review_context` builds a source-backed statement of the documented objective and expected behavior. It blocks only when missing or contradictory information makes a defensible review impossible.
 
-- `commit_scope` classifies each commit as primary, supporting, prerequisite, or unrelated to the pull request's purpose and recommends whether it belongs in the same PR.
+- `knowledge` reviews the whole change for important decisions that are visible in the implementation but not explained in the supplied context. It asks evidence-backed questions that only the author can answer and makes structural recommendations when the evidence is conclusive without additional intent.
 
-- `commit_sequence` explains the order and direction of the commits and reports ordering or dependency problems.
+- `quality` reviews each commit for non-security correctness, reliability, maintainability, and design problems that require contextual judgment.
 
-After those prerequisites complete, `peer` reviews each commit with four complementary stages:
+- `security` reviews each commit for vulnerabilities with a credible attacker-controlled path, sensitive operation, and impact.
 
-- `size` considers whether the commit is structurally coherent and can be reviewed or reverted as one atomic change.
+The knowledge stage considers pull-request scope, commit sequence, atomicity, and message-to-diff intent as complementary ways to find missing context. It first searches the supplied discussion, repository documentation, and directly relevant code, and does not ask questions whose answers are already available. There is no fixed question limit; every reported question must independently preserve information that matters to future review, operation, or maintenance.
 
-- `intent` considers whether the implementation matches the stated purpose of the change.
-
-- `quality` considers non-security correctness, maintainability, and design concerns that require contextual judgment.
-
-- `security` considers contextual security risks with a credible attacker-controlled path, sensitive operation, and impact.
-
-The scope and sequence stages deliberately do not decide whether commits should be split, moved, merged, or squashed. The per-commit `size` stage owns those atomicity decisions. `quality` and `security` remain separate so ordinary correctness findings do not dilute security's adversarial threat model.
-
-`peer review` runs the complete stage pipeline for every target. After the context, scope, and sequence stages complete, it runs the size stage for every commit, then does the same for intent, quality, and security.
+`peer review` runs `review_context`, then `knowledge`, then the per-commit `quality` and `security` stages. Ordinary knowledge questions do not stop the later bug reviews. Only blocking context ambiguity, execution failure, or iteration exhaustion prevents successful completion.
 
 `peer` uses the models and providers supported by Pi.
 A review can incorporate its title, body, and existing comment threads so that feedback is grounded in the discussion surrounding the change. Results can be rendered for a terminal, as JSON or Markdown, or with GitHub links.
@@ -107,7 +99,7 @@ peer review main..HEAD
 ```
 
 A single revision such as `HEAD` reviews one commit.
-A two-dot range such as `main..HEAD` reviews the pull request's scope and sequence before reviewing each commit.
+A two-dot range such as `main..HEAD` reviews the complete change before reviewing each commit for quality and security problems.
 Three-dot ranges are not supported.
 Review targets must not contain merge commits.
 The default configuration accepts at most ten commits in one review.
@@ -115,7 +107,7 @@ The default configuration accepts at most ten commits in one review.
 ## Review context
 
 The title, body, and existing discussion explain why a change exists and which constraints shaped it.
-Passing that information lets the first stage determine whether the requirements, constraints, decisions, and unresolved discussions are sufficient for review. Missing metadata is not assumed to be an error by itself: the stage considers it together with all commit messages and the cumulative diff, and asks focused questions only when an essential fact cannot be inferred safely.
+Passing that information lets the first stage establish the documented objective and expected behavior, and lets the knowledge stage avoid asking questions that have already been answered. Missing metadata is not an error by itself. The context stage requests blocking clarification only when the available sources are missing or contradictory enough that the review has no defensible basis.
 
 Use `--title` for the review title, `--body-file` for a file containing the description, and `--comments-file` for a JSON file containing comment threads.
 
@@ -154,6 +146,8 @@ Every thread contains comments and may identify a commit and source location.
 The `commit` and `location` fields are optional.
 Each comment must contain an `author` and a `body`.
 
+Knowledge questions are normal successful review feedback. Answer one by adding the answer to a human-authored pull-request comment or to the pull-request description, then run the review again. The comment may optionally quote the question for context, but it must contain the answer. The new description and comments become review input, so sufficiently documented decisions are not asked again.
+
 ## Providers and configuration
 
 `peer` uses the providers and authentication methods supported by Pi.
@@ -170,6 +164,7 @@ See [Pi's provider documentation](https://github.com/earendil-works/pi/blob/v0.8
 
 `peer init` copies the default configuration to `.peer/config.toml`.
 The configuration selects the default provider and model, limits the number of commits and model iterations, and records model prices used to estimate review cost.
+The removed `commit_scope`, `commit_sequence`, `size`, and `intent` stage overrides are invalid; use `[stages.knowledge]` instead.
 
 Use `--provider` or `--model` to override the configured defaults for one review.
 
@@ -192,10 +187,12 @@ peer review main..HEAD --format markdown
 peer review main..HEAD --format github --repo owner/repository
 ```
 
-The GitHub format requires `--repo` so that findings can link to repository files.
-Every rendered review includes its findings and individual stage statuses. When a review summary is available, it reports the peer version, provider, model, token usage, and estimated cost.
+The GitHub format requires `--repo` so that feedback can link to repository files.
+Questions, structural recommendations, and quality or security findings appear in separate `Review questions`, `Structural recommendations`, and `Review findings` sections. Each entry is tagged with its kind, such as `question/rationale`, `recommendation/split_commit`, or `finding/high`. Stage details report status, summary, token usage, and estimated model cost without repeating those results.
 
-`peer review` exits with status `0` when every planned stage completes without an execution error, even if a scope, sequence, atomicity, intent, quality, or security issue is reported.
+JSON output stores the same result types in separate top-level `questions`, `recommendations`, and `findings` arrays.
+
+`peer review` exits with status `0` when every planned stage completes without an execution error, even when questions, structural recommendations, or bug findings are reported.
 It exits with a non-zero status when a stage needs clarification, fails, exhausts its allowed iterations, or the review cannot be completed or rendered.
 CI jobs should use this status to decide whether the review succeeded.
 
@@ -254,7 +251,7 @@ Do not review material that the provider is not permitted to receive, and make s
 
 The reported cost is an estimate calculated from token usage and the prices in the local configuration.
 Actual billing may differ.
-Review findings are also nondeterministic and can be incomplete, so they do not replace human judgment or dedicated verification tools.
+Review feedback is nondeterministic and can be incomplete, so it does not replace human judgment or dedicated verification tools.
 
 ## Cache management
 

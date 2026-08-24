@@ -15,8 +15,5 @@ max_iterations = 10
 [stages.security]
 max_iterations = 5
 
-[stages.commit_scope]
-max_iterations = 10
-
-[stages.commit_sequence]
+[stages.knowledge]
 max_iterations = 10
