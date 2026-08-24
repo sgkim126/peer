@@ -33,6 +33,22 @@ pub enum KnowledgeQuestionCategory {
     ChangeStructure,
 }
 
+impl KnowledgeQuestionCategory {
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Objective => "objective",
+            Self::ExpectedBehavior => "expected_behavior",
+            Self::Constraint => "constraint",
+            Self::Rationale => "rationale",
+            Self::Tradeoff => "tradeoff",
+            Self::Operations => "operations",
+            Self::Verification => "verification",
+            Self::ChangeStructure => "change_structure",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KnowledgeQuestion {
@@ -62,6 +78,20 @@ pub enum StructuralRecommendationKind {
     SplitCommit,
     MoveChange,
     MergeSquash,
+}
+
+impl StructuralRecommendationKind {
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::SplitPullRequest => "split_pull_request",
+            Self::ExtractPrerequisite => "extract_prerequisite",
+            Self::ReorderCommits => "reorder_commits",
+            Self::SplitCommit => "split_commit",
+            Self::MoveChange => "move_change",
+            Self::MergeSquash => "merge_squash",
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
@@ -304,6 +334,90 @@ mod tests {
                 ReadTool::Grep,
             ]
         );
+    }
+
+    #[test]
+    fn objective_category_name_matches_serialized_value() {
+        let value = KnowledgeQuestionCategory::Objective;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn expected_behavior_category_name_matches_serialized_value() {
+        let value = KnowledgeQuestionCategory::ExpectedBehavior;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn constraint_category_name_matches_serialized_value() {
+        let value = KnowledgeQuestionCategory::Constraint;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn rationale_category_name_matches_serialized_value() {
+        let value = KnowledgeQuestionCategory::Rationale;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn tradeoff_category_name_matches_serialized_value() {
+        let value = KnowledgeQuestionCategory::Tradeoff;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn operations_category_name_matches_serialized_value() {
+        let value = KnowledgeQuestionCategory::Operations;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn verification_category_name_matches_serialized_value() {
+        let value = KnowledgeQuestionCategory::Verification;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn change_structure_category_name_matches_serialized_value() {
+        let value = KnowledgeQuestionCategory::ChangeStructure;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn split_pull_request_recommendation_kind_name_matches_serialized_value() {
+        let value = StructuralRecommendationKind::SplitPullRequest;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn extract_prerequisite_recommendation_kind_name_matches_serialized_value() {
+        let value = StructuralRecommendationKind::ExtractPrerequisite;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn reorder_commits_recommendation_kind_name_matches_serialized_value() {
+        let value = StructuralRecommendationKind::ReorderCommits;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn split_commit_recommendation_kind_name_matches_serialized_value() {
+        let value = StructuralRecommendationKind::SplitCommit;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn move_change_recommendation_kind_name_matches_serialized_value() {
+        let value = StructuralRecommendationKind::MoveChange;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
+    }
+
+    #[test]
+    fn merge_squash_recommendation_kind_name_matches_serialized_value() {
+        let value = StructuralRecommendationKind::MergeSquash;
+        assert_eq!(serde_json::to_value(value).unwrap(), value.as_str());
     }
 
     #[test]
