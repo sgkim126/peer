@@ -11,11 +11,22 @@ use crate::stage::{
 use crate::stage::{Finding, StageResult};
 
 use super::{
-    RenderDocument, RenderFinding, RenderStage, RenderStageErrorRef, ReviewCounts,
+    RenderDocument, RenderFinding, RenderInput, RenderStage, RenderStageErrorRef, ReviewCounts,
     clarification_message, escape_markdown, join_review_sections, review_counts, usage_by_model,
 };
 
-pub fn render(document: &RenderDocument) -> String {
+pub fn render(input: &RenderInput) -> String {
+    match input {
+        RenderInput::Document(document) => render_document(document),
+        RenderInput::KnowledgeQuestion(question) => render_question(question),
+        RenderInput::StructuralRecommendation(recommendation) => {
+            render_recommendation(recommendation)
+        }
+        RenderInput::Finding(finding) => render_finding(finding),
+    }
+}
+
+fn render_document(document: &RenderDocument) -> String {
     let stages = document
         .stages
         .iter()

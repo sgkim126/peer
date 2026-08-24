@@ -53,7 +53,6 @@ pub struct RenderFinding {
 /// use the same formatting and escaping rules as a complete review.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum RenderInput {
     Document(RenderDocument),
     KnowledgeQuestion(KnowledgeQuestion),
@@ -714,11 +713,11 @@ impl RenderOptions {
     }
 }
 
-pub fn render(document: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
+pub fn render(input: RenderInput, options: RenderOptions) -> Result<String, RenderError> {
     match options.format {
-        RenderFormat::Terminal => Ok(terminal::render(&document)),
-        RenderFormat::Markdown => Ok(markdown::render(&document)),
-        RenderFormat::Github { repo } => Ok(github::render(&document, &repo)),
+        RenderFormat::Terminal => Ok(terminal::render(&input)),
+        RenderFormat::Markdown => Ok(markdown::render(&input)),
+        RenderFormat::Github { repo } => Ok(github::render(&input, &repo)),
     }
 }
 
@@ -1075,7 +1074,7 @@ mod tests {
                 if message == "Split the migration from the retry change."
         );
         let output = render(
-            document,
+            document.into(),
             RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
         )
         .unwrap();
@@ -1221,7 +1220,7 @@ mod tests {
             (OutputFormat::Github, Some("owner/repo".to_string())),
         ] {
             let output = render(
-                document.clone(),
+                document.clone().into(),
                 RenderOptions::from_cli(format, repo).unwrap(),
             )
             .unwrap();
@@ -1369,7 +1368,7 @@ mod tests {
     #[test]
     fn render_orders_findings_by_commit_order() {
         let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
-        let output = render(result().into(), options).unwrap();
+        let output = render(RenderDocument::from(result()).into(), options).unwrap();
 
         assert!(
             output.find(r"High\-risk finding\.").unwrap()
@@ -1426,7 +1425,7 @@ mod tests {
             let review = review_document(vec![result(), second], Some(review_context_usage()));
             let options = RenderOptions::from_cli(format, repo).unwrap();
 
-            let output = render(review, options).unwrap();
+            let output = render(review.into(), options).unwrap();
 
             assert_eq!(output.matches(expected_context_usage).count(), 1);
             assert!(output.contains(expected_total_usage));
@@ -1473,7 +1472,7 @@ mod tests {
             let review = review_document(vec![result(), second.clone()], None);
             let options = RenderOptions::from_cli(format, repo).unwrap();
 
-            let output = render(review, options).unwrap();
+            let output = render(review.into(), options).unwrap();
 
             assert!(output.contains("security"));
             assert!(output.contains("quality"));
@@ -1565,6 +1564,52 @@ mod tests {
     }
 
     #[test]
+    fn individual_inputs_render_without_document_section_headings() {
+        let inputs = [
+            (
+                serde_json::from_str::<RenderInput>(
+                    r#"{"category":"rationale","question":"Why?","evidence":"Not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#,
+                )
+                .unwrap(),
+                "Why",
+            ),
+            (
+                serde_json::from_str::<RenderInput>(
+                    r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#,
+                )
+                .unwrap(),
+                "Split this commit",
+            ),
+            (
+                serde_json::from_str::<RenderInput>(
+                    r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#,
+                )
+                .unwrap(),
+                "Validate the input",
+            ),
+        ];
+
+        for (input, expected) in inputs {
+            for (format, repo) in [
+                (OutputFormat::Terminal, None),
+                (OutputFormat::Markdown, None),
+                (OutputFormat::Github, Some("owner/repo".to_string())),
+            ] {
+                let output = render(
+                    input.clone(),
+                    RenderOptions::from_cli(format, repo).unwrap(),
+                )
+                .unwrap();
+
+                assert!(output.contains(expected));
+                assert!(!output.contains("Review questions"));
+                assert!(!output.contains("Structural recommendations"));
+                assert!(!output.contains("Review findings"));
+            }
+        }
+    }
+
+    #[test]
     fn execution_failures_deserialize_without_usage() {
         let failure: RenderStageFailure =
             serde_json::from_str(r#"{"type":"execution","reason":"provider unavailable"}"#)
@@ -1650,7 +1695,11 @@ mod tests {
         ] {
             let document = review_document(vec![result()], None);
 
-            let output = render(document, RenderOptions::from_cli(format, repo).unwrap()).unwrap();
+            let output = render(
+                document.into(),
+                RenderOptions::from_cli(format, repo).unwrap(),
+            )
+            .unwrap();
 
             for line in expected {
                 assert!(output.contains(line));

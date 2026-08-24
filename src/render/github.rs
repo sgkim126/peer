@@ -16,7 +16,18 @@ use super::{
     usage_by_model,
 };
 
-pub fn render(document: &RenderDocument, repo: &str) -> String {
+pub fn render(input: &RenderInput, repo: &str) -> String {
+    match input {
+        RenderInput::Document(document) => render_document(document, repo),
+        RenderInput::KnowledgeQuestion(question) => render_question(question, repo),
+        RenderInput::StructuralRecommendation(recommendation) => {
+            render_recommendation(recommendation, repo)
+        }
+        RenderInput::Finding(finding) => render_finding(finding, repo),
+    }
+}
+
+fn render_document(document: &RenderDocument, repo: &str) -> String {
     let stages = document
         .stages
         .iter()

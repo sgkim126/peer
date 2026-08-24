@@ -219,15 +219,15 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            let document = match serde_json::from_str::<render::RenderDocument>(&input) {
-                Ok(document) => document,
+            let input = match serde_json::from_str::<render::RenderInput>(&input) {
+                Ok(input) => input,
                 Err(error) => {
-                    eprintln!("failed to parse render document: {error}");
+                    eprintln!("failed to parse render input: {error}");
                     debug!("{error:?}");
                     return ExitCode::FAILURE;
                 }
             };
-            match render::render(document, options) {
+            match render::render(input, options) {
                 Ok(output) => {
                     println!("{output}");
                     ExitCode::SUCCESS

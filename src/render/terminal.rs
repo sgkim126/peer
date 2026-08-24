@@ -14,11 +14,24 @@ use crate::stage::{
 use crate::stage::{Finding, StageResult};
 
 use super::{
-    RenderDocument, RenderFinding, RenderStage, RenderStageErrorRef, ReviewCounts,
+    RenderDocument, RenderFinding, RenderInput, RenderStage, RenderStageErrorRef, ReviewCounts,
     clarification_message, escape_terminal, join_review_sections, review_counts, usage_by_model,
 };
 
-pub fn render(document: &RenderDocument) -> String {
+pub fn render(input: &RenderInput) -> String {
+    match input {
+        RenderInput::Document(document) => render_document(document),
+        RenderInput::KnowledgeQuestion(question) => {
+            render_question(question, std::io::stdout().is_terminal())
+        }
+        RenderInput::StructuralRecommendation(recommendation) => {
+            render_recommendation(recommendation, std::io::stdout().is_terminal())
+        }
+        RenderInput::Finding(finding) => render_finding(finding, std::io::stdout().is_terminal()),
+    }
+}
+
+fn render_document(document: &RenderDocument) -> String {
     let use_color = std::io::stdout().is_terminal();
     let stages = document
         .stages
