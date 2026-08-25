@@ -1,5 +1,5 @@
 name: Peer Review
-description: Run peer init if needed, then run peer review.
+description: Run peer init if needed, then produce a peer review JSON document.
 
 inputs:
   version:
@@ -22,9 +22,6 @@ inputs:
   target:
     description: Git revision or range to review.
     required: true
-  repo:
-    description: GitHub repository name in owner/name form for GitHub output links.
-    required: true
   title:
     description: Pull request title to pass to peer review.
     required: false
@@ -45,9 +42,9 @@ outputs:
   exit-code:
     description: Exit code returned by peer review.
     value: ${{ steps.review.outputs.exit-code }}
-  stdout-path:
-    description: Path to the peer review stdout file on the runner.
-    value: ${{ steps.review.outputs.stdout-path }}
+  review-json-path:
+    description: Path to the peer review JSON file on the runner.
+    value: ${{ steps.review.outputs.review-json-path }}
   stderr-path:
     description: Path to the peer review stderr file on the runner.
     value: ${{ steps.review.outputs.stderr-path }}
@@ -78,6 +75,11 @@ runs:
 
         version="${PEER_VERSION#v}"
         tag="v$version"
+
+        if command -v peer > /dev/null 2>&1 &&
+          [ "$(peer --version 2> /dev/null)" = "peer $version" ]; then
+          exit 0
+        fi
 
         case "${RUNNER_OS}-${RUNNER_ARCH}" in
           Linux-X64) ;;
@@ -144,7 +146,6 @@ runs:
         PEER_REVIEW_MODEL: ${{ inputs.model }}
         PEER_REVIEW_NO_RESUME: ${{ inputs.no-resume }}
         PEER_REVIEW_TARGET: ${{ inputs.target }}
-        PEER_REVIEW_REPO: ${{ inputs.repo }}
         PEER_REVIEW_TITLE: ${{ inputs.title }}
         PEER_REVIEW_BODY_FILE: ${{ inputs.body-file }}
         PEER_REVIEW_COMMENTS_FILE: ${{ inputs.comments-file }}
@@ -170,12 +171,10 @@ runs:
           fi
         fi
 
-        stdout="$RUNNER_TEMP/peer-review-stdout.md"
+        review_json="$RUNNER_TEMP/peer-review.json"
         stderr="$RUNNER_TEMP/peer-review-stderr.log"
         args=(
           review "$PEER_REVIEW_TARGET"
-          --format github
-          --repo "$PEER_REVIEW_REPO"
         )
 
         if [ -n "$PEER_REVIEW_PROVIDER" ]; then
@@ -213,11 +212,11 @@ runs:
 
         set +e
         peer "${args[@]}" \
-          > >(tee "$stdout") \
+          > "$review_json" \
           2> >(tee "$stderr" >&2)
         code=$?
         set -e
 
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
-        echo "stdout-path=$stdout" >> "$GITHUB_OUTPUT"
+        echo "review-json-path=$review_json" >> "$GITHUB_OUTPUT"
         echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"

@@ -228,7 +228,6 @@ jobs:
           version: "0.12.0"
           provider: mistral
           target: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
-          repo: ${{ github.repository }}
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
@@ -238,7 +237,7 @@ jobs:
 ```
 
 The action captures the review status instead of failing its own step, which allows a later step to publish the output before deciding whether the job should fail.
-It exposes `exit-code`, `stdout-path`, and `stderr-path`.
+It exposes `exit-code`, `review-json-path`, and `stderr-path`.
 
 See [`.github/actions/peer-review/action.yml`](.github/actions/peer-review/action.yml) for the complete input and output reference.
 The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml`](.github/workflows/peer-review-dispatch.yml) shows how to collect a pull request's title, body, and comments, maintain a placeholder comment, and publish the GitHub-formatted review.
