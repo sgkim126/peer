@@ -43,7 +43,7 @@ Every review uses four stages:
 
 The knowledge stage considers pull-request scope, commit sequence, atomicity, and message-to-diff intent as complementary ways to find missing context. It first searches the supplied discussion, repository documentation, and directly relevant code, and does not ask questions whose answers are already available. There is no fixed question limit; every reported question must independently preserve information that matters to future review, operation, or maintenance.
 
-`peer review` runs `review_context`, then `knowledge`, then the per-commit `quality` and `security` stages. Ordinary knowledge questions do not stop the later bug reviews. Only blocking context ambiguity, execution failure, or iteration exhaustion prevents successful completion.
+`peer review` runs `review_context`, then `knowledge`, then the per-commit `quality` and `security` stages. Ordinary knowledge questions do not stop the later bug reviews. Any stage may instead request blocking clarification when it cannot complete defensibly. Blocking clarification, execution failure, or iteration exhaustion prevents successful completion.
 
 `peer` uses the models and providers supported by Pi.
 A review can incorporate its title, body, and existing comment threads so that feedback is grounded in the discussion surrounding the change. Results can be rendered for a terminal, as JSON or Markdown, or with GitHub links.
@@ -163,7 +163,7 @@ The default configuration includes the following common API-key providers as exa
 See [Pi's provider documentation](https://github.com/earendil-works/pi/blob/v0.83.0/packages/coding-agent/docs/providers.md) for the complete list of supported providers and authentication methods.
 
 `peer init` copies the default configuration to `.peer/config.toml`.
-The configuration selects the default provider and model, limits the number of commits and model iterations, and records model prices used to estimate review cost.
+The configuration selects the default provider and model and limits the number of commits and model iterations.
 The removed `commit_scope`, `commit_sequence`, `size`, and `intent` stage overrides are invalid; use `[stages.knowledge]` instead.
 
 Use `--provider` or `--model` to override the configured defaults for one review.
@@ -173,8 +173,7 @@ peer review main..HEAD --provider openai
 peer review main..HEAD --provider anthropic --model claude-sonnet-5
 ```
 
-See [`resources/default_config.toml`](resources/default_config.toml) for every configuration field and the models included in the current release.
-Model prices in that file are used only to estimate cost; the provider's billing data remains authoritative.
+See [`resources/default_config.toml`](resources/default_config.toml) for every configuration field.
 
 ## Output and exit status
 
@@ -248,7 +247,7 @@ The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml
 `peer` sends the reviewed code and any supplied review context to the selected model provider.
 Do not review material that the provider is not permitted to receive, and make sure commits submitted for review do not contain passwords, API tokens, or other secrets that must not be disclosed.
 
-The reported cost is an estimate calculated from token usage and the prices in the local configuration.
+The reported cost comes from the usage information returned by Pi and remains an estimate.
 Actual billing may differ.
 Review feedback is nondeterministic and can be incomplete, so it does not replace human judgment or dedicated verification tools.
 
