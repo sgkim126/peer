@@ -46,8 +46,11 @@ outputs:
     description: Exit code returned by peer review.
     value: ${{ steps.review.outputs.exit-code }}
   stdout-path:
-    description: Path to the peer review stdout file on the runner.
+    description: Path to the rendered peer review output file on the runner.
     value: ${{ steps.review.outputs.stdout-path }}
+  review-json-path:
+    description: Path to the peer review JSON file on the runner.
+    value: ${{ steps.review.outputs.review-json-path }}
   stderr-path:
     description: Path to the peer review stderr file on the runner.
     value: ${{ steps.review.outputs.stderr-path }}
@@ -170,12 +173,11 @@ runs:
           fi
         fi
 
+        review_json="$RUNNER_TEMP/peer-review.json"
         stdout="$RUNNER_TEMP/peer-review-stdout.md"
         stderr="$RUNNER_TEMP/peer-review-stderr.log"
         args=(
           review "$PEER_REVIEW_TARGET"
-          --format github
-          --repo "$PEER_REVIEW_REPO"
         )
 
         if [ -n "$PEER_REVIEW_PROVIDER" ]; then
@@ -209,15 +211,44 @@ runs:
           printf '\n'
           echo '```'
           echo
+          echo "### peer render command"
+          echo
+          echo '```bash'
+          printf 'peer render --format github --repo %q < %q\n' \
+            "$PEER_REVIEW_REPO" "$review_json"
+          echo '```'
+          echo
         } >> "$GITHUB_STEP_SUMMARY"
 
         set +e
         peer "${args[@]}" \
-          > >(tee "$stdout") \
+          > "$review_json" \
           2> >(tee "$stderr" >&2)
-        code=$?
+        review_code=$?
+
+        render_code=0
+        if [ -s "$review_json" ]; then
+          peer render --format github --repo "$PEER_REVIEW_REPO" \
+            < "$review_json" \
+            > >(tee "$stdout") \
+            2> >(tee -a "$stderr" >&2)
+          render_code=$?
+        else
+          : > "$stdout"
+          if [ "$review_code" -eq 0 ]; then
+            echo "peer review did not produce JSON output." | tee -a "$stderr" >&2
+            render_code=1
+          fi
+        fi
         set -e
+
+        if [ "$review_code" -ne 0 ]; then
+          code=$review_code
+        else
+          code=$render_code
+        fi
 
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         echo "stdout-path=$stdout" >> "$GITHUB_OUTPUT"
+        echo "review-json-path=$review_json" >> "$GITHUB_OUTPUT"
         echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
