@@ -1,0 +1,82 @@
+name: Peer Render
+description: Render an array of peer JSON values for GitHub.
+
+inputs:
+  input-file:
+    description: Path to a JSON array containing peer values to render.
+    required: true
+  repo:
+    description: GitHub repository name in owner/name form for output links.
+    required: true
+
+outputs:
+  results-path:
+    description: Path to the JSON array containing render exit codes and outputs.
+    value: ${{ steps.render.outputs.results-path }}
+  stderr-path:
+    description: Path to the combined peer render stderr file on the runner.
+    value: ${{ steps.render.outputs.stderr-path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Render peer output
+      id: render
+      shell: bash
+      env:
+        PEER_RENDER_INPUT_FILE: ${{ inputs.input-file }}
+        PEER_RENDER_REPO: ${{ inputs.repo }}
+      run: |
+        set -euo pipefail
+
+        results="$RUNNER_TEMP/peer-render-results.json"
+        results_tmp="$RUNNER_TEMP/peer-render-results.tmp.json"
+        stderr="$RUNNER_TEMP/peer-render-stderr.log"
+        printf '[]\n' > "$results"
+        : > "$stderr"
+
+        {
+          echo "### peer render command"
+          echo
+          echo '```bash'
+          printf 'peer render --format github --repo %q < each(%q)\n' \
+            "$PEER_RENDER_REPO" "$PEER_RENDER_INPUT_FILE"
+          echo '```'
+          echo
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if ! jq --exit-status 'type == "array"' "$PEER_RENDER_INPUT_FILE" > /dev/null; then
+          echo "Peer render input must be a JSON array." | tee -a "$stderr" >&2
+          echo "results-path=$results" >> "$GITHUB_OUTPUT"
+          echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
+          exit 2
+        else
+          count="$(jq 'length' "$PEER_RENDER_INPUT_FILE")"
+          for ((index = 0; index < count; index++)); do
+            item="$RUNNER_TEMP/peer-render-input-$index.json"
+            jq --compact-output ".[$index]" "$PEER_RENDER_INPUT_FILE" > "$item"
+
+            set +e
+            output="$(
+              peer render --format github --repo "$PEER_RENDER_REPO" \
+                < "$item" \
+                2> >(tee -a "$stderr" >&2)
+            )"
+            code=$?
+            set -e
+
+            jq \
+              --argjson exit_code "$code" \
+              --arg stdout "$output" \
+              '. + [{ exit_code: $exit_code, stdout: $stdout }]' \
+              "$results" > "$results_tmp"
+            mv "$results_tmp" "$results"
+
+            if [ -n "$output" ]; then
+              printf '%s\n' "$output"
+            fi
+          done
+        fi
+
+        echo "results-path=$results" >> "$GITHUB_OUTPUT"
+        echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"

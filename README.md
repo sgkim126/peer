@@ -228,7 +228,6 @@ jobs:
           version: "0.12.0"
           provider: mistral
           target: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
-          repo: ${{ github.repository }}
         env:
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
