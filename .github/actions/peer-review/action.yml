@@ -76,6 +76,11 @@ runs:
         version="${PEER_VERSION#v}"
         tag="v$version"
 
+        if command -v peer > /dev/null 2>&1 &&
+          [ "$(peer --version 2> /dev/null)" = "peer $version" ]; then
+          exit 0
+        fi
+
         case "${RUNNER_OS}-${RUNNER_ARCH}" in
           Linux-X64) ;;
           *)

@@ -255,6 +255,7 @@ jobs:
         if: always() && steps.render-inputs.outputs.input-file != ''
         uses: ./.peer-action/.github/actions/peer-render
         with:
+          version: ${{ env.PEER_VERSION }}
           input-file: ${{ steps.render-inputs.outputs.input-file }}
           repo: ${{ github.repository }}
 
