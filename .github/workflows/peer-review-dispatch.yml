@@ -242,7 +242,12 @@ jobs:
               process.env.RUNNER_TEMP,
               'peer-render-inputs.json',
             );
-            fs.writeFileSync(inputFile, JSON.stringify([review]));
+            const items = [
+              ...(Array.isArray(review.questions) ? review.questions : []),
+              ...(Array.isArray(review.recommendations) ? review.recommendations : []),
+              ...(Array.isArray(review.findings) ? review.findings : []),
+            ];
+            fs.writeFileSync(inputFile, JSON.stringify([review, ...items]));
             core.setOutput('input-file', inputFile);
 
       - name: Render peer review
@@ -253,25 +258,38 @@ jobs:
           input-file: ${{ steps.render-inputs.outputs.input-file }}
           repo: ${{ github.repository }}
 
-      - name: Update peer review placeholder
+      - name: Publish peer review
         if: always() && steps.placeholder.outputs.comment-id != ''
         uses: actions/github-script@v9
         env:
           REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
           REVIEW_EXIT_CODE: ${{ steps.peer.outputs.exit-code }}
+          REVIEW_JSON_PATH: ${{ steps.peer.outputs.review-json-path }}
           RENDER_RESULTS_PATH: ${{ steps.render.outputs.results-path }}
+          REVIEW_PR_NUMBER: ${{ steps.review.outputs.pr-number }}
+          REVIEW_COMMENT_ID: ${{ steps.placeholder.outputs.comment-id }}
         with:
           script: |
             const fs = require('fs');
-            let renderResults = [];
-            const renderResultsPath = process.env.RENDER_RESULTS_PATH;
-            if (renderResultsPath) {
+
+            const readJson = (file, description) => {
+              if (!file) return undefined;
               try {
-                renderResults = JSON.parse(fs.readFileSync(renderResultsPath, 'utf8'));
+                return JSON.parse(fs.readFileSync(file, 'utf8'));
               } catch (error) {
-                core.warning(`Could not read peer render results: ${error.message}`);
+                core.warning(`Could not read ${description}: ${error.message}`);
+                return undefined;
               }
-            }
+            };
+
+            const review = readJson(
+              process.env.REVIEW_JSON_PATH,
+              'peer review JSON',
+            );
+            const renderResults = readJson(
+              process.env.RENDER_RESULTS_PATH,
+              'peer render results',
+            ) ?? [];
             const primaryRender = renderResults[0];
             const reviewExitCode = process.env.REVIEW_EXIT_CODE;
             const renderExitCode = String(primaryRender?.exit_code ?? 'unknown');
@@ -282,9 +300,154 @@ jobs:
               `Triggered by @${context.actor}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].filter(Boolean).join('\n');
-            const output = typeof primaryRender?.stdout === 'string'
+            let output = typeof primaryRender?.stdout === 'string'
               ? primaryRender.stdout.trim()
               : '';
+
+            const hashesMatch = (left, right) => (
+              typeof left === 'string'
+              && typeof right === 'string'
+              && (left.startsWith(right) || right.startsWith(left))
+            );
+
+            const resolveCommit = async (commit) => {
+              const result = await exec.getExecOutput(
+                'git',
+                ['rev-parse', '--verify', `${commit}^{commit}`],
+                { ignoreReturnCode: true, silent: true },
+              );
+              const resolved = result.stdout.trim();
+              return result.exitCode === 0 && /^[0-9a-f]{40}$/i.test(resolved)
+                ? resolved
+                : undefined;
+            };
+
+            const inlineLocation = (type, item) => {
+              if (type === 'finding') {
+                if (
+                  typeof item.commit !== 'string'
+                  || typeof item.file !== 'string'
+                  || item.file.length === 0
+                ) {
+                  return undefined;
+                }
+                return { commit: item.commit, path: item.file, line: item.line };
+              }
+
+              if (
+                !Array.isArray(item.related_commits)
+                || item.related_commits.length !== 1
+                || !item.location
+              ) {
+                return undefined;
+              }
+
+              const commit = item.related_commits[0];
+              const location = item.location;
+              if (
+                typeof location.file !== 'string'
+                || location.file.length === 0
+                || !hashesMatch(commit, location.commit)
+              ) {
+                return undefined;
+              }
+              const fullCommit = commit.length >= location.commit.length
+                ? commit
+                : location.commit;
+              return { commit: fullCommit, path: location.file, line: location.line };
+            };
+
+            if (review && output) {
+              const groups = [
+                ['question', review.questions],
+                ['recommendation', review.recommendations],
+                ['finding', review.findings],
+              ];
+              let resultIndex = 1;
+              for (const [type, items] of groups) {
+                if (!Array.isArray(items)) continue;
+                for (const item of items) {
+                  const result = renderResults[resultIndex];
+                  resultIndex += 1;
+                  const location = inlineLocation(type, item);
+                  if (!location) continue;
+
+                  const commit = await resolveCommit(location.commit);
+                  if (!commit) {
+                    core.warning(
+                      `Could not resolve ${type} commit ${location.commit}.`,
+                    );
+                    continue;
+                  }
+
+                  const rendered = typeof result?.stdout === 'string'
+                    ? result.stdout.trim()
+                    : '';
+                  if (result?.exit_code !== 0 || !rendered) {
+                    core.warning(
+                      `Could not render ${type} for ${location.commit}:${location.path}.`,
+                    );
+                    continue;
+                  }
+
+                  const renderedIndex = output.indexOf(rendered);
+                  if (renderedIndex < 0) {
+                    core.warning(`Could not locate rendered ${type} in peer review output.`);
+                    continue;
+                  }
+
+                  const params = {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    pull_number: Number(process.env.REVIEW_PR_NUMBER),
+                    body: rendered,
+                    commit_id: commit,
+                    path: location.path,
+                  };
+                  if (Number.isSafeInteger(location.line) && location.line > 0) {
+                    params.subject_type = 'line';
+                    params.line = location.line;
+                    params.side = 'RIGHT';
+                  } else {
+                    params.subject_type = 'file';
+                  }
+
+                  try {
+                    await github.rest.pulls.createReviewComment(params);
+                    output = [
+                      output.slice(0, renderedIndex),
+                      output.slice(renderedIndex + rendered.length),
+                    ].join('');
+                  } catch (error) {
+                    core.warning(
+                      `Could not publish ${type} at ${location.commit}:${location.path}: ${error.message}`,
+                    );
+                  }
+                }
+              }
+
+              const itemHeadings = new Set([
+                '## Review questions',
+                '## Structural recommendations',
+                '## Review findings',
+              ]);
+              const lines = output.split('\n');
+              const sectionHasBody = (headingIndex) => {
+                for (let index = headingIndex + 1; index < lines.length; index += 1) {
+                  if (lines[index].startsWith('## ')) return false;
+                  if (lines[index].trim() !== '') return true;
+                }
+                return false;
+              };
+              output = lines
+                .filter((line, index) => (
+                  !itemHeadings.has(line)
+                  || sectionHasBody(index)
+                ))
+                .join('\n')
+                .replace(/\n{3,}/g, '\n\n')
+                .trim();
+            }
 
             const status = exitCode === '0'
               ? '✅ peer review completed.'
@@ -296,7 +459,7 @@ jobs:
             await github.rest.issues.updateComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              comment_id: Number('${{ steps.placeholder.outputs.comment-id }}'),
+              comment_id: Number(process.env.REVIEW_COMMENT_ID),
               body,
             });
 
