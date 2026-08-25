@@ -298,6 +298,7 @@ mod tests {
                     },
                     diff: "+const RETRIES: usize = 3;".to_string(),
                 }],
+                target_diff_files: vec!["src/lib.rs".to_string()],
                 cumulative_diff: "+const RETRIES: usize = 3;".to_string(),
             },
             ReviewContextReport {

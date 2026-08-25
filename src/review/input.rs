@@ -21,6 +21,7 @@ pub struct ReviewInput {
     pub base: Option<CommitHash>,
     pub head: CommitHash,
     pub commits: Vec<ReviewCommitInput>,
+    pub target_diff_files: Vec<String>,
     pub cumulative_diff: String,
 }
 
@@ -49,17 +50,25 @@ impl ReviewInput {
                 diff,
             });
         }
-        let cumulative_diff = match &base {
+        let (target_diff_files, cumulative_diff) = match &base {
             Some(base) => {
-                extractor
-                    .range_diff(base.as_ref(), head.as_ref())
-                    .await?
-                    .diff
+                let range_diff = extractor.range_diff(base.as_ref(), head.as_ref()).await?;
+                (range_diff.files, range_diff.diff)
             }
-            None => inputs
-                .first()
-                .map(|commit| commit.diff.clone())
-                .expect("single-commit review must contain one commit"),
+            None => {
+                let commit = inputs
+                    .first()
+                    .expect("single-commit review must contain one commit");
+                let files = commit
+                    .files
+                    .files
+                    .iter()
+                    .flat_map(|file| {
+                        std::iter::once(file.path.clone()).chain(file.source_path.clone())
+                    })
+                    .collect();
+                (files, commit.diff.clone())
+            }
         };
 
         trace!("review input collected: commits={}", inputs.len());
@@ -68,6 +77,7 @@ impl ReviewInput {
             base,
             head,
             commits: inputs,
+            target_diff_files,
             cumulative_diff,
         })
     }
@@ -78,6 +88,7 @@ mod tests {
     use super::*;
 
     use crate::git::run_git;
+    use crate::stage::{ReviewContextStage, ReviewStage};
 
     async fn commit(directory: &std::path::Path, file: &str, message: &str) -> CommitHash {
         std::fs::write(directory.join(file), format!("{message}\n")).unwrap();
@@ -130,5 +141,47 @@ mod tests {
         );
         assert!(input.cumulative_diff.contains("first.txt"));
         assert!(input.cumulative_diff.contains("second.txt"));
+        assert!(input.target_diff_files.contains(&"first.txt".to_string()));
+        assert!(input.target_diff_files.contains(&"second.txt".to_string()));
+
+        let request = ReviewContextStage::new(input).request();
+        assert!(request.prompt.contains("target.diff:first.txt"));
+        assert!(request.prompt.contains("target.diff:second.txt"));
+    }
+
+    #[tokio::test]
+    async fn excludes_a_reverted_file_from_the_target_diff_files() {
+        let directory = tempfile::tempdir().unwrap();
+        run_git(&["init"], directory.path()).await.unwrap();
+        run_git(
+            &["config", "user.email", "test@example.com"],
+            directory.path(),
+        )
+        .await
+        .unwrap();
+        run_git(&["config", "user.name", "Test"], directory.path())
+            .await
+            .unwrap();
+        let base = commit(directory.path(), "file.txt", "base").await;
+        let modified = commit(directory.path(), "file.txt", "modified").await;
+        let reverted = commit(directory.path(), "file.txt", "base").await;
+        let target = ReviewTarget::Range {
+            from: base,
+            to: reverted.clone(),
+            commits: vec![modified, reverted],
+        };
+
+        let input = ReviewInput::collect(
+            &target,
+            ReviewContext::default(),
+            &Extractor::new(directory.path().to_path_buf()),
+        )
+        .await
+        .unwrap();
+
+        assert!(input.cumulative_diff.is_empty());
+        assert!(input.target_diff_files.is_empty());
+        let stage = ReviewContextStage::new(input);
+        assert!(!stage.request().prompt.contains("target.diff:file.txt"));
     }
 }

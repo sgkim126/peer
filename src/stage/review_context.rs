@@ -19,6 +19,7 @@ const SYSTEM_PROMPT: &str = concat!(
     "Do not require any particular stated-intent field when the stated-intent sources collectively make the objective, scope, and intended behavior clear. ",
     "Request clarification only when a concrete ambiguity would prevent a reviewer from judging the change. ",
     "Otherwise submit a concise, source-backed report for downstream stages. ",
+    "For every sourced statement, copy source identifiers exactly from supplied `source` values or `target_diff.file_sources`; never use JSON field names as source identifiers. ",
     "Summarize stated intent separately from implementation facts visible in the diff, and do not invent requirements or acceptance criteria. ",
     "Do not decide pull-request membership, commit order or atomicity, message-to-diff accuracy, code quality, or security."
 );
@@ -29,6 +30,10 @@ fn thread_source(index: usize) -> String {
 
 fn commit_message_source(commit: &CommitHash) -> String {
     format!("commit:{commit}:message")
+}
+
+fn target_diff_file_source(path: &str) -> String {
+    format!("{TARGET_DIFF_SOURCE}:{path}")
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -73,6 +78,12 @@ impl ReviewContextStage {
             None => StageTarget::Commit(input.head.clone()),
         };
         let mut sources = HashSet::from([TARGET_DIFF_SOURCE.to_string()]);
+        sources.extend(
+            input
+                .target_diff_files
+                .iter()
+                .map(|path| target_diff_file_source(path)),
+        );
         if input
             .context
             .title
@@ -151,11 +162,19 @@ impl ReviewStage for ReviewContextStage {
                 })
             })
             .collect::<Vec<_>>();
+        let mut diff_file_sources = self
+            .sources
+            .iter()
+            .filter(|source| source.starts_with(&format!("{TARGET_DIFF_SOURCE}:")))
+            .cloned()
+            .collect::<Vec<_>>();
+        diff_file_sources.sort();
         let input = serde_json::json!({
             "pull_request": metadata,
             "commits": commits,
-            "cumulative_diff": {
+            "target_diff": {
                 "source": TARGET_DIFF_SOURCE,
+                "file_sources": diff_file_sources,
                 "diff": self.input.cumulative_diff,
             },
         });
@@ -209,7 +228,6 @@ mod tests {
     use super::*;
 
     use crate::context::ReviewContext;
-    use crate::extract::CommitFiles;
     use crate::review::ReviewCommitInput;
 
     fn stage() -> ReviewContextStage {
@@ -225,12 +243,18 @@ mod tests {
             commits: vec![ReviewCommitInput {
                 hash: hash.clone(),
                 message: "add staged review".to_string(),
-                files: CommitFiles {
-                    hash,
-                    files: Vec::new(),
-                },
+                files: serde_json::from_value(serde_json::json!({
+                    "hash": hash,
+                    "files": [{
+                        "path": "src/cli.rs",
+                        "status": "modified",
+                        "is_binary": false,
+                    }],
+                }))
+                .unwrap(),
                 diff: "+staged review".to_string(),
             }],
+            target_diff_files: vec!["src/cli.rs".to_string()],
             cumulative_diff: "+staged review".to_string(),
         })
     }
@@ -255,6 +279,11 @@ mod tests {
     fn request_labels_every_input_source() {
         let request = stage().request();
 
+        assert!(
+            request
+                .system_prompt
+                .contains("supplied `source` values or `target_diff.file_sources`")
+        );
         assert!(request.prompt.contains(r#""source": "pr.title""#));
         assert!(
             request
@@ -262,6 +291,9 @@ mod tests {
                 .contains(r#""source": "commit:abc1234:message""#)
         );
         assert!(request.prompt.contains(r#""source": "target.diff""#));
+        assert!(request.prompt.contains(r#""target.diff:src/cli.rs""#));
+        assert!(request.prompt.contains(r#""target_diff""#));
+        assert!(!request.prompt.contains(r#""cumulative_diff""#));
         assert_eq!(request.read_tools, vec![]);
     }
 
@@ -286,6 +318,24 @@ mod tests {
         assert_eq!(
             stage().validate_report(&report_with_source("target.diff")),
             Ok(())
+        );
+    }
+
+    #[test]
+    fn accepts_a_target_diff_source_qualified_by_a_changed_file() {
+        assert_eq!(
+            stage().validate_report(&report_with_source("target.diff:src/cli.rs")),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn rejects_a_target_diff_source_qualified_by_an_unchanged_file() {
+        assert_eq!(
+            stage()
+                .validate_report(&report_with_source("target.diff:src/unknown.rs"))
+                .unwrap_err(),
+            "unknown review context source: target.diff:src/unknown.rs"
         );
     }
 
