@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 
 #[derive(Parser, Debug)]
-#[command(name = "peer", about = "LLM-based code review CLI")]
+#[command(name = "peer", version, about = "LLM-based code review CLI")]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
@@ -67,6 +67,17 @@ mod tests {
 
     fn parse(args: &[&str]) -> Cli {
         Cli::parse_from(args)
+    }
+
+    #[test]
+    fn reports_the_package_version() {
+        let error = Cli::try_parse_from(["peer", "--version"]).unwrap_err();
+
+        assert_eq!(error.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            error.to_string(),
+            format!("peer {}\n", env!("CARGO_PKG_VERSION"))
+        );
     }
 
     #[test]
