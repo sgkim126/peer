@@ -104,6 +104,14 @@ struct StageCacheParams<'a> {
 struct CachedReport<R> {
     report: R,
     iterations: u32,
+    provider: String,
+    model: String,
+}
+
+impl<R> CachedReport<R> {
+    fn usage(&self) -> LlmUsage {
+        LlmUsage::zero(format!("{}/{}", self.provider, self.model))
+    }
 }
 
 #[derive(Deserialize)]
@@ -141,6 +149,7 @@ where
             stage.kind().as_str(),
             stage.target()
         );
+        let usage = cached.usage();
         return Ok(StageRun {
             stage: stage.kind(),
             target: stage.target(),
@@ -149,7 +158,7 @@ where
                 report: cached.report,
             },
             iterations: cached.iterations,
-            usage: LlmUsage::zero(config.model.to_string()),
+            usage,
         });
     }
     let session_key = CacheKey::from_params(
@@ -231,6 +240,8 @@ where
                 &CachedReport {
                     report: &report,
                     iterations: result.iterations,
+                    provider: config.model.provider().to_string(),
+                    model: config.model.model().to_string(),
                 },
             );
             trace!(
@@ -350,6 +361,27 @@ impl From<StageKind> for TerminalTool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn cached_reports_preserve_model_provenance() {
+        let cached = CachedReport {
+            report: "reviewed",
+            iterations: 2,
+            provider: "mistral".to_string(),
+            model: "mistral-medium-3.5".to_string(),
+        };
+
+        let value = serde_json::to_value(&cached).unwrap();
+        let restored: CachedReport<String> = serde_json::from_value(value.clone()).unwrap();
+
+        assert_eq!(value["provider"], "mistral");
+        assert_eq!(value["model"], "mistral-medium-3.5");
+        assert_eq!(restored.report, "reviewed");
+        assert_eq!(
+            restored.usage(),
+            LlmUsage::zero("mistral/mistral-medium-3.5")
+        );
+    }
 
     #[test]
     fn reports_usage_for_invalid_output_errors() {
