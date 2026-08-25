@@ -15,6 +15,7 @@ jobs:
     name: Build ${{ matrix.artifact-name }}
     needs: ci
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:

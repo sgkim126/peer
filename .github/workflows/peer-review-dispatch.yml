@@ -44,6 +44,7 @@ jobs:
   review:
     name: Peer review
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Validate inputs and load pull request
