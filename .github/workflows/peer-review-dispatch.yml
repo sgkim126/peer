@@ -370,24 +370,11 @@ jobs:
                 for (const item of items) {
                   const result = renderResults[resultIndex];
                   resultIndex += 1;
-                  const location = inlineLocation(type, item);
-                  if (!location) continue;
-
-                  const commit = await resolveCommit(location.commit);
-                  if (!commit) {
-                    core.warning(
-                      `Could not resolve ${type} commit ${location.commit}.`,
-                    );
-                    continue;
-                  }
-
                   const rendered = typeof result?.stdout === 'string'
                     ? result.stdout.trim()
                     : '';
                   if (result?.exit_code !== 0 || !rendered) {
-                    core.warning(
-                      `Could not render ${type} for ${location.commit}:${location.path}.`,
-                    );
+                    core.warning(`Could not render ${type}.`);
                     continue;
                   }
 
@@ -396,6 +383,37 @@ jobs:
                     core.warning(`Could not locate rendered ${type} in peer review output.`);
                     continue;
                   }
+
+                  const location = inlineLocation(type, item);
+                  let commit;
+                  if (location) {
+                    commit = await resolveCommit(location.commit);
+                    if (!commit) {
+                      core.warning(
+                        `Could not resolve ${type} commit ${location.commit}.`,
+                      );
+                    }
+                  }
+
+                  if (type === 'question' && (!location || !commit)) {
+                    try {
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: Number(process.env.REVIEW_PR_NUMBER),
+                        body: rendered,
+                      });
+                      output = [
+                        output.slice(0, renderedIndex),
+                        output.slice(renderedIndex + rendered.length),
+                      ].join('');
+                    } catch (error) {
+                      core.warning(`Could not publish question: ${error.message}`);
+                    }
+                    continue;
+                  }
+
+                  if (!location || !commit) continue;
 
                   const params = {
                     owner: context.repo.owner,
@@ -423,6 +441,24 @@ jobs:
                     core.warning(
                       `Could not publish ${type} at ${location.commit}:${location.path}: ${error.message}`,
                     );
+                    if (type === 'question') {
+                      try {
+                        await github.rest.issues.createComment({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          issue_number: Number(process.env.REVIEW_PR_NUMBER),
+                          body: rendered,
+                        });
+                        output = [
+                          output.slice(0, renderedIndex),
+                          output.slice(renderedIndex + rendered.length),
+                        ].join('');
+                      } catch (fallbackError) {
+                        core.warning(
+                          `Could not publish question as an issue comment: ${fallbackError.message}`,
+                        );
+                      }
+                    }
                   }
                 }
               }
