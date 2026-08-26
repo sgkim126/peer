@@ -33,4 +33,18 @@ const reviewCommentPosition = (diff, line) => {
   return side ? { line, side } : undefined;
 };
 
-module.exports = { reviewCommentPosition, reviewCommentSide };
+const standaloneQuestionBody = (rendered, provenance) => [
+  rendered,
+  '',
+  '<details>',
+  '<summary>Review provenance</summary>',
+  '',
+  provenance,
+  '</details>',
+].join('\n');
+
+module.exports = {
+  reviewCommentPosition,
+  reviewCommentSide,
+  standaloneQuestionBody,
+};

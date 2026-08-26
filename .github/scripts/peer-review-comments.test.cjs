@@ -6,6 +6,7 @@ const test = require('node:test');
 const {
   reviewCommentPosition,
   reviewCommentSide,
+  standaloneQuestionBody,
 } = require('./peer-review-comments.cjs');
 
 test('selects the right side for added lines', () => {
@@ -53,4 +54,20 @@ test('returns a line position only for a changed line', () => {
   assert.deepEqual(reviewCommentPosition(diff, 5), { line: 5, side: 'RIGHT' });
   assert.equal(reviewCommentPosition(diff, 6), undefined);
   assert.equal(reviewCommentPosition('', undefined), undefined);
+});
+
+test('appends collapsed provenance to a standalone question', () => {
+  assert.equal(
+    standaloneQuestionBody('Why is this required?', 'peer version: 0.13.1\nprovider: openai'),
+    [
+      'Why is this required?',
+      '',
+      '<details>',
+      '<summary>Review provenance</summary>',
+      '',
+      'peer version: 0.13.1',
+      'provider: openai',
+      '</details>',
+    ].join('\n'),
+  );
 });

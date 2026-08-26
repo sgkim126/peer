@@ -93,12 +93,13 @@ jobs:
           PEER_VERSION: ${{ env.PEER_VERSION }}
           REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
           REVIEW_MODEL: ${{ steps.review.outputs.model }}
+          REVIEW_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |
             const peerVersion = process.env.PEER_VERSION;
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
-            const triggeredBy = context.actor;
+            const triggeredBy = process.env.REVIEW_TRIGGERING_ACTOR;
             const metadata = [
               `peer version: ${peerVersion}`,
               `provider: ${provider}`,
@@ -284,10 +285,11 @@ jobs:
           REVIEW_HEAD_SHA: ${{ steps.review.outputs.head-sha }}
           REVIEW_PR_NUMBER: ${{ steps.review.outputs.pr-number }}
           REVIEW_COMMENT_ID: ${{ steps.placeholder.outputs.comment-id }}
+          REVIEW_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |
             const fs = require('fs');
-            const { reviewCommentPosition } = require(
+            const { reviewCommentPosition, standaloneQuestionBody } = require(
               './.peer-action/.github/scripts/peer-review-comments.cjs',
             );
 
@@ -316,9 +318,17 @@ jobs:
             const metadata = exitCode === '0' ? '' : process.env.REVIEW_METADATA;
             const commentMetadata = [
               metadata,
-              `Triggered by @${context.actor}`,
+              `Triggered by @${process.env.REVIEW_TRIGGERING_ACTOR}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].filter(Boolean).join('\n');
+            const standaloneMetadata = [
+              process.env.REVIEW_METADATA,
+              `Triggered by @${process.env.REVIEW_TRIGGERING_ACTOR}`,
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].filter(Boolean).join('\n');
+            const standaloneQuestion = (rendered) => (
+              standaloneQuestionBody(rendered, standaloneMetadata)
+            );
             let output = typeof primaryRender?.stdout === 'string'
               ? primaryRender.stdout.trim()
               : '';
@@ -459,7 +469,7 @@ jobs:
                         owner: context.repo.owner,
                         repo: context.repo.repo,
                         issue_number: Number(process.env.REVIEW_PR_NUMBER),
-                        body: rendered,
+                        body: standaloneQuestion(rendered),
                       });
                       output = [
                         output.slice(0, renderedIndex),
@@ -499,7 +509,7 @@ jobs:
                           owner: context.repo.owner,
                           repo: context.repo.repo,
                           issue_number: Number(process.env.REVIEW_PR_NUMBER),
-                          body: rendered,
+                          body: standaloneQuestion(rendered),
                         });
                         output = [
                           output.slice(0, renderedIndex),
