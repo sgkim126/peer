@@ -424,7 +424,6 @@ jobs:
                     path: location.path,
                   };
                   if (Number.isSafeInteger(location.line) && location.line > 0) {
-                    params.subject_type = 'line';
                     params.line = location.line;
                     params.side = 'RIGHT';
                   } else {
