@@ -134,6 +134,19 @@ jobs:
           ref: main
           path: .peer-action
 
+      - name: Compute pull request merge base
+        id: merge-base
+        env:
+          BASE_SHA: ${{ steps.review.outputs.base-sha }}
+          HEAD_SHA: ${{ steps.review.outputs.head-sha }}
+        run: |
+          set -euo pipefail
+          if ! merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"; then
+            echo "Could not find a merge base between $BASE_SHA and $HEAD_SHA." >&2
+            exit 1
+          fi
+          echo "base-sha=$merge_base" >> "$GITHUB_OUTPUT"
+
       - name: Prepare review context
         id: context
         uses: actions/github-script@v9
@@ -209,7 +222,7 @@ jobs:
           model: ${{ steps.review.outputs.model }}
           no-resume: ${{ inputs.no_resume }}
           cache-key: peer-cache-${{ runner.os }}-${{ github.repository }}-pr-${{ steps.review.outputs.pr-number }}
-          target: ${{ steps.review.outputs.base-sha }}..${{ steps.review.outputs.head-sha }}
+          target: ${{ steps.merge-base.outputs.base-sha }}..${{ steps.review.outputs.head-sha }}
           title: ${{ steps.review.outputs.title }}
           body-file: ${{ steps.context.outputs.body-file }}
           comments-file: ${{ steps.context.outputs.comments-file }}
