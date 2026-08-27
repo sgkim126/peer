@@ -31,6 +31,9 @@ jobs:
         with:
           node-version: 24
 
+      - name: Run GitHub script tests
+        run: node --test .github/scripts/*.test.cjs
+
       - name: Cache Cargo dependencies
         uses: actions/cache@v6
         with:

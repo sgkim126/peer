@@ -93,12 +93,13 @@ jobs:
           PEER_VERSION: ${{ env.PEER_VERSION }}
           REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
           REVIEW_MODEL: ${{ steps.review.outputs.model }}
+          REVIEW_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |
             const peerVersion = process.env.PEER_VERSION;
             const provider = process.env.REVIEW_PROVIDER;
             const model = process.env.REVIEW_MODEL;
-            const triggeredBy = context.actor;
+            const triggeredBy = process.env.REVIEW_TRIGGERING_ACTOR;
             const metadata = [
               `peer version: ${peerVersion}`,
               `provider: ${provider}`,
@@ -124,15 +125,28 @@ jobs:
       - name: Checkout pull request
         uses: actions/checkout@v7
         with:
-          ref: refs/pull/${{ steps.review.outputs.pr-number }}/head
+          ref: ${{ steps.review.outputs.head-sha }}
           fetch-depth: 0
 
       - name: Checkout peer actions
         uses: actions/checkout@v7
         with:
           repository: sgkim126/peer
-          ref: main
+          ref: ${{ github.workflow_sha }}
           path: .peer-action
+
+      - name: Compute pull request merge base
+        id: merge-base
+        env:
+          BASE_SHA: ${{ steps.review.outputs.base-sha }}
+          HEAD_SHA: ${{ steps.review.outputs.head-sha }}
+        run: |
+          set -euo pipefail
+          if ! merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"; then
+            echo "Could not find a merge base between $BASE_SHA and $HEAD_SHA." >&2
+            exit 1
+          fi
+          echo "base-sha=$merge_base" >> "$GITHUB_OUTPUT"
 
       - name: Prepare review context
         id: context
@@ -209,7 +223,7 @@ jobs:
           model: ${{ steps.review.outputs.model }}
           no-resume: ${{ inputs.no_resume }}
           cache-key: peer-cache-${{ runner.os }}-${{ github.repository }}-pr-${{ steps.review.outputs.pr-number }}
-          target: ${{ steps.review.outputs.base-sha }}..${{ steps.review.outputs.head-sha }}
+          target: ${{ steps.merge-base.outputs.base-sha }}..${{ steps.review.outputs.head-sha }}
           title: ${{ steps.review.outputs.title }}
           body-file: ${{ steps.context.outputs.body-file }}
           comments-file: ${{ steps.context.outputs.comments-file }}
@@ -267,11 +281,23 @@ jobs:
           REVIEW_EXIT_CODE: ${{ steps.peer.outputs.exit-code }}
           REVIEW_JSON_PATH: ${{ steps.peer.outputs.review-json-path }}
           RENDER_RESULTS_PATH: ${{ steps.render.outputs.results-path }}
+          REVIEW_BASE_SHA: ${{ steps.merge-base.outputs.base-sha }}
+          REVIEW_HEAD_SHA: ${{ steps.review.outputs.head-sha }}
           REVIEW_PR_NUMBER: ${{ steps.review.outputs.pr-number }}
           REVIEW_COMMENT_ID: ${{ steps.placeholder.outputs.comment-id }}
+          REVIEW_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |
             const fs = require('fs');
+            const {
+              publishWithoutRenderedRange,
+              removeRanges,
+              renderedItemRanges,
+              reviewCommentPosition,
+              standaloneQuestionBody,
+            } = require(
+              './.peer-action/.github/scripts/peer-review-comments.cjs',
+            );
 
             const readJson = (file, description) => {
               if (!file) return undefined;
@@ -298,9 +324,17 @@ jobs:
             const metadata = exitCode === '0' ? '' : process.env.REVIEW_METADATA;
             const commentMetadata = [
               metadata,
-              `Triggered by @${context.actor}`,
+              `Triggered by @${process.env.REVIEW_TRIGGERING_ACTOR}`,
               `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
             ].filter(Boolean).join('\n');
+            const standaloneMetadata = [
+              process.env.REVIEW_METADATA,
+              `Triggered by @${process.env.REVIEW_TRIGGERING_ACTOR}`,
+              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
+            ].filter(Boolean).join('\n');
+            const standaloneQuestion = (rendered) => (
+              standaloneQuestionBody(rendered, standaloneMetadata)
+            );
             let output = typeof primaryRender?.stdout === 'string'
               ? primaryRender.stdout.trim()
               : '';
@@ -321,6 +355,35 @@ jobs:
               return result.exitCode === 0 && /^[0-9a-f]{40}$/i.test(resolved)
                 ? resolved
                 : undefined;
+            };
+
+            const diffCache = new Map();
+            const locationDiff = async (file) => {
+              if (diffCache.has(file)) return diffCache.get(file);
+              const result = await exec.getExecOutput(
+                'git',
+                [
+                  'diff',
+                  '--no-color',
+                  '--no-ext-diff',
+                  '--no-textconv',
+                  '--unified=0',
+                  `${process.env.REVIEW_BASE_SHA}..${process.env.REVIEW_HEAD_SHA}`,
+                  '--',
+                  file,
+                ],
+                { ignoreReturnCode: true, silent: true },
+              );
+              const diff = result.exitCode === 0 && result.stdout.trim()
+                ? result.stdout
+                : undefined;
+              diffCache.set(file, diff);
+              return diff;
+            };
+
+            const inlinePosition = async (location) => {
+              const diff = await locationDiff(location.path);
+              return reviewCommentPosition(diff, location.line);
             };
 
             const inlineLocation = (type, item) => {
@@ -364,68 +427,111 @@ jobs:
                 ['recommendation', review.recommendations],
                 ['finding', review.findings],
               ];
+              const itemRanges = renderedItemRanges(
+                output,
+                renderResults.slice(1).map((result) => (
+                  typeof result?.stdout === 'string'
+                    ? result.stdout.trim()
+                    : ''
+                )),
+              );
+              const publishedRanges = [];
               let resultIndex = 1;
               for (const [type, items] of groups) {
                 if (!Array.isArray(items)) continue;
                 for (const item of items) {
                   const result = renderResults[resultIndex];
+                  const renderedRange = itemRanges[resultIndex - 1];
                   resultIndex += 1;
-                  const location = inlineLocation(type, item);
-                  if (!location) continue;
-
-                  const commit = await resolveCommit(location.commit);
-                  if (!commit) {
-                    core.warning(
-                      `Could not resolve ${type} commit ${location.commit}.`,
-                    );
-                    continue;
-                  }
-
                   const rendered = typeof result?.stdout === 'string'
                     ? result.stdout.trim()
                     : '';
                   if (result?.exit_code !== 0 || !rendered) {
-                    core.warning(
-                      `Could not render ${type} for ${location.commit}:${location.path}.`,
-                    );
+                    core.warning(`Could not render ${type}.`);
                     continue;
                   }
 
-                  const renderedIndex = output.indexOf(rendered);
-                  if (renderedIndex < 0) {
+                  if (!renderedRange) {
                     core.warning(`Could not locate rendered ${type} in peer review output.`);
+                    if (!publishWithoutRenderedRange(type)) continue;
+                  }
+
+                  const location = inlineLocation(type, item);
+                  let locationCommit;
+                  let position;
+                  if (location) {
+                    locationCommit = await resolveCommit(location.commit);
+                    if (!locationCommit) {
+                      core.warning(
+                        `Could not resolve ${type} commit ${location.commit}.`,
+                      );
+                    } else {
+                      position = await inlinePosition(location);
+                      if (!position) {
+                        core.warning(
+                          `Could not position ${type} at ${location.commit}:${location.path}${location.line ? `:${location.line}` : ''}.`,
+                        );
+                      }
+                    }
+                  }
+
+                  if (
+                    type === 'question'
+                    && (!location || !locationCommit || !position)
+                  ) {
+                    try {
+                      await github.rest.issues.createComment({
+                        owner: context.repo.owner,
+                        repo: context.repo.repo,
+                        issue_number: Number(process.env.REVIEW_PR_NUMBER),
+                        body: standaloneQuestion(rendered),
+                      });
+                      if (renderedRange) publishedRanges.push(renderedRange);
+                    } catch (error) {
+                      core.warning(`Could not publish question: ${error.message}`);
+                    }
                     continue;
                   }
+
+                  if (!location || !locationCommit || !position) continue;
 
                   const params = {
                     owner: context.repo.owner,
                     repo: context.repo.repo,
                     pull_number: Number(process.env.REVIEW_PR_NUMBER),
                     body: rendered,
-                    commit_id: commit,
+                    commit_id: process.env.REVIEW_HEAD_SHA,
                     path: location.path,
+                    ...position,
                   };
-                  if (Number.isSafeInteger(location.line) && location.line > 0) {
-                    params.subject_type = 'line';
-                    params.line = location.line;
-                    params.side = 'RIGHT';
-                  } else {
-                    params.subject_type = 'file';
-                  }
 
                   try {
                     await github.rest.pulls.createReviewComment(params);
-                    output = [
-                      output.slice(0, renderedIndex),
-                      output.slice(renderedIndex + rendered.length),
-                    ].join('');
+                    if (renderedRange) publishedRanges.push(renderedRange);
                   } catch (error) {
                     core.warning(
                       `Could not publish ${type} at ${location.commit}:${location.path}: ${error.message}`,
                     );
+                    if (type === 'question') {
+                      try {
+                        await github.rest.issues.createComment({
+                          owner: context.repo.owner,
+                          repo: context.repo.repo,
+                          issue_number: Number(process.env.REVIEW_PR_NUMBER),
+                          body: standaloneQuestion(rendered),
+                        });
+                        if (renderedRange) publishedRanges.push(renderedRange);
+                      } catch (fallbackError) {
+                        core.warning(
+                          `Could not publish question as an issue comment: ${fallbackError.message}`,
+                        );
+                      }
+                    }
                   }
                 }
               }
+
+              output = removeRanges(output, publishedRanges);
 
               const itemHeadings = new Set([
                 '## Review questions',
