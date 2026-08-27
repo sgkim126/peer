@@ -4,6 +4,9 @@ const assert = require('node:assert/strict');
 const test = require('node:test');
 
 const {
+  publishWithoutRenderedRange,
+  removeRanges,
+  renderedItemRanges,
   reviewCommentPosition,
   reviewCommentSide,
   standaloneQuestionBody,
@@ -70,4 +73,31 @@ test('appends collapsed provenance to a standalone question', () => {
       '</details>',
     ].join('\n'),
   );
+});
+
+test('removes a published item by identity when rendered text is duplicated', () => {
+  const rendered = '- **question/rationale** — Why?';
+  const output = [
+    '## Review questions',
+    rendered,
+    rendered,
+  ].join('\n');
+  const ranges = renderedItemRanges(output, [rendered, rendered]);
+
+  assert.equal(
+    removeRanges(output, [ranges[1]]),
+    ['## Review questions', rendered, ''].join('\n'),
+  );
+});
+
+test('publishes a question without a matching aggregate range', () => {
+  const rendered = '- **question/rationale** — Why?';
+  const [range] = renderedItemRanges(
+    '## Review questions\n- **question/rationale** — Different text',
+    [rendered],
+  );
+
+  assert.equal(range, undefined);
+  assert.equal(publishWithoutRenderedRange('question'), true);
+  assert.equal(publishWithoutRenderedRange('finding'), false);
 });

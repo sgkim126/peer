@@ -43,7 +43,32 @@ const standaloneQuestionBody = (rendered, provenance) => [
   '</details>',
 ].join('\n');
 
+const renderedItemRanges = (output, renderedItems) => {
+  let searchIndex = 0;
+  return renderedItems.map((rendered) => {
+    if (typeof rendered !== 'string' || !rendered) return undefined;
+    const start = output.indexOf(rendered, searchIndex);
+    if (start < 0) return undefined;
+    const end = start + rendered.length;
+    searchIndex = end;
+    return { start, end };
+  });
+};
+
+const publishWithoutRenderedRange = (type) => type === 'question';
+
+const removeRanges = (output, ranges) => {
+  const ordered = [...ranges].sort((left, right) => right.start - left.start);
+  for (const { start, end } of ordered) {
+    output = output.slice(0, start) + output.slice(end);
+  }
+  return output;
+};
+
 module.exports = {
+  publishWithoutRenderedRange,
+  removeRanges,
+  renderedItemRanges,
   reviewCommentPosition,
   reviewCommentSide,
   standaloneQuestionBody,

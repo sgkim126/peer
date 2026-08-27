@@ -289,7 +289,13 @@ jobs:
         with:
           script: |
             const fs = require('fs');
-            const { reviewCommentPosition, standaloneQuestionBody } = require(
+            const {
+              publishWithoutRenderedRange,
+              removeRanges,
+              renderedItemRanges,
+              reviewCommentPosition,
+              standaloneQuestionBody,
+            } = require(
               './.peer-action/.github/scripts/peer-review-comments.cjs',
             );
 
@@ -421,11 +427,21 @@ jobs:
                 ['recommendation', review.recommendations],
                 ['finding', review.findings],
               ];
+              const itemRanges = renderedItemRanges(
+                output,
+                renderResults.slice(1).map((result) => (
+                  typeof result?.stdout === 'string'
+                    ? result.stdout.trim()
+                    : ''
+                )),
+              );
+              const publishedRanges = [];
               let resultIndex = 1;
               for (const [type, items] of groups) {
                 if (!Array.isArray(items)) continue;
                 for (const item of items) {
                   const result = renderResults[resultIndex];
+                  const renderedRange = itemRanges[resultIndex - 1];
                   resultIndex += 1;
                   const rendered = typeof result?.stdout === 'string'
                     ? result.stdout.trim()
@@ -435,10 +451,9 @@ jobs:
                     continue;
                   }
 
-                  const renderedIndex = output.indexOf(rendered);
-                  if (renderedIndex < 0) {
+                  if (!renderedRange) {
                     core.warning(`Could not locate rendered ${type} in peer review output.`);
-                    continue;
+                    if (!publishWithoutRenderedRange(type)) continue;
                   }
 
                   const location = inlineLocation(type, item);
@@ -471,10 +486,7 @@ jobs:
                         issue_number: Number(process.env.REVIEW_PR_NUMBER),
                         body: standaloneQuestion(rendered),
                       });
-                      output = [
-                        output.slice(0, renderedIndex),
-                        output.slice(renderedIndex + rendered.length),
-                      ].join('');
+                      if (renderedRange) publishedRanges.push(renderedRange);
                     } catch (error) {
                       core.warning(`Could not publish question: ${error.message}`);
                     }
@@ -495,10 +507,7 @@ jobs:
 
                   try {
                     await github.rest.pulls.createReviewComment(params);
-                    output = [
-                      output.slice(0, renderedIndex),
-                      output.slice(renderedIndex + rendered.length),
-                    ].join('');
+                    if (renderedRange) publishedRanges.push(renderedRange);
                   } catch (error) {
                     core.warning(
                       `Could not publish ${type} at ${location.commit}:${location.path}: ${error.message}`,
@@ -511,10 +520,7 @@ jobs:
                           issue_number: Number(process.env.REVIEW_PR_NUMBER),
                           body: standaloneQuestion(rendered),
                         });
-                        output = [
-                          output.slice(0, renderedIndex),
-                          output.slice(renderedIndex + rendered.length),
-                        ].join('');
+                        if (renderedRange) publishedRanges.push(renderedRange);
                       } catch (fallbackError) {
                         core.warning(
                           `Could not publish question as an issue comment: ${fallbackError.message}`,
@@ -524,6 +530,8 @@ jobs:
                   }
                 }
               }
+
+              output = removeRanges(output, publishedRanges);
 
               const itemHeadings = new Set([
                 '## Review questions',
