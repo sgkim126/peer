@@ -27,7 +27,6 @@ runs:
       shell: bash
       env:
         PEER_VERSION: ${{ inputs.version }}
-        GITHUB_TOKEN: ${{ github.token }}
       run: |
         set -euo pipefail
 
@@ -51,26 +50,8 @@ runs:
         install_dir="$RUNNER_TEMP/peer-bin"
 
         mkdir -p "$install_dir"
-        release_json="$RUNNER_TEMP/peer-release-${tag}.json"
         curl --fail --location --show-error --silent \
-          --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-          --header "X-GitHub-Api-Version: 2022-11-28" \
-          "https://api.github.com/repos/sgkim126/peer/releases/tags/${tag}" \
-          --output "$release_json"
-
-        asset_url="$(
-          jq -r --arg archive "$archive" '.assets[] | select(.name == $archive) | .url' "$release_json"
-        )"
-        if [ -z "$asset_url" ]; then
-          echo "Release asset not found: ${archive}" >&2
-          exit 2
-        fi
-
-        curl --fail --location --show-error --silent \
-          --header "Authorization: Bearer ${GITHUB_TOKEN}" \
-          --header "Accept: application/octet-stream" \
-          --header "X-GitHub-Api-Version: 2022-11-28" \
-          "$asset_url" \
+          "https://github.com/sgkim126/peer/releases/download/${tag}/${archive}" \
           --output "$RUNNER_TEMP/$archive"
 
         tar -xzf "$RUNNER_TEMP/$archive" -C "$install_dir"
