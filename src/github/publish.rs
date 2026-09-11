@@ -4,8 +4,9 @@ use std::num::NonZeroU64;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::render::{RenderInput, github};
+use crate::render::RenderInput;
 
+use super::feedback::PreparedReview;
 use super::{GitHubClient, GitHubError, Repository};
 
 #[derive(Debug, Default)]
@@ -36,7 +37,9 @@ impl GitHubClient {
         input: &RenderInput,
     ) -> Result<PublishReport, GitHubError> {
         self.pull_request(repository, number).await?;
-        let body = github::render(input, &repository.to_string());
+        let review = PreparedReview::new(input, repository);
+        let items = review.items.iter().collect::<Vec<_>>();
+        let body = review.aggregate(&items, review.summary_fingerprint.is_some());
         let mut report = PublishReport::default();
         if !body.trim().is_empty() {
             let comment: PublishedComment = self

@@ -1,5 +1,6 @@
 mod client;
 mod error;
+mod feedback;
 mod mapping;
 mod publish;
 mod repository;

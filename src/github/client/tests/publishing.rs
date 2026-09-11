@@ -55,12 +55,13 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
     assert_eq!(requests.len(), 2);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
     assert!(requests[1].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    assert_eq!(
-        request_body(&requests[1]),
-        json!({
-            "body": github::render(&input, "owner/repo")
-        })
-    );
+    let body = request_body(&requests[1])["body"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert!(body.starts_with(&github::render(&input, "owner/repo")));
+    assert!(body.contains("\n\n<!-- peer-review:v1:"));
+    assert!(body.ends_with(" -->"));
     assert_eq!(report.urls.len(), 1);
     assert!(report.to_string().contains("Published 1 comment(s)."));
 }

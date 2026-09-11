@@ -31,6 +31,7 @@ fn render_document(document: &RenderDocument, repo: &str) -> String {
     DocumentParts::new(document, repo).render()
 }
 
+#[derive(Clone)]
 pub struct DocumentParts {
     pub summary: String,
     pub questions: Vec<String>,
@@ -38,6 +39,19 @@ pub struct DocumentParts {
     pub findings: Vec<String>,
     pub context: String,
     pub stages: String,
+}
+
+/// Review content that remains meaningful across runs and rebases.
+pub fn summary_identity(document: &RenderDocument) -> serde_json::Value {
+    serde_json::json!({
+        "counts": review_counts(document),
+        "stages": document.stages.iter().map(|stage| serde_json::json!({
+            "stage": stage.stage,
+            "status": stage.status(),
+            "summary": stage.summary(),
+            "error": stage.error().map(display_error),
+        })).collect::<Vec<_>>(),
+    })
 }
 
 impl DocumentParts {

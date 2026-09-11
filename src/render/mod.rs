@@ -151,7 +151,7 @@ enum RenderStageErrorRef<'a> {
     Execution(&'a str),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 struct ReviewCounts {
     info: usize,
     low: usize,
