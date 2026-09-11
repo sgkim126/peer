@@ -19,7 +19,6 @@ pub struct GitHubClient {
 }
 
 impl GitHubClient {
-    #[expect(dead_code)]
     pub fn from_env() -> Result<Self, GitHubError> {
         let token = std::env::var("GITHUB_TOKEN")?;
         Self::new(
@@ -52,7 +51,6 @@ impl GitHubClient {
         Ok(Self { http, base })
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn review_context(
         &self,
         repository: &Repository,

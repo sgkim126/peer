@@ -1,3 +1,4 @@
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand, ValueEnum};
@@ -37,6 +38,10 @@ pub enum Command {
 
         #[arg(long)]
         comments_file: Option<PathBuf>,
+
+        /// Load review context from a GitHub pull request.
+        #[arg(long, value_name = "PR_NUMBER", conflicts_with_all = ["title", "body_file", "comments_file"])]
+        github: Option<NonZeroU64>,
 
         /// Start resumable stages from the beginning.
         #[arg(long)]
@@ -114,6 +119,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                github: None,
                 no_resume: false,
             }
         );
@@ -149,6 +155,7 @@ mod tests {
                 title: Some("Add context compression".into()),
                 body_file: Some("body.md".into()),
                 comments_file: Some("comments.json".into()),
+                github: None,
                 no_resume: false,
             }
         );
@@ -175,6 +182,7 @@ mod tests {
                 title: None,
                 body_file: None,
                 comments_file: None,
+                github: None,
                 no_resume: false,
             }
         );
@@ -204,6 +212,55 @@ mod tests {
                 ..
             }
         );
+    }
+
+    #[test]
+    fn review_accepts_a_github_pull_request_number() {
+        let cli = parse(&["peer", "review", "main..HEAD", "--github", "123"]);
+        assert_matches!(cli.command, Command::Review { github: Some(number), .. } if number.get() == 123);
+    }
+
+    #[test]
+    fn github_conflicts_with_each_direct_context_option_in_either_order() {
+        for option in ["--title", "--body-file", "--comments-file"] {
+            for args in [
+                vec!["peer", "review", "HEAD", "--github", "123", option, "value"],
+                vec!["peer", "review", "HEAD", option, "value", "--github", "123"],
+            ] {
+                let error = Cli::try_parse_from(args).unwrap_err();
+                assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+            }
+        }
+    }
+
+    #[test]
+    fn github_rejects_zero_pull_request_number() {
+        assert!(Cli::try_parse_from(["peer", "review", "HEAD", "--github", "0"]).is_err());
+    }
+
+    #[test]
+    fn github_rejects_negative_pull_request_number() {
+        assert!(Cli::try_parse_from(["peer", "review", "HEAD", "--github", "-1"]).is_err());
+    }
+
+    #[test]
+    fn github_rejects_nonnumeric_pull_request_number() {
+        assert!(Cli::try_parse_from(["peer", "review", "HEAD", "--github", "abc"]).is_err());
+    }
+
+    #[test]
+    fn github_rejects_fractional_pull_request_number() {
+        assert!(Cli::try_parse_from(["peer", "review", "HEAD", "--github", "1.5"]).is_err());
+    }
+
+    #[test]
+    fn github_requires_a_pull_request_number() {
+        assert!(Cli::try_parse_from(["peer", "review", "HEAD", "--github"]).is_err());
+    }
+
+    #[test]
+    fn github_requires_a_target() {
+        assert!(Cli::try_parse_from(["peer", "review", "--github", "123"]).is_err());
     }
 
     #[test]

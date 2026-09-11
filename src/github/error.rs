@@ -1,8 +1,8 @@
 use std::{env::VarError, fmt};
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum GitHubError {
+    MissingRepository,
     InvalidRepository,
     MissingToken,
     InvalidToken,
@@ -25,6 +25,9 @@ pub enum GitHubError {
 impl fmt::Display for GitHubError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::MissingRepository => {
+                write!(f, "--github requires [github].repo in .peer/config.toml")
+            }
             Self::InvalidRepository => write!(f, "GitHub repository must use the form owner/name"),
             Self::MissingToken => write!(
                 f,
@@ -65,6 +68,7 @@ impl fmt::Display for GitHubError {
 impl std::error::Error for GitHubError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
+            Self::MissingRepository => None,
             Self::InvalidRepository => None,
             Self::MissingToken => None,
             Self::InvalidToken => None,

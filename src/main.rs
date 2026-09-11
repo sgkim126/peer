@@ -83,20 +83,9 @@ async fn main() -> ExitCode {
             title,
             body_file,
             comments_file,
+            github,
             no_resume,
         } => {
-            let review_context = match context::ReviewContext::load(
-                title,
-                body_file.as_deref(),
-                comments_file.as_deref(),
-            ) {
-                Ok(context) => context,
-                Err(error) => {
-                    eprintln!("error: {error}");
-                    debug!("{error:?}");
-                    return ExitCode::FAILURE;
-                }
-            };
             let cwd = match std::env::current_dir() {
                 Ok(cwd) => cwd,
                 Err(error) => {
@@ -111,6 +100,42 @@ async fn main() -> ExitCode {
                     eprintln!("{error}");
                     debug!("{error:?}");
                     return ExitCode::FAILURE;
+                }
+            };
+            let review_context = if let Some(number) = github {
+                let result = async {
+                    let repository = config
+                        .github
+                        .repo
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or(github::GitHubError::MissingRepository)?;
+                    let repository = github::Repository::parse(repository)?;
+                    github::GitHubClient::from_env()?
+                        .review_context(&repository, number)
+                        .await
+                }
+                .await;
+                match result {
+                    Ok(context) => context,
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        debug!("{error:?}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else {
+                match context::ReviewContext::load(
+                    title,
+                    body_file.as_deref(),
+                    comments_file.as_deref(),
+                ) {
+                    Ok(context) => context,
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        debug!("{error:?}");
+                        return ExitCode::FAILURE;
+                    }
                 }
             };
             if let Err(error) = apply_llm_overrides(&mut config, provider, model) {

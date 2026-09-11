@@ -111,16 +111,33 @@ Passing that information lets the first stage establish the documented objective
 
 Use `--title` for the review title, `--body-file` for a file containing the description, and `--comments-file` for a JSON file containing comment threads.
 
-The optional `[github].repo` setting in `.peer/config.toml` selects the repository
-for GitHub review context:
+To read a GitHub pull request directly, set its repository in `.peer/config.toml`:
 
 ```toml
 [github]
 repo = "owner/repository"
 ```
 
-The default configuration contains an empty repository placeholder. Existing
-version `2` configurations remain valid without the `[github]` section.
+Then provide a token with read access to the repository's pull requests through
+`GITHUB_TOKEN` and pass the pull request number:
+
+```bash
+export GITHUB_TOKEN="..."
+peer review main..HEAD --github 123
+```
+
+`--github` loads the title and description. It cannot be combined with `--title`, `--body-file`, or `--comments-file`.
+The positional target still selects the local commits to review; the command does
+not fetch or check out the pull request. GitHub input requires both a configured
+repository and a non-empty token, including for public repositories. Direct input
+does not require either. The default configuration contains an empty repository
+placeholder, and existing configurations can add the optional `[github]` section
+without changing their version. This option supports github.com.
+
+Every run reloads the pull request context, and changes to that context affect the
+existing review cache. A failed metadata request stops the review.
+
+To supply context directly:
 
 ```bash
 peer review main..HEAD \
