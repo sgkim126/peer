@@ -111,6 +111,17 @@ Passing that information lets the first stage establish the documented objective
 
 Use `--title` for the review title, `--body-file` for a file containing the description, and `--comments-file` for a JSON file containing comment threads.
 
+The optional `[github].repo` setting in `.peer/config.toml` selects the repository
+for GitHub review context:
+
+```toml
+[github]
+repo = "owner/repository"
+```
+
+The default configuration contains an empty repository placeholder. Existing
+version `2` configurations remain valid without the `[github]` section.
+
 ```bash
 peer review main..HEAD \
   --title "Add cache pruning support" \

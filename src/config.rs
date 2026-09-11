@@ -16,6 +16,14 @@ pub struct Config {
     pub llm: LlmConfig,
     #[serde(default)]
     pub stages: StagesConfig,
+    #[serde(default)]
+    pub github: GitHubConfig,
+}
+
+#[derive(Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitHubConfig {
+    pub repo: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Deserialize)]
@@ -293,6 +301,37 @@ mod tests {
         assert_eq!(config.max_iterations_for("quality").get(), 10);
         assert_eq!(config.max_iterations_for("review_context").get(), 3);
         assert_eq!(config.max_iterations_for("knowledge").get(), 10);
+    }
+
+    #[test]
+    fn default_config_leaves_github_repository_unset() {
+        let config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        assert_eq!(config.github.repo, None);
+    }
+
+    #[test]
+    fn github_configuration_is_optional() {
+        let mut value: toml::Value = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        value.as_table_mut().unwrap().remove("github");
+        let config: Config = value.try_into().unwrap();
+        assert_eq!(config.version, 2);
+        assert_eq!(config.github, GitHubConfig::default());
+    }
+
+    #[test]
+    fn github_configuration_preserves_the_repository_and_rejects_unknown_fields() {
+        let mut value: toml::Value = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        value["github"]
+            .as_table_mut()
+            .unwrap()
+            .insert("repo".into(), "owner/repo".into());
+        let config: Config = value.clone().try_into().unwrap();
+        assert_eq!(config.github.repo.as_deref(), Some("owner/repo"));
+        value["github"]
+            .as_table_mut()
+            .unwrap()
+            .insert("token".into(), "not-supported".into());
+        assert_matches!(value.try_into::<Config>(), Err(_));
     }
 
     #[test]

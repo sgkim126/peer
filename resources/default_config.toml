@@ -3,6 +3,9 @@ version = 2
 [review]
 max_commits = 10
 
+[github]
+# repo = "owner/repository" # Set it to use --github.
+
 [llm]
 default_provider = "mistral"
 default_model = "mistral-medium-3.5"
