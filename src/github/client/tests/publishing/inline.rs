@@ -24,7 +24,8 @@ fn file_document() -> RenderInput {
 
 fn changed_file() -> Reply {
     Reply::json(json!([{
-        "filename": "src/main.rs"
+        "filename": "src/main.rs",
+        "patch": "@@ -4,3 +4,3 @@\n context\n-old\n+new\n context"
     }]))
 }
 
@@ -300,6 +301,52 @@ async fn unlocated_questions_and_recommendations_share_one_comment() {
 }
 
 #[tokio::test]
+async fn publishes_inline_on_a_changed_line() {
+    let mut replies = before_inline();
+    replies.push(created());
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &finding())
+        .await
+        .unwrap();
+    let requests = server.requests();
+    let request = requests.last().unwrap();
+    assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    let params = request_body(request);
+    assert_eq!(params["path"], "src/main.rs");
+    assert_eq!(params["line"], 5);
+    assert_eq!(params["side"], "RIGHT");
+    assert!(params.get("subject_type").is_none());
+    assert_eq!(report.inline, 1);
+}
+
+#[tokio::test]
+async fn unchanged_lines_fall_back_to_a_conversation_comment() {
+    let mut input = finding();
+    if let RenderInput::Finding(finding) = &mut input {
+        finding.location.as_mut().unwrap().line = Some(4);
+    }
+    let mut replies = before_inline();
+    replies.push(created());
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.inline, 0);
+    assert_eq!(report.urls.len(), 1);
+    let requests = server.requests();
+    assert!(
+        requests
+            .last()
+            .unwrap()
+            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+    );
+}
+
+#[tokio::test]
 async fn positions_from_later_file_pages_are_used() {
     let first_page = Reply::json(json!([]))
         .header("Link: <{base}repos/owner/repo/pulls/123/files?per_page=100&page=2>; rel=\"next\"");
@@ -379,4 +426,54 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
         .unwrap();
     assert_eq!(report.skipped, 3);
     assert_eq!(third.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn zero_line_falls_back_to_a_conversation_comment() {
+    let mut input = finding();
+    if let RenderInput::Finding(finding) = &mut input {
+        finding.location.as_mut().unwrap().line = Some(0);
+    }
+    let mut replies = before_inline();
+    replies.push(created());
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.inline, 0);
+    assert_eq!(report.urls.len(), 1);
+    let requests = server.requests();
+    assert!(
+        requests
+            .last()
+            .unwrap()
+            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+    );
+}
+
+#[tokio::test]
+async fn line_outside_patch_falls_back_to_a_conversation_comment() {
+    let mut input = finding();
+    if let RenderInput::Finding(finding) = &mut input {
+        finding.location.as_mut().unwrap().line = Some(100);
+    }
+    let mut replies = before_inline();
+    replies.push(created());
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.inline, 0);
+    assert_eq!(report.urls.len(), 1);
+    let requests = server.requests();
+    assert!(
+        requests
+            .last()
+            .unwrap()
+            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+    );
 }
