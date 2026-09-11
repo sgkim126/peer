@@ -29,12 +29,13 @@ fn changed_file() -> Reply {
     }]))
 }
 
-fn before_inline() -> Vec<Reply> {
+pub fn before_inline() -> Vec<Reply> {
     vec![
         pull(),
         Reply::json(json!([])),
         Reply::json(json!([])),
         changed_file(),
+        pull(),
     ]
 }
 
@@ -67,7 +68,7 @@ async fn publishes_file_comment_at_the_current_head_with_a_hidden_fingerprint() 
     );
     assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 1);
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 6);
 }
 
 #[tokio::test]
@@ -83,9 +84,9 @@ async fn combines_inline_failures_with_unpositioned_items_and_summary() {
         .await
         .unwrap();
     let requests = server.requests();
-    assert!(requests[4].starts_with("POST /repos/owner/repo/pulls/123/comments "));
-    assert!(requests[5].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    let body = request_body(&requests[5])["body"]
+    assert!(requests[5].starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    assert!(requests[6].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let body = request_body(&requests[6])["body"]
         .as_str()
         .unwrap()
         .to_string();
@@ -128,6 +129,7 @@ async fn keeps_summary_and_full_counts_even_when_every_item_is_inline() {
 #[tokio::test]
 async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
     let mut replies = before_publish();
+    replies.pop();
     replies[3].status = 500;
     replies.push(created());
     let server = Server::start(replies).await;
@@ -137,6 +139,7 @@ async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
         .await
         .unwrap();
     assert_eq!(report.inline, 0);
+    assert_eq!(server.requests().len(), 5);
     assert!(
         server
             .requests()
@@ -360,7 +363,7 @@ async fn positions_from_later_file_pages_are_used() {
         .await
         .unwrap();
     assert_eq!(report.inline, 1);
-    assert_eq!(server.requests().len(), 6);
+    assert_eq!(server.requests().len(), 7);
 }
 
 #[tokio::test]
@@ -379,11 +382,11 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
         Err(_)
     );
     let requests = first.requests();
-    let inline_body = request_body(&requests[4])["body"]
+    let inline_body = request_body(&requests[5])["body"]
         .as_str()
         .unwrap()
         .to_string();
-    let failed_body = request_body(&requests[5])["body"]
+    let failed_body = request_body(&requests[6])["body"]
         .as_str()
         .unwrap()
         .to_string();

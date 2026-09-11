@@ -22,6 +22,7 @@ pub enum GitHubError {
     },
     InvalidPagination,
     IncompleteCommits,
+    PullRequestChanged,
 }
 
 impl fmt::Display for GitHubError {
@@ -68,6 +69,10 @@ impl fmt::Display for GitHubError {
                 f,
                 "GitHub pull request commit list is incomplete or changed while loading; retry with a stable PR containing at most 250 commits"
             ),
+            Self::PullRequestChanged => write!(
+                f,
+                "GitHub pull request changed while loading comment positions; retry with a stable PR"
+            ),
         }
     }
 }
@@ -85,6 +90,7 @@ impl std::error::Error for GitHubError {
             Self::Decode { source, .. } => Some(source),
             Self::InvalidPagination => None,
             Self::IncompleteCommits => None,
+            Self::PullRequestChanged => None,
         }
     }
 }

@@ -80,22 +80,28 @@ impl GitHubClient {
                     false
                 }
             });
-        let files = if remaining.iter().any(|item| item.location.is_some()) {
+        let (files, files_loaded) = if remaining.iter().any(|item| item.location.is_some()) {
             match self
                 .list::<ChangedFile>(&format!("repos/{repository}/pulls/{number}/files"))
                 .await
             {
-                Ok(files) => files,
+                Ok(files) => (files, true),
                 Err(error) => {
                     warn!(
                         "Could not load changed files; collecting feedback in a conversation comment: {error}"
                     );
-                    Vec::new()
+                    (Vec::new(), false)
                 }
             }
         } else {
-            Vec::new()
+            (Vec::new(), false)
         };
+        if files_loaded {
+            let current = self.pull_request(repository, number).await?;
+            if current.base.sha != pull.base.sha || current.head.sha != pull.head.sha {
+                return Err(GitHubError::PullRequestChanged);
+            }
+        }
         let mut fallback = Vec::new();
         for item in remaining {
             let position = item

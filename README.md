@@ -239,6 +239,8 @@ Findings and questions with a usable location are posted inline on the PR's curr
 
 Published comments contain hidden, versioned fingerprints. Before posting, peer reads all pages of the PR's conversation and inline comments and skips previously published items. Fingerprints include the feedback kind, content, file, and line, but exclude commit SHAs, so rebasing alone does not repeat the same feedback. Summaries are tracked separately and ignore model, version, usage, cost, and iteration changes. Comments without peer fingerprints are not treated as duplicates.
 
+Before posting comments based on changed files, peer reloads the PR and compares its base and head with the values used to load comment positions. A changed base or head, or a failed lookup, stops publication with a non-zero status before any comments are posted.
+
 Questions, structural recommendations, and quality or security findings appear in separate `Review questions`, `Structural recommendations`, and `Review findings` sections. Each entry is tagged with its kind, such as `question/rationale`, `recommendation/split_commit`, or `finding/high`. Stage details report status, summary, token usage, and estimated model cost without repeating those results.
 
 JSON output stores the same result types in separate top-level `questions`, `recommendations`, and `findings` arrays.

@@ -2,6 +2,7 @@ use super::*;
 use crate::render::{RenderInput, github};
 
 mod inline;
+mod revalidation;
 
 fn finding() -> RenderInput {
     serde_json::from_value(json!({
@@ -49,6 +50,7 @@ fn before_publish() -> Vec<Reply> {
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        pull(),
     ]
 }
 
@@ -80,10 +82,11 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
         .unwrap();
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 6);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
-    assert!(requests[4].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    let body = request_body(&requests[4])["body"]
+    assert!(requests[4].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests[5].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let body = request_body(&requests[5])["body"]
         .as_str()
         .unwrap()
         .to_string();
@@ -122,7 +125,7 @@ async fn reports_comment_creation_failure_without_retrying() {
             .await,
         Err(GitHubError::Api { status: 403, .. })
     );
-    assert_eq!(server.requests().len(), 5);
+    assert_eq!(server.requests().len(), 6);
 }
 
 fn document() -> RenderInput {
