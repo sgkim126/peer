@@ -15,6 +15,7 @@ impl Repository {
         };
         let valid = |part: &str| {
             !part.is_empty()
+                && !matches!(part, "." | "..")
                 && part
                     .chars()
                     .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
@@ -71,6 +72,38 @@ mod tests {
     #[test]
     fn rejects_empty_repository_name() {
         assert_matches!(Repository::parse("owner/"), Err(_));
+    }
+
+    #[test]
+    fn rejects_dot_owner() {
+        assert_matches!(
+            Repository::parse("./repo"),
+            Err(GitHubError::InvalidRepository)
+        );
+    }
+
+    #[test]
+    fn rejects_dot_dot_owner() {
+        assert_matches!(
+            Repository::parse("../repo"),
+            Err(GitHubError::InvalidRepository)
+        );
+    }
+
+    #[test]
+    fn rejects_dot_repository_name() {
+        assert_matches!(
+            Repository::parse("owner/."),
+            Err(GitHubError::InvalidRepository)
+        );
+    }
+
+    #[test]
+    fn rejects_dot_dot_repository_name() {
+        assert_matches!(
+            Repository::parse("owner/.."),
+            Err(GitHubError::InvalidRepository)
+        );
     }
 
     #[test]
