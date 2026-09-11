@@ -93,6 +93,37 @@ pub async fn resolve_target(
     Ok(ReviewTarget::Range { from, to, commits })
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn resolve_pull_request_target(
+    mut commits: Vec<CommitHash>,
+    max_commits: u32,
+    project_root: &Path,
+) -> Result<ReviewTarget, ReviewTargetError> {
+    if commits.len() > max_commits as usize {
+        return Err(ReviewTargetError::TooManyCommits {
+            actual: commits.len(),
+            maximum: max_commits,
+        });
+    }
+    if commits.is_empty() {
+        return Err(ReviewTargetError::EmptyRange("pull request".into()));
+    }
+    for commit in &mut commits {
+        *commit = CommitHash::resolve(commit.as_ref(), project_root).await?;
+    }
+
+    let first = &commits[0];
+    if commits.len() == 1 {
+        return Ok(ReviewTarget::Commit(first.clone()));
+    }
+
+    // The first PR commit's parent is the base of its cumulative diff, even
+    // when the base branch has advanced or already merged the PR.
+    let from = CommitHash::resolve(&format!("{first}^"), project_root).await?;
+    let to = commits.last().expect("nonempty PR commit list").clone();
+    Ok(ReviewTarget::Range { from, to, commits })
+}
+
 pub async fn validate_target(
     target: &ReviewTarget,
     max_commits: u32,
@@ -204,6 +235,192 @@ mod tests {
                 .unwrap();
             CommitHash::resolve("HEAD", &self.path).await.unwrap()
         }
+    }
+
+    #[tokio::test]
+    async fn pull_request_uses_its_commits_and_diff_even_after_the_base_branch_merges_it() {
+        let repo = Repo::new().await;
+        let base = repo.commit("base.txt", "base").await;
+        run_git(&["checkout", "-b", "pull-request"], &repo.path)
+            .await
+            .unwrap();
+        let first = repo.commit("first.txt", "first PR commit").await;
+        let second = repo.commit("second.txt", "second PR commit").await;
+        run_git(&["checkout", "-b", "base", base.as_ref()], &repo.path)
+            .await
+            .unwrap();
+        repo.commit("unrelated.txt", "unrelated base change").await;
+
+        for merged in [false, true] {
+            if merged {
+                run_git(
+                    &[
+                        "merge",
+                        "--no-ff",
+                        "--no-edit",
+                        "--no-gpg-sign",
+                        "pull-request",
+                    ],
+                    &repo.path,
+                )
+                .await
+                .unwrap();
+            }
+            let target =
+                resolve_pull_request_target(vec![first.clone(), second.clone()], 10, &repo.path)
+                    .await
+                    .unwrap();
+            assert_eq!(
+                target,
+                ReviewTarget::Range {
+                    from: base.clone(),
+                    to: second.clone(),
+                    commits: vec![first.clone(), second.clone()],
+                }
+            );
+            validate_target(&target, 10, &repo.path).await.unwrap();
+            let input = ReviewInput::collect(
+                &target,
+                crate::context::ReviewContext::default(),
+                &crate::extract::Extractor::new(repo.path.clone()),
+            )
+            .await
+            .unwrap();
+            assert_eq!(input.head, second);
+            assert_eq!(
+                input
+                    .commits
+                    .iter()
+                    .map(|commit| commit.hash.clone())
+                    .collect::<Vec<_>>(),
+                [first.clone(), second.clone()]
+            );
+            assert!(input.cumulative_diff.contains("first.txt"));
+            assert!(input.cumulative_diff.contains("second.txt"));
+            assert!(!input.cumulative_diff.contains("unrelated.txt"));
+        }
+    }
+
+    #[tokio::test]
+    async fn resolves_a_single_pull_request_commit_independently_of_head() {
+        let repo = Repo::new().await;
+        repo.commit("base.txt", "base").await;
+        let commit = repo.commit("pr.txt", "PR commit").await;
+        repo.commit("unrelated.txt", "unrelated commit").await;
+        let target = resolve_pull_request_target(vec![commit.clone()], 10, &repo.path)
+            .await
+            .unwrap();
+        assert_eq!(target, ReviewTarget::Commit(commit));
+        validate_target(&target, 10, &repo.path).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn rejects_empty_or_oversized_pull_requests_before_reading_git() {
+        let directory = tempfile::tempdir().unwrap();
+        assert_matches!(
+            resolve_pull_request_target(vec![], 10, directory.path()).await,
+            Err(ReviewTargetError::EmptyRange(_))
+        );
+        assert_matches!(
+            resolve_pull_request_target(
+                vec![
+                    CommitHash::new("abc1234").unwrap(),
+                    CommitHash::new("def5678").unwrap()
+                ],
+                1,
+                directory.path()
+            )
+            .await,
+            Err(ReviewTargetError::TooManyCommits {
+                actual: 2,
+                maximum: 1
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_pull_request_commits_missing_locally() {
+        let repo = Repo::new().await;
+        repo.commit("base.txt", "base").await;
+        assert_matches!(
+            resolve_pull_request_target(vec![CommitHash::new("abc1234").unwrap()], 10, &repo.path)
+                .await,
+            Err(ReviewTargetError::Git(GitError::InvalidRevision(_)))
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_first_pull_request_commit_missing_locally() {
+        let repo = Repo::new().await;
+        repo.commit("base.txt", "base").await;
+        let last = repo.commit("last.txt", "last PR commit").await;
+        let missing = CommitHash::new("2222222222222222222222222222222222222222").unwrap();
+
+        assert_matches!(
+            resolve_pull_request_target(vec![missing.clone(), last], 10, &repo.path).await,
+            Err(ReviewTargetError::Git(GitError::InvalidRevision(revision)))
+                if revision == missing.as_ref()
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_last_pull_request_commit_missing_locally() {
+        let repo = Repo::new().await;
+        repo.commit("base.txt", "base").await;
+        let first = repo.commit("first.txt", "first PR commit").await;
+        let missing = CommitHash::new("0000000000000000000000000000000000000000").unwrap();
+
+        assert_matches!(
+            resolve_pull_request_target(vec![first, missing.clone()], 10, &repo.path).await,
+            Err(ReviewTargetError::Git(GitError::InvalidRevision(revision)))
+                if revision == missing.as_ref()
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_middle_pull_request_commit_missing_locally() {
+        let repo = Repo::new().await;
+        repo.commit("base.txt", "base").await;
+        let first = repo.commit("first.txt", "first PR commit").await;
+        let last = repo.commit("last.txt", "last PR commit").await;
+        let missing = CommitHash::new("1111111111111111111111111111111111111111").unwrap();
+
+        assert_matches!(
+            resolve_pull_request_target(vec![first, missing.clone(), last], 10, &repo.path).await,
+            Err(ReviewTargetError::Git(GitError::InvalidRevision(revision)))
+                if revision == missing.as_ref()
+        );
+    }
+
+    #[tokio::test]
+    async fn pull_request_merge_commits_are_rejected() {
+        let repo = Repo::new().await;
+        let base = repo.commit("base.txt", "base").await;
+        let first = repo.commit("pr.txt", "PR commit").await;
+        run_git(&["checkout", "-b", "other", base.as_ref()], &repo.path)
+            .await
+            .unwrap();
+        repo.commit("other.txt", "other commit").await;
+        run_git(
+            &[
+                "merge",
+                "--no-ff",
+                "--no-edit",
+                "--no-gpg-sign",
+                first.as_ref(),
+            ],
+            &repo.path,
+        )
+        .await
+        .unwrap();
+        let merge = CommitHash::resolve("HEAD", &repo.path).await.unwrap();
+        let target = resolve_pull_request_target(vec![first, merge.clone()], 10, &repo.path)
+            .await
+            .unwrap();
+        assert_matches!(
+            validate_target(&target, 10, &repo.path).await,
+            Err(ReviewTargetError::MergeCommit(commit)) if commit == merge
+        );
     }
 
     #[tokio::test]
