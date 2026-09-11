@@ -128,6 +128,8 @@ async fn paginates_comments_and_matches_direct_input() {
             1,
             json!({"login": "bot[bot]", "type": "Bot"})
         )])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
     ])
     .await;
     let context = server
@@ -146,10 +148,12 @@ async fn paginates_comments_and_matches_direct_input() {
     );
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 3);
+    assert_eq!(requests.len(), 5);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
     assert!(requests[1].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
     assert!(requests[2].contains("per_page=100&page=2"));
+    assert!(requests[3].starts_with("GET /repos/owner/repo/pulls/123/reviews?per_page=100 "));
+    assert!(requests[4].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
     for request in requests {
         let request = request.to_ascii_lowercase();
         assert!(request.contains("authorization: bearer test-token\r\n"));
@@ -163,6 +167,8 @@ async fn paginates_comments_and_matches_direct_input() {
 async fn missing_body_and_comments_match_empty_input_files() {
     let server = Server::start(vec![
         Reply::json(json!({"title": "Title", "body": null})),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
         Reply::json(json!([])),
     ])
     .await;
@@ -374,4 +380,86 @@ fn validates_and_redacts_tokens() {
     let header = authorization("test-secret").unwrap();
     assert!(header.is_sensitive());
     assert!(!format!("{header:?}").contains("test-secret"));
+}
+
+#[tokio::test]
+async fn paginates_reviews_and_groups_inline_replies_across_pages() {
+    let review = |id| {
+        json!({"id": id, "state": "COMMENTED", "body": format!("Review {id}"),
+        "submitted_at": "2026-01-01T00:00:00Z", "commit_id": "abc1234", "user": null})
+    };
+    let inline = |id, parent| {
+        json!({"id": id, "in_reply_to_id": parent,
+        "created_at": "2026-01-01T00:00:00Z", "body": format!("Inline {id}"), "user": {"login": "bot[bot]", "type": "Bot"},
+        "path": "src/main.rs", "commit_id": "abc1234", "line": 42, "side": "RIGHT"})
+    };
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([])),
+        Reply::json(json!([review(2)]))
+            .header("Link: <{base}repos/owner/repo/pulls/123/reviews?page=2>; rel=\"next\""),
+        Reply::json(json!([review(1)])),
+        Reply::json(json!([inline(11, Some(10))]))
+            .header("Link: <{base}repos/owner/repo/pulls/123/comments?page=2>; rel=\"next\""),
+        Reply::json(json!([inline(10, None)])),
+    ])
+    .await;
+    let context = server
+        .client()
+        .review_context(&repository(), number())
+        .await
+        .unwrap();
+    assert_eq!(context.comments.len(), 3);
+    assert_eq!(context.comments[0].comments[0].body, "Review 1");
+    assert_eq!(context.comments[1].comments[0].body, "Review 2");
+    assert_eq!(
+        context.comments[2]
+            .comments
+            .iter()
+            .map(|comment| comment.body.as_str())
+            .collect::<Vec<_>>(),
+        ["Inline 10", "Inline 11"]
+    );
+    assert_eq!(server.requests().len(), 6);
+}
+
+#[tokio::test]
+async fn reviews_endpoint_failure_discards_the_whole_context() {
+    let mut failure = Reply::json(json!({}));
+    failure.status = 403;
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([comment(1, Value::Null)])),
+        failure,
+    ])
+    .await;
+    assert_matches!(
+        server
+            .client()
+            .review_context(&repository(), number())
+            .await,
+        Err(GitHubError::Api { status: 403, .. })
+    );
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn review_comments_endpoint_failure_discards_the_whole_context() {
+    let mut failure = Reply::json(json!({}));
+    failure.status = 403;
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([comment(1, Value::Null)])),
+        Reply::json(json!([])),
+        failure,
+    ])
+    .await;
+    assert_matches!(
+        server
+            .client()
+            .review_context(&repository(), number())
+            .await,
+        Err(GitHubError::Api { status: 403, .. })
+    );
+    assert_eq!(server.requests().len(), 4);
 }

@@ -1,3 +1,5 @@
 mod review;
 
-pub use self::review::{ReviewCommentThread, ReviewContext, ReviewThreadComment};
+pub use self::review::{
+    ReviewCommentLocation, ReviewCommentThread, ReviewContext, ReviewThreadComment,
+};

@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::num::NonZeroU64;
+use std::num::{NonZeroU32, NonZeroU64};
 use std::time::{Duration, Instant};
 
 use log::{debug, trace};
@@ -8,6 +8,7 @@ use reqwest::{Client, Url};
 use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::context::ReviewContext;
+use crate::git::CommitHash;
 
 use super::{GitHubError, Repository, mapping};
 
@@ -67,7 +68,13 @@ impl GitHubClient {
         let comments = self
             .list::<IssueComment>(&format!("{prefix}/issues/{number}/comments"))
             .await?;
-        let context = mapping::review_context(pull, comments);
+        let reviews = self
+            .list::<PullRequestReview>(&format!("{prefix}/pulls/{number}/reviews"))
+            .await?;
+        let review_comments = self
+            .list::<ReviewComment>(&format!("{prefix}/pulls/{number}/comments"))
+            .await?;
+        let context = mapping::review_context(pull, comments, reviews, review_comments);
         debug!(
             "loaded GitHub review context: repository={repository} pull_request={number} threads={}",
             context.comments.len()
@@ -271,6 +278,31 @@ pub struct IssueComment {
     pub created_at: String,
     pub user: Option<User>,
     pub body: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PullRequestReview {
+    pub id: u64,
+    pub submitted_at: Option<String>,
+    pub state: String,
+    pub user: Option<User>,
+    pub body: Option<String>,
+    pub commit_id: Option<CommitHash>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ReviewComment {
+    pub id: u64,
+    pub in_reply_to_id: Option<u64>,
+    pub created_at: String,
+    pub user: Option<User>,
+    pub body: String,
+    pub path: String,
+    pub commit_id: CommitHash,
+    pub original_commit_id: Option<CommitHash>,
+    pub line: Option<NonZeroU32>,
+    pub original_line: Option<NonZeroU32>,
+    pub side: Option<String>,
 }
 
 #[cfg(test)]

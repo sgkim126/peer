@@ -126,8 +126,9 @@ export GITHUB_TOKEN="..."
 peer review main..HEAD --github 123
 ```
 
-`--github` loads the title, description, and conversation comments, including bot
-comments. It cannot be combined with `--title`, `--body-file`, or `--comments-file`.
+`--github` loads the title, description, conversation comments, submitted review
+bodies, and inline comment threads, including bot comments. It cannot be combined
+with `--title`, `--body-file`, or `--comments-file`.
 The positional target still selects the local commits to review; the command does
 not fetch or check out the pull request. GitHub input requires both a configured
 repository and a non-empty token, including for public repositories. Direct input
@@ -137,6 +138,13 @@ without changing their version. This option supports github.com.
 
 Every run reloads the pull request context, and changes to that context affect the
 existing review cache. A failed metadata request stops the review.
+
+Conversation comments and non-empty submitted review bodies become individual
+threads. Inline comments retain their reply threads, including discussions on
+outdated code. Threads retain the root comment's commit and file; right-side line
+locations use the matching current or original commit. Left-side locations retain
+the file path without a line because the review context format does not identify
+diff sides. Missing authors are recorded as `unknown`.
 
 To supply context directly:
 
