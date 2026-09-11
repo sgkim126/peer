@@ -93,7 +93,6 @@ pub async fn resolve_target(
     Ok(ReviewTarget::Range { from, to, commits })
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn resolve_pull_request_target(
     mut commits: Vec<CommitHash>,
     max_commits: u32,

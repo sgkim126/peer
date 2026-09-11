@@ -53,18 +53,18 @@ impl GitHubClient {
         Ok(Self { http, base })
     }
 
-    pub async fn review_context(
+    pub async fn review_input(
         &self,
         repository: &Repository,
         number: NonZeroU64,
-    ) -> Result<ReviewContext, GitHubError> {
-        debug!("loading GitHub review context: repository={repository} pull_request={number}");
+    ) -> Result<GitHubReviewInput, GitHubError> {
+        debug!("loading GitHub review input: repository={repository} pull_request={number}");
         let prefix = format!("repos/{repository}");
         let pull_url = self
             .base
             .join(&format!("{prefix}/pulls/{number}"))
             .expect("valid PR path");
-        let (pull, _) = self.get::<PullRequest>(pull_url).await?;
+        let (pull, _) = self.get::<PullRequest>(pull_url.clone()).await?;
         let comments = self
             .list::<IssueComment>(&format!("{prefix}/issues/{number}/comments"))
             .await?;
@@ -74,12 +74,31 @@ impl GitHubClient {
         let review_comments = self
             .list::<ReviewComment>(&format!("{prefix}/pulls/{number}/comments"))
             .await?;
+        let commits: Vec<_> = self
+            .list::<CommitRef>(&format!("{prefix}/pulls/{number}/commits"))
+            .await?
+            .into_iter()
+            .map(|commit| commit.sha)
+            .collect();
+        // Reject truncated lists and commits inconsistent with the initial PR.
+        if commits.len() != pull.commits || commits.last() != Some(&pull.head.sha) {
+            return Err(GitHubError::IncompleteCommits);
+        }
+        // A base change can alter commit membership without changing the head or count.
+        let (current_pull, _) = self.get::<PullRequest>(pull_url).await?;
+        if current_pull.base.sha != pull.base.sha
+            || current_pull.head.sha != pull.head.sha
+            || current_pull.commits != pull.commits
+        {
+            return Err(GitHubError::IncompleteCommits);
+        }
         let context = mapping::review_context(pull, comments, reviews, review_comments);
         debug!(
-            "loaded GitHub review context: repository={repository} pull_request={number} threads={}",
+            "loaded GitHub review input: repository={repository} pull_request={number} commits={} threads={}",
+            commits.len(),
             context.comments.len()
         );
-        Ok(context)
+        Ok(GitHubReviewInput { context, commits })
     }
 
     async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitHubError> {
@@ -265,6 +284,20 @@ fn next_page(headers: &HeaderMap) -> Result<Option<Url>, GitHubError> {
 pub struct PullRequest {
     pub title: String,
     pub body: Option<String>,
+    pub base: CommitRef,
+    pub head: CommitRef,
+    pub commits: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommitRef {
+    pub sha: CommitHash,
+}
+
+#[derive(Debug)]
+pub struct GitHubReviewInput {
+    pub context: ReviewContext,
+    pub commits: Vec<CommitHash>,
 }
 
 #[derive(Debug, Deserialize)]

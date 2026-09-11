@@ -8,6 +8,13 @@ fn pull() -> PullRequest {
     PullRequest {
         title: "Title".into(),
         body: Some("Description".into()),
+        base: super::super::client::CommitRef {
+            sha: crate::git::CommitHash::new("0123456").unwrap(),
+        },
+        head: super::super::client::CommitRef {
+            sha: crate::git::CommitHash::new("abc1234").unwrap(),
+        },
+        commits: 1,
     }
 }
 

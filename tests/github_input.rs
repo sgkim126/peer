@@ -24,7 +24,7 @@ fn command(directory: &tempfile::TempDir) -> Command {
         .current_dir(directory.path())
         .env_remove("GITHUB_TOKEN")
         .env("RUST_LOG", "debug");
-    command.args(["review", "main...HEAD"]);
+    command.arg("review");
     command
 }
 
@@ -146,6 +146,7 @@ fn direct_input_does_not_require_github_configuration_or_credentials() {
     std::fs::write(directory.path().join("comments.json"), "[]").unwrap();
     let output = command(&directory)
         .args([
+            "main...HEAD",
             "--title",
             "Title",
             "--body-file",
@@ -166,6 +167,7 @@ fn direct_input_ignores_empty_github_repository_without_credentials() {
     std::fs::write(directory.path().join("comments.json"), "[]").unwrap();
     let output = command(&directory)
         .args([
+            "main...HEAD",
             "--title",
             "Title",
             "--body-file",
@@ -186,6 +188,7 @@ fn direct_input_ignores_invalid_github_repository_without_credentials() {
     std::fs::write(directory.path().join("comments.json"), "[]").unwrap();
     let output = command(&directory)
         .args([
+            "main...HEAD",
             "--title",
             "Title",
             "--body-file",
@@ -197,6 +200,17 @@ fn direct_input_ignores_invalid_github_repository_without_credentials() {
         .unwrap();
     // Reaching the existing target validator proves context loading completed.
     assert_error(output, "main...HEAD is not a two-dot range");
+}
+
+#[test]
+fn github_target_conflict_fails_before_configuration_is_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = command(&directory)
+        .args(["HEAD", "--github", "123"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
 }
 
 #[test]

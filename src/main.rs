@@ -102,7 +102,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            let review_context = if let Some(number) = github {
+            let (github_commits, review_context) = if let Some(number) = github {
                 let result = async {
                     let repository = config
                         .github
@@ -112,12 +112,12 @@ async fn main() -> ExitCode {
                         .ok_or(github::GitHubError::MissingRepository)?;
                     let repository = github::Repository::parse(repository)?;
                     github::GitHubClient::from_env()?
-                        .review_context(&repository, number)
+                        .review_input(&repository, number)
                         .await
                 }
                 .await;
                 match result {
-                    Ok(context) => context,
+                    Ok(input) => (Some(input.commits), input.context),
                     Err(error) => {
                         eprintln!("error: {error}");
                         debug!("{error:?}");
@@ -130,7 +130,7 @@ async fn main() -> ExitCode {
                     body_file.as_deref(),
                     comments_file.as_deref(),
                 ) {
-                    Ok(context) => context,
+                    Ok(context) => (None, context),
                     Err(error) => {
                         eprintln!("error: {error}");
                         debug!("{error:?}");
@@ -143,13 +143,24 @@ async fn main() -> ExitCode {
                 debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
-            let target = match review::resolve_target(
-                &target,
-                config.review.max_commits.get(),
-                &project_root,
-            )
-            .await
-            {
+            let target = if let Some(commits) = github_commits {
+                review::resolve_pull_request_target(
+                    commits,
+                    config.review.max_commits.get(),
+                    &project_root,
+                )
+                .await
+            } else {
+                review::resolve_target(
+                    target
+                        .as_deref()
+                        .expect("clap requires target without --github"),
+                    config.review.max_commits.get(),
+                    &project_root,
+                )
+                .await
+            };
+            let target = match target {
                 Ok(target) => target,
                 Err(error) => {
                     eprintln!("error: {error}");

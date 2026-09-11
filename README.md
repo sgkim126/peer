@@ -123,21 +123,25 @@ Then provide a token with read access to the repository's pull requests through
 
 ```bash
 export GITHUB_TOKEN="..."
-peer review main..HEAD --github 123
+peer review --github 123
 ```
 
-`--github` loads the title, description, conversation comments, submitted review
-bodies, and inline comment threads, including bot comments. It cannot be combined
-with `--title`, `--body-file`, or `--comments-file`.
-The positional target still selects the local commits to review; the command does
-not fetch or check out the pull request. GitHub input requires both a configured
-repository and a non-empty token, including for public repositories. Direct input
+`--github` selects the pull request's commits and loads its title, description,
+conversation comments, submitted review bodies, and inline comment threads,
+including bot comments. It cannot be combined with a positional target,
+`--title`, `--body-file`, or `--comments-file`.
+The pull request's commits and their history must be available in the local Git
+repository; the command does not fetch or check out the pull request. The usual
+commit limit and merge-commit restrictions apply. GitHub input requires both a
+configured repository and a non-empty token, including for public repositories. Direct input
 does not require either. The default configuration contains an empty repository
 placeholder, and existing configurations can add the optional `[github]` section
 without changing their version. This option supports github.com.
 
-Every run reloads the pull request context, and changes to that context affect the
-existing review cache. A failed metadata request stops the review.
+Every run reloads the pull request's commits and context, and changes to that input
+affect the existing review cache. A failed request or an incomplete commit list
+stops the review. GitHub's [pull request commits endpoint](https://docs.github.com/en/rest/pulls/pulls#list-commits-on-a-pull-request)
+returns at most 250 commits.
 
 Conversation comments and non-empty submitted review bodies become individual
 threads. Inline comments retain their reply threads, including discussions on

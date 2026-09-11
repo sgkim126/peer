@@ -110,11 +110,175 @@ fn number() -> NonZeroU64 {
     NonZeroU64::new(123).unwrap()
 }
 fn pull() -> Reply {
-    Reply::json(json!({"title": "Title", "body": "Description"}))
+    Reply::json(json!({
+        "title": "Title", "body": "Description",
+        "base": {"sha": "0123456"}, "head": {"sha": "abc1234"}, "commits": 1,
+    }))
 }
 
 fn comment(id: u64, author: Value) -> Value {
     json!({"id": id, "created_at": "2026-01-01T00:00:00Z", "user": author, "body": format!("Comment {id}")})
+}
+
+#[tokio::test]
+async fn paginates_pull_request_commits_in_api_order() {
+    let pull = json!({
+        "title": "Title", "body": "Description",
+        "base": {"sha": "0123456"}, "head": {"sha": "def5678"}, "commits": 2,
+    });
+    let server = Server::start(vec![
+        Reply::json(pull.clone()),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([{"sha": "abc1234"}])).header(
+            "Link: <{base}repos/owner/repo/pulls/123/commits?per_page=100&page=2>; rel=\"next\"",
+        ),
+        Reply::json(json!([{"sha": "def5678"}])),
+        Reply::json(pull),
+    ])
+    .await;
+    let input = server
+        .client()
+        .review_input(&repository(), number())
+        .await
+        .unwrap();
+    assert_eq!(input.context.title.as_deref(), Some("Title"));
+    assert_eq!(
+        input
+            .commits
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<Vec<&str>>(),
+        ["abc1234", "def5678"]
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 7);
+    assert!(requests[4].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
+    assert!(
+        requests[5].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100&page=2 ")
+    );
+    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+}
+
+#[tokio::test]
+async fn rejects_changed_base_head_or_count_after_commit_pagination() {
+    for (base, head, count) in [
+        ("7654321", "def5678", 2),
+        ("0123456", "abc1234", 2),
+        ("0123456", "def5678", 3),
+    ] {
+        let server = Server::start(vec![
+            Reply::json(json!({
+                "title": "Title", "body": "Description",
+                "base": {"sha": "0123456"}, "head": {"sha": "def5678"}, "commits": 2,
+            })),
+            Reply::json(json!([])),
+            Reply::json(json!([])),
+            Reply::json(json!([])),
+            Reply::json(json!([{"sha": "abc1234"}])).header(
+                "Link: <{base}repos/owner/repo/pulls/123/commits?per_page=100&page=2>; rel=\"next\"",
+            ),
+            Reply::json(json!([{"sha": "def5678"}])),
+            Reply::json(json!({
+                "title": "Title", "body": "Description",
+                "base": {"sha": base}, "head": {"sha": head}, "commits": count,
+            })),
+        ])
+        .await;
+        assert_matches!(
+            server.client().review_input(&repository(), number()).await,
+            Err(GitHubError::IncompleteCommits)
+        );
+        let requests = server.requests();
+        assert_eq!(requests.len(), 7);
+        assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+    }
+}
+
+#[tokio::test]
+async fn pull_request_revalidation_failure_discards_the_whole_input() {
+    let mut failure = Reply::json(json!({}));
+    failure.status = 500;
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([{"sha": "abc1234"}])),
+        failure,
+    ])
+    .await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitHubError::Api { status: 500, .. })
+    );
+    assert_eq!(server.requests().len(), 6);
+}
+
+#[tokio::test]
+async fn rejects_incomplete_or_changed_pull_request_commits() {
+    for (count, commits) in [
+        (1, json!([])),
+        (0, json!([])),
+        (2, json!([{"sha": "abc1234"}])),
+        (1, json!([{"sha": "def5678"}])),
+        (1, json!([{"sha": "def5678"}, {"sha": "abc1234"}])),
+        (251, json!(vec![json!({"sha": "abc1234"}); 250])),
+    ] {
+        let server = Server::start(vec![
+            Reply::json(json!({
+                "title": "Title", "body": null,
+                "base": {"sha": "0123456"}, "head": {"sha": "abc1234"}, "commits": count,
+            })),
+            Reply::json(json!([])),
+            Reply::json(json!([])),
+            Reply::json(json!([])),
+            Reply::json(commits),
+        ])
+        .await;
+        assert_matches!(
+            server.client().review_input(&repository(), number()).await,
+            Err(GitHubError::IncompleteCommits)
+        );
+    }
+}
+
+#[tokio::test]
+async fn rejects_invalid_commit_hashes_from_the_commits_endpoint() {
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([{"sha": "not-a-commit"}])),
+    ])
+    .await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitHubError::Decode { endpoint, .. }) if endpoint.ends_with("/commits")
+    );
+}
+
+#[tokio::test]
+async fn a_later_commit_page_failure_discards_the_whole_input() {
+    let mut failure = Reply::json(json!({}));
+    failure.status = 500;
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([{"sha": "abc1234"}]))
+            .header("Link: <{base}repos/owner/repo/pulls/123/commits?page=2>; rel=\"next\""),
+        failure,
+    ])
+    .await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitHubError::Api { status: 500, .. })
+    );
+    assert_eq!(server.requests().len(), 6);
 }
 
 #[tokio::test]
@@ -130,13 +294,16 @@ async fn paginates_comments_and_matches_direct_input() {
         )])),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        Reply::json(json!([{"sha": "abc1234"}])),
+        pull(),
     ])
     .await;
     let context = server
         .client()
-        .review_context(&repository(), number())
+        .review_input(&repository(), number())
         .await
-        .unwrap();
+        .unwrap()
+        .context;
     let directory = tempfile::tempdir().unwrap();
     let body = directory.path().join("body.md");
     let comments = directory.path().join("comments.json");
@@ -148,12 +315,14 @@ async fn paginates_comments_and_matches_direct_input() {
     );
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 5);
+    assert_eq!(requests.len(), 7);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
     assert!(requests[1].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
     assert!(requests[2].contains("per_page=100&page=2"));
     assert!(requests[3].starts_with("GET /repos/owner/repo/pulls/123/reviews?per_page=100 "));
     assert!(requests[4].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
+    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
     for request in requests {
         let request = request.to_ascii_lowercase();
         assert!(request.contains("authorization: bearer test-token\r\n"));
@@ -165,18 +334,25 @@ async fn paginates_comments_and_matches_direct_input() {
 
 #[tokio::test]
 async fn missing_body_and_comments_match_empty_input_files() {
+    let pull = json!({
+        "title": "Title", "body": null,
+        "base": {"sha": "0123456"}, "head": {"sha": "abc1234"}, "commits": 1,
+    });
     let server = Server::start(vec![
-        Reply::json(json!({"title": "Title", "body": null})),
+        Reply::json(pull.clone()),
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        Reply::json(json!([{"sha": "abc1234"}])),
+        Reply::json(pull),
     ])
     .await;
     let context = server
         .client()
-        .review_context(&repository(), number())
+        .review_input(&repository(), number())
         .await
-        .unwrap();
+        .unwrap()
+        .context;
     assert_eq!(context.body.as_deref(), Some(""));
     assert_eq!(context.comments, vec![]);
 }
@@ -187,10 +363,7 @@ async fn reports_http_failures_without_retrying_or_loading_comments() {
         let mut reply = Reply::json(json!({"message": "error"}));
         reply.status = status;
         let server = Server::start(vec![reply]).await;
-        let error = server
-            .client()
-            .review_context(&repository(), number())
-            .await;
+        let error = server.client().review_input(&repository(), number()).await;
         assert_matches!(error, Err(GitHubError::Api { status: actual, .. }) if actual == status);
         let error = error.unwrap_err();
         assert!(error.to_string().contains(&format!("HTTP {status}")));
@@ -204,10 +377,7 @@ async fn distinguishes_rate_limits_from_other_forbidden_responses() {
     let mut reply = Reply::json(json!({})).header("X-RateLimit-Remaining: 0");
     reply.status = 403;
     let server = Server::start(vec![reply]).await;
-    let error = server
-        .client()
-        .review_context(&repository(), number())
-        .await;
+    let error = server.client().review_input(&repository(), number()).await;
     assert_matches!(
         error,
         Err(GitHubError::Api {
@@ -228,10 +398,7 @@ async fn a_later_page_failure_discards_the_whole_context() {
     ])
     .await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::Api { status: 500, .. })
     );
     assert_eq!(server.requests().len(), 3);
@@ -243,10 +410,7 @@ async fn rejects_malformed_json_responses() {
     reply.body = "not json".into();
     let server = Server::start(vec![reply]).await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::Decode { .. })
     );
 }
@@ -257,10 +421,7 @@ async fn rejects_responses_without_title() {
     reply.body = r#"{"body":"missing title"}"#.into();
     let server = Server::start(vec![reply]).await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::Decode { .. })
     );
 }
@@ -272,7 +433,7 @@ async fn times_out_without_returning_partial_context() {
     let server = Server::start(vec![reply]).await;
     let client =
         GitHubClient::new("test-token", server.base.clone(), Duration::from_millis(50)).unwrap();
-    let error = client.review_context(&repository(), number()).await;
+    let error = client.review_input(&repository(), number()).await;
     assert_matches!(error, Err(GitHubError::Request { ref source, .. }) if source.is_timeout());
 }
 
@@ -284,10 +445,7 @@ async fn rejects_pagination_to_another_origin() {
     ])
     .await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::InvalidPagination)
     );
     assert_eq!(server.requests().len(), 2);
@@ -306,10 +464,7 @@ async fn rejects_pagination_with_url_credentials() {
     })
     .await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::InvalidPagination)
     );
     assert_eq!(server.requests().len(), 2);
@@ -323,10 +478,7 @@ async fn rejects_malformed_pagination_links() {
     ])
     .await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::InvalidPagination)
     );
     assert_eq!(server.requests().len(), 2);
@@ -342,10 +494,7 @@ async fn rejects_cyclic_pagination() {
     ])
     .await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::InvalidPagination)
     );
     assert_eq!(server.requests().len(), 2);
@@ -357,10 +506,7 @@ async fn does_not_follow_redirects() {
     reply.status = 302;
     let server = Server::start(vec![reply]).await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::Api { status: 302, .. })
     );
     assert_eq!(server.requests().len(), 1);
@@ -402,13 +548,16 @@ async fn paginates_reviews_and_groups_inline_replies_across_pages() {
         Reply::json(json!([inline(11, Some(10))]))
             .header("Link: <{base}repos/owner/repo/pulls/123/comments?page=2>; rel=\"next\""),
         Reply::json(json!([inline(10, None)])),
+        Reply::json(json!([{"sha": "abc1234"}])),
+        pull(),
     ])
     .await;
     let context = server
         .client()
-        .review_context(&repository(), number())
+        .review_input(&repository(), number())
         .await
-        .unwrap();
+        .unwrap()
+        .context;
     assert_eq!(context.comments.len(), 3);
     assert_eq!(context.comments[0].comments[0].body, "Review 1");
     assert_eq!(context.comments[1].comments[0].body, "Review 2");
@@ -420,7 +569,7 @@ async fn paginates_reviews_and_groups_inline_replies_across_pages() {
             .collect::<Vec<_>>(),
         ["Inline 10", "Inline 11"]
     );
-    assert_eq!(server.requests().len(), 6);
+    assert_eq!(server.requests().len(), 8);
 }
 
 #[tokio::test]
@@ -434,10 +583,7 @@ async fn reviews_endpoint_failure_discards_the_whole_context() {
     ])
     .await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::Api { status: 403, .. })
     );
     assert_eq!(server.requests().len(), 3);
@@ -455,10 +601,7 @@ async fn review_comments_endpoint_failure_discards_the_whole_context() {
     ])
     .await;
     assert_matches!(
-        server
-            .client()
-            .review_context(&repository(), number())
-            .await,
+        server.client().review_input(&repository(), number()).await,
         Err(GitHubError::Api { status: 403, .. })
     );
     assert_eq!(server.requests().len(), 4);

@@ -21,6 +21,7 @@ pub enum GitHubError {
         source: reqwest::Error,
     },
     InvalidPagination,
+    IncompleteCommits,
 }
 
 impl fmt::Display for GitHubError {
@@ -63,6 +64,10 @@ impl fmt::Display for GitHubError {
             }
             Self::Decode { endpoint, .. } => write!(f, "invalid GitHub response: {endpoint}"),
             Self::InvalidPagination => write!(f, "invalid GitHub pagination link"),
+            Self::IncompleteCommits => write!(
+                f,
+                "GitHub pull request commit list is incomplete or changed while loading; retry with a stable PR containing at most 250 commits"
+            ),
         }
     }
 }
@@ -79,6 +84,7 @@ impl std::error::Error for GitHubError {
             Self::Api { .. } => None,
             Self::Decode { source, .. } => Some(source),
             Self::InvalidPagination => None,
+            Self::IncompleteCommits => None,
         }
     }
 }
