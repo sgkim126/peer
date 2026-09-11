@@ -126,6 +126,13 @@ export GITHUB_TOKEN="..."
 peer review --github 123
 ```
 
+Use `--repo owner/repository` with `--github` to override `github.repo` for
+one review, or to supply the repository when it is not configured:
+
+```bash
+peer review --github 123 --repo owner/repository
+```
+
 `--github` selects the pull request's commits and loads its title, description,
 conversation comments, submitted review bodies, and inline comment threads,
 including bot comments. It cannot be combined with a positional target,
@@ -133,8 +140,9 @@ including bot comments. It cannot be combined with a positional target,
 The pull request's commits and their history must be available in the local Git
 repository; the command does not fetch or check out the pull request. The usual
 commit limit and merge-commit restrictions apply. GitHub input requires both a
-configured repository and a non-empty token, including for public repositories. Direct input
-does not require either. The default configuration contains an empty repository
+repository from `--repo` or configuration and a non-empty token, including for
+public repositories. Direct input does not require either. The default
+configuration contains an empty repository
 placeholder, and existing configurations can add the optional `[github]` section
 without changing their version. This option supports github.com.
 

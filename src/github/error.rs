@@ -44,7 +44,10 @@ impl fmt::Display for GitHubError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::MissingRepository => {
-                write!(f, "--github requires [github].repo in .peer/config.toml")
+                write!(
+                    f,
+                    "--github requires --repo <owner/name> or [github].repo in .peer/config.toml"
+                )
             }
             Self::InvalidRepository => write!(f, "GitHub repository must use the form owner/name"),
             Self::MissingToken => write!(

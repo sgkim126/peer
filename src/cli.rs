@@ -44,6 +44,15 @@ pub enum Command {
         #[arg(long, value_name = "PR_NUMBER", conflicts_with_all = ["target", "title", "body_file", "comments_file"])]
         github: Option<NonZeroU64>,
 
+        /// Override github.repo for this GitHub pull request review.
+        #[arg(
+            long,
+            value_name = "OWNER/NAME",
+            requires = "github",
+            conflicts_with = "target"
+        )]
+        repo: Option<String>,
+
         /// Start resumable stages from the beginning.
         #[arg(long)]
         no_resume: bool,
@@ -125,6 +134,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 github: None,
+                repo: None,
                 no_resume: false,
             }
         );
@@ -161,6 +171,7 @@ mod tests {
                 body_file: Some("body.md".into()),
                 comments_file: Some("comments.json".into()),
                 github: None,
+                repo: None,
                 no_resume: false,
             }
         );
@@ -188,6 +199,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 github: None,
+                repo: None,
                 no_resume: false,
             }
         );
@@ -223,6 +235,20 @@ mod tests {
     fn review_accepts_a_github_pull_request_number() {
         let cli = parse(&["peer", "review", "--github", "123"]);
         assert_matches!(cli.command, Command::Review { target: None, github: Some(number), .. } if number.get() == 123);
+    }
+
+    #[test]
+    fn review_accepts_a_github_repository_override() {
+        let cli = parse(&["peer", "review", "--github", "123", "--repo", "owner/repo"]);
+        assert_matches!(cli.command, Command::Review { repo: Some(repo), .. } if repo == "owner/repo");
+    }
+
+    #[test]
+    fn review_repository_override_requires_github() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "HEAD", "--repo", "owner/repo"]),
+            Err(_)
+        );
     }
 
     #[test]

@@ -43,7 +43,7 @@ fn github_rejects_missing_repository_configuration_before_authentication() {
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "--github requires [github].repo",
+        "--github requires --repo <owner/name> or [github].repo in .peer/config.toml",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
@@ -56,7 +56,7 @@ fn github_rejects_empty_repository_configuration_before_authentication() {
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "--github requires [github].repo",
+        "--github requires --repo <owner/name> or [github].repo in .peer/config.toml",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
@@ -69,7 +69,7 @@ fn github_rejects_whitespace_repository_configuration_before_authentication() {
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "--github requires [github].repo",
+        "--github requires --repo <owner/name> or [github].repo in .peer/config.toml",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
@@ -83,6 +83,61 @@ fn github_rejects_invalid_repository_configuration() {
             .output()
             .unwrap(),
         "GitHub repository must use the form owner/name",
+    );
+}
+
+#[test]
+fn github_repository_flag_overrides_missing_repository_configuration() {
+    let directory = project(None);
+    assert_error(
+        command(&directory)
+            .args(["--github", "123", "--repo", "owner/repo"])
+            .output()
+            .unwrap(),
+        "GitHub access requires a non-empty GITHUB_TOKEN",
+    );
+    assert!(!directory.path().join(".peer/cache").exists());
+}
+
+#[test]
+fn github_repository_flag_overrides_invalid_repository_configuration() {
+    let directory = project(Some("https://github.com/owner/repo"));
+    assert_error(
+        command(&directory)
+            .args(["--github", "123", "--repo", "owner/repo"])
+            .output()
+            .unwrap(),
+        "GitHub access requires a non-empty GITHUB_TOKEN",
+    );
+    assert!(!directory.path().join(".peer/cache").exists());
+}
+
+#[test]
+fn github_rejects_invalid_repository_flag_with_valid_repository_configuration() {
+    let directory = project(Some("owner/repo"));
+    assert_error(
+        command(&directory)
+            .args([
+                "--github",
+                "123",
+                "--repo",
+                "https://github.com/other/repository",
+            ])
+            .output()
+            .unwrap(),
+        "GitHub repository must use the form owner/name",
+    );
+}
+
+#[test]
+fn github_rejects_empty_repository_flag_with_valid_repository_configuration() {
+    let directory = project(Some("owner/repo"));
+    assert_error(
+        command(&directory)
+            .args(["--github", "123", "--repo", ""])
+            .output()
+            .unwrap(),
+        "--github requires --repo <owner/name> or [github].repo in .peer/config.toml",
     );
 }
 
@@ -200,6 +255,19 @@ fn direct_input_ignores_invalid_github_repository_without_credentials() {
         .unwrap();
     // Reaching the existing target validator proves context loading completed.
     assert_error(output, "main...HEAD is not a two-dot range");
+}
+
+#[test]
+fn repository_flag_requires_github_before_configuration_is_read() {
+    let directory = tempfile::tempdir().unwrap();
+    let output = command(&directory)
+        .args(["--repo", "owner/repo"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("required arguments were not provided"));
+    assert!(stderr.contains("--github <PR_NUMBER>"));
 }
 
 #[test]

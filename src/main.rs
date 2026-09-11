@@ -84,6 +84,7 @@ async fn main() -> ExitCode {
             body_file,
             comments_file,
             github,
+            repo,
             no_resume,
         } => {
             let cwd = match std::env::current_dir() {
@@ -102,6 +103,9 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            if let Some(repo) = repo {
+                config.github.repo = Some(repo);
+            }
             let (github_commits, review_context) = if let Some(number) = github {
                 let result = async {
                     let repository = config
