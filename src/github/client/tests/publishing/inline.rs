@@ -68,6 +68,12 @@ async fn publishes_file_comment_at_the_current_head_with_a_hidden_fingerprint() 
     );
     assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 1);
+    assert_eq!(report.published, 1);
+    assert!(
+        report
+            .to_string()
+            .starts_with("Published 1 comment(s). 1 inline, 0 conversation.")
+    );
     assert_eq!(requests.len(), 6);
 }
 
@@ -97,6 +103,12 @@ async fn combines_inline_failures_with_unpositioned_items_and_summary() {
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 3);
     assert_eq!(report.inline, 0);
     assert_eq!(report.urls.len(), 1);
+    assert_eq!(report.published, 1);
+    assert!(
+        report
+            .to_string()
+            .starts_with("Published 1 comment(s). 0 inline, 1 conversation.")
+    );
 }
 
 #[tokio::test]
@@ -124,6 +136,12 @@ async fn keeps_summary_and_full_counts_even_when_every_item_is_inline() {
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 2);
+    assert_eq!(report.published, 2);
+    assert!(
+        report
+            .to_string()
+            .starts_with("Published 2 comment(s). 1 inline, 1 conversation.")
+    );
 }
 
 #[tokio::test]

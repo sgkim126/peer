@@ -25,6 +25,21 @@ pub enum GitHubError {
     PullRequestChanged,
 }
 
+impl GitHubError {
+    /// The server may have accepted a POST even though its response was lost.
+    pub fn may_have_published(&self) -> bool {
+        matches!(
+            self,
+            Self::Request { .. }
+                | Self::Decode { .. }
+                | Self::Api {
+                    status: 408 | 500..=599,
+                    ..
+                }
+        )
+    }
+}
+
 impl fmt::Display for GitHubError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

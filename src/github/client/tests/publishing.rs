@@ -2,6 +2,7 @@ use super::*;
 use crate::render::{RenderInput, github};
 
 mod inline;
+mod recovery;
 mod revalidation;
 
 fn finding() -> RenderInput {
@@ -29,6 +30,12 @@ async fn empty_documents_do_not_create_comments() {
         .await
         .unwrap();
     assert_eq!(report.urls, Vec::<String>::new());
+    assert_eq!(report.published, 0);
+    assert!(
+        report
+            .to_string()
+            .starts_with("Published 0 comment(s). 0 inline, 0 conversation.")
+    );
     assert_eq!(server.requests().len(), 3);
 }
 
@@ -93,7 +100,12 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
     assert!(body.starts_with(&github::render(&input, "owner/repo")));
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     assert_eq!(report.urls.len(), 1);
-    assert!(report.to_string().contains("Published 1 comment(s)."));
+    assert_eq!(report.published, 1);
+    assert!(
+        report
+            .to_string()
+            .starts_with("Published 1 comment(s). 0 inline, 1 conversation.")
+    );
 }
 
 #[tokio::test]
@@ -175,7 +187,13 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
         .await
         .unwrap();
     assert_eq!(report.urls, Vec::<String>::new());
+    assert_eq!(report.published, 0);
     assert_eq!(report.skipped, 3);
+    assert!(
+        report
+            .to_string()
+            .starts_with("Published 0 comment(s). 0 inline, 0 conversation.")
+    );
     assert_eq!(server.requests().len(), 3);
 }
 
@@ -195,6 +213,7 @@ async fn finds_duplicates_on_later_pages_of_conversation_comments() {
         .unwrap();
     assert_eq!(report.skipped, 1);
     assert_eq!(report.urls, Vec::<String>::new());
+    assert_eq!(report.published, 0);
     assert_eq!(server.requests().len(), 4);
 }
 
@@ -214,6 +233,7 @@ async fn finds_duplicates_on_later_pages_of_inline_comments() {
         .unwrap();
     assert_eq!(report.skipped, 1);
     assert_eq!(report.urls, Vec::<String>::new());
+    assert_eq!(report.published, 0);
     assert_eq!(server.requests().len(), 4);
 }
 
