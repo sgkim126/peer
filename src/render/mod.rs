@@ -1,4 +1,4 @@
-mod github;
+pub mod github;
 mod markdown;
 mod terminal;
 

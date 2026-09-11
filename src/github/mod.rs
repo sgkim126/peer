@@ -1,6 +1,7 @@
 mod client;
 mod error;
 mod mapping;
+mod publish;
 mod repository;
 
 pub use self::client::GitHubClient;

@@ -227,6 +227,14 @@ peer review main..HEAD | peer render --format github --repo owner/repository
 ```
 
 The GitHub format requires `--repo` so that feedback can link to repository files.
+Add `--pr <number>` to publish the rendered input as a comment on that pull request:
+
+```bash
+peer render --format github --repo owner/repository --pr 123 < review.json
+```
+
+Publishing requires a `GITHUB_TOKEN` with pull request write permission. It does not require a local checkout or `.peer` configuration. The command prints the number of posted comments and their URLs; warnings and errors go to stderr. Without `--pr`, GitHub rendering continues to print Markdown without authentication.
+
 Questions, structural recommendations, and quality or security findings appear in separate `Review questions`, `Structural recommendations`, and `Review findings` sections. Each entry is tagged with its kind, such as `question/rationale`, `recommendation/split_commit`, or `finding/high`. Stage details report status, summary, token usage, and estimated model cost without repeating those results.
 
 JSON output stores the same result types in separate top-level `questions`, `recommendations`, and `findings` arrays.

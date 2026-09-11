@@ -8,6 +8,8 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+mod publishing;
+
 struct Reply {
     status: u16,
     body: String,
@@ -59,6 +61,22 @@ impl Server {
                     if count == 0 {
                         break;
                     }
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                let header_end = request
+                    .windows(4)
+                    .position(|bytes| bytes == b"\r\n\r\n")
+                    .unwrap()
+                    + 4;
+                let content_length = String::from_utf8_lossy(&request[..header_end])
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                    .unwrap_or(0);
+                while request.len() < header_end + content_length {
+                    let count = stream.read(&mut buffer).await.unwrap();
+                    assert_ne!(count, 0, "request body ended early");
                     request.extend_from_slice(&buffer[..count]);
                 }
                 received

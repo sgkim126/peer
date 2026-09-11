@@ -33,7 +33,7 @@ impl fmt::Display for GitHubError {
             Self::InvalidRepository => write!(f, "GitHub repository must use the form owner/name"),
             Self::MissingToken => write!(
                 f,
-                "--github requires a non-empty GITHUB_TOKEN environment variable"
+                "GitHub access requires a non-empty GITHUB_TOKEN environment variable"
             ),
             Self::InvalidToken => write!(f, "GITHUB_TOKEN is not a valid HTTP bearer token"),
             Self::Client(_) => write!(f, "failed to configure the GitHub HTTP client"),

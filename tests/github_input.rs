@@ -94,7 +94,7 @@ fn github_rejects_missing_token_before_reviewing() {
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "--github requires a non-empty GITHUB_TOKEN",
+        "GitHub access requires a non-empty GITHUB_TOKEN",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
@@ -108,7 +108,7 @@ fn github_rejects_empty_token_before_reviewing() {
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "--github requires a non-empty GITHUB_TOKEN",
+        "GitHub access requires a non-empty GITHUB_TOKEN",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
@@ -122,7 +122,7 @@ fn github_rejects_whitespace_token_before_reviewing() {
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "--github requires a non-empty GITHUB_TOKEN",
+        "GitHub access requires a non-empty GITHUB_TOKEN",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
