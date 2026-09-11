@@ -101,7 +101,7 @@ impl GitHubClient {
         Ok(GitHubReviewInput { context, commits })
     }
 
-    async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitHubError> {
+    pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitHubError> {
         let started = Instant::now();
         debug!("loading GitHub collection: endpoint={path}");
         let mut url = self.base.join(path).expect("valid GitHub API path");

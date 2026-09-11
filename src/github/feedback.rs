@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 
 use serde_json::{Value, json};
 
@@ -154,8 +154,26 @@ fn fingerprint(kind: &str, identity: Value) -> String {
         .to_string()
 }
 
+const MARKER_PREFIX: &str = "<!-- peer-review:v1:";
+const MARKER_SUFFIX: &str = " -->";
 pub fn marker(fingerprint: &str) -> String {
-    format!("<!-- peer-review:v1:{fingerprint} -->")
+    format!("{MARKER_PREFIX}{fingerprint}{MARKER_SUFFIX}")
+}
+
+pub fn fingerprints(body: &str) -> HashSet<String> {
+    body.lines()
+        .filter_map(|line| {
+            let hash = line
+                .trim()
+                .strip_prefix(MARKER_PREFIX)?
+                .strip_suffix(MARKER_SUFFIX)?;
+            (hash.len() == 64
+                && hash
+                    .bytes()
+                    .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')))
+            .then(|| hash.to_string())
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -298,5 +316,44 @@ mod tests {
         value["related_commits"] = json!(["def5678"]);
 
         assert_eq!(identity(value, "owner/repo"), original);
+    }
+
+    #[test]
+    fn complete_versioned_marker_is_recognized() {
+        let hash = "a".repeat(64);
+        assert_eq!(fingerprints(&marker(&hash)), HashSet::from([hash]));
+    }
+
+    #[test]
+    fn duplicate_markers_are_recognized_once() {
+        let hash = "a".repeat(64);
+        let valid = marker(&hash);
+        assert_eq!(
+            fingerprints(&format!("{valid}\n{valid}")),
+            HashSet::from([hash])
+        );
+    }
+
+    #[test]
+    fn unsupported_marker_version_is_not_recognized() {
+        let valid = marker(&"a".repeat(64));
+        assert!(fingerprints(&valid.replace(":v1:", ":v2:")).is_empty());
+    }
+
+    #[test]
+    fn marker_with_uppercase_hash_is_not_recognized() {
+        let valid = marker(&"a".repeat(64));
+        assert!(fingerprints(&valid.replace('a', "A")).is_empty());
+    }
+
+    #[test]
+    fn quoted_marker_is_not_recognized() {
+        let valid = marker(&"a".repeat(64));
+        assert!(fingerprints(&format!("> {valid}")).is_empty());
+    }
+
+    #[test]
+    fn marker_with_short_hash_is_not_recognized() {
+        assert!(fingerprints("<!-- peer-review:v1:abc -->").is_empty());
     }
 }
