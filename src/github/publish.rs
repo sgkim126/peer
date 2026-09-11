@@ -2,23 +2,32 @@ use std::collections::HashSet;
 use std::fmt;
 use std::num::NonZeroU64;
 
+use log::warn;
 use serde::Deserialize;
 use serde_json::json;
 
 use crate::render::RenderInput;
 
-use super::feedback::{PreparedReview, fingerprints};
+use super::feedback::{PreparedReview, fingerprints, marker};
+use super::position::{ChangedFile, comment_position};
 use super::{GitHubClient, GitHubError, Repository};
 
 #[derive(Debug, Default)]
 pub struct PublishReport {
     pub urls: Vec<String>,
     pub skipped: usize,
+    pub inline: usize,
 }
 
 impl fmt::Display for PublishReport {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "Published {} comment(s).", self.urls.len())?;
+        write!(
+            f,
+            " {} inline, {} conversation.",
+            self.inline,
+            self.urls.len() - self.inline
+        )?;
         write!(f, " Skipped {} duplicate item(s) or summary.", self.skipped)?;
         for url in &self.urls {
             write!(f, "\n{url}")?;
@@ -44,7 +53,7 @@ impl GitHubClient {
         number: NonZeroU64,
         input: &RenderInput,
     ) -> Result<PublishReport, GitHubError> {
-        self.pull_request(repository, number).await?;
+        let pull = self.pull_request(repository, number).await?;
         let mut seen = self.existing_fingerprints(repository, number).await?;
         let review = PreparedReview::new(input, repository);
         let mut report = PublishReport::default();
@@ -71,7 +80,55 @@ impl GitHubClient {
                     false
                 }
             });
-        let body = review.aggregate(&remaining, include_summary);
+        let files = if remaining.iter().any(|item| item.location.is_some()) {
+            match self
+                .list::<ChangedFile>(&format!("repos/{repository}/pulls/{number}/files"))
+                .await
+            {
+                Ok(files) => files,
+                Err(error) => {
+                    warn!(
+                        "Could not load changed files; collecting feedback in a conversation comment: {error}"
+                    );
+                    Vec::new()
+                }
+            }
+        } else {
+            Vec::new()
+        };
+        let mut fallback = Vec::new();
+        for item in remaining {
+            let position = item
+                .location
+                .as_ref()
+                .and_then(|location| comment_position(&files, location));
+            let Some(mut params) = position else {
+                fallback.push(item);
+                continue;
+            };
+            params["commit_id"] = json!(pull.head.sha);
+            params["body"] = json!(format!("{}\n\n{}", item.body, marker(&item.fingerprint)));
+            match self
+                .post::<PublishedComment>(
+                    &format!("repos/{repository}/pulls/{number}/comments"),
+                    &params,
+                )
+                .await
+            {
+                Ok(comment) => {
+                    report.urls.push(comment.html_url);
+                    report.inline += 1;
+                }
+                Err(error) => {
+                    warn!(
+                        "Could not publish inline feedback at {}: {error}; collecting it in a conversation comment",
+                        params["path"]
+                    );
+                    fallback.push(item);
+                }
+            }
+        }
+        let body = review.aggregate(&fallback, include_summary);
         if !body.trim().is_empty() {
             let comment: PublishedComment = self
                 .post(

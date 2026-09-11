@@ -227,13 +227,15 @@ peer review main..HEAD | peer render --format github --repo owner/repository
 ```
 
 The GitHub format requires `--repo` so that feedback can link to repository files.
-Add `--pr <number>` to publish the rendered input as a comment on that pull request:
+Add `--pr <number>` to publish the review on that pull request:
 
 ```bash
 peer render --format github --repo owner/repository --pr 123 < review.json
 ```
 
 Publishing requires a `GITHUB_TOKEN` with pull request write permission. It does not require a local checkout or `.peer` configuration. The command prints the number of posted comments and their URLs; warnings and errors go to stderr. Without `--pr`, GitHub rendering continues to print Markdown without authentication.
+
+Findings and questions with a usable file location are posted as file comments on the PR's current head. Questions require exactly one related commit matching their location. Recommendations, items without a usable location, and failed inline comments are collected into one conversation comment. Complete review documents also include their summary and stage details, with counts covering all findings even when some were posted inline.
 
 Published comments contain hidden, versioned fingerprints. Before posting, peer reads all pages of the PR's conversation and inline comments and skips previously published items. Fingerprints include the feedback kind, content, file, and line, but exclude commit SHAs, so rebasing alone does not repeat the same feedback. Summaries are tracked separately and ignore model, version, usage, cost, and iteration changes. Comments without peer fingerprints are not treated as duplicates.
 

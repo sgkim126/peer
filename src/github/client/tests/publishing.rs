@@ -1,6 +1,8 @@
 use super::*;
 use crate::render::{RenderInput, github};
 
+mod inline;
+
 fn finding() -> RenderInput {
     serde_json::from_value(json!({
         "commit": "abc1234",
@@ -42,7 +44,12 @@ fn request_body(request: &str) -> Value {
 }
 
 fn before_publish() -> Vec<Reply> {
-    vec![pull(), Reply::json(json!([])), Reply::json(json!([]))]
+    vec![
+        pull(),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+    ]
 }
 
 async fn published_body(input: &RenderInput) -> String {
@@ -73,10 +80,10 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
         .unwrap();
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 4);
+    assert_eq!(requests.len(), 5);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
-    assert!(requests[3].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    let body = request_body(&requests[3])["body"]
+    assert!(requests[4].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let body = request_body(&requests[4])["body"]
         .as_str()
         .unwrap()
         .to_string();
@@ -115,7 +122,7 @@ async fn reports_comment_creation_failure_without_retrying() {
             .await,
         Err(GitHubError::Api { status: 403, .. })
     );
-    assert_eq!(server.requests().len(), 4);
+    assert_eq!(server.requests().len(), 5);
 }
 
 fn document() -> RenderInput {

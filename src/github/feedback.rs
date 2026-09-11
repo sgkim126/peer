@@ -3,6 +3,7 @@ use std::collections::{BTreeSet, HashSet};
 use serde_json::{Value, json};
 
 use crate::render::{RenderInput, github};
+use crate::stage::FileLocation;
 
 use super::Repository;
 
@@ -16,6 +17,7 @@ pub enum FeedbackKind {
 pub struct Feedback {
     pub fingerprint: String,
     pub body: String,
+    pub location: Option<FileLocation>,
     kind: FeedbackKind,
 }
 
@@ -143,7 +145,26 @@ fn prepare_item(input: &RenderInput, repository: &Repository) -> Feedback {
     Feedback {
         fingerprint: fingerprint(tag, identity),
         body: github::render(input, &repository.to_string()),
+        location: inline_location(input),
         kind,
+    }
+}
+
+fn inline_location(input: &RenderInput) -> Option<FileLocation> {
+    match input {
+        RenderInput::Document(_) => None,
+        RenderInput::KnowledgeQuestion(question) => {
+            let [commit] = question.related_commits.as_slice() else {
+                return None;
+            };
+            question
+                .location
+                .as_ref()
+                .filter(|location| location.commit.matches(commit))
+                .map(|location| location.file.clone())
+        }
+        RenderInput::StructuralRecommendation(_) => None,
+        RenderInput::Finding(finding) => finding.location.clone(),
     }
 }
 
