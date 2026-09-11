@@ -5,6 +5,7 @@ mod context;
 mod error;
 mod extract;
 mod git;
+mod github;
 mod init;
 mod llm;
 mod pi;
