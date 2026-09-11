@@ -20,6 +20,7 @@ pub enum GitHubError {
         endpoint: String,
         source: reqwest::Error,
     },
+    InvalidPagination,
 }
 
 impl fmt::Display for GitHubError {
@@ -61,6 +62,7 @@ impl fmt::Display for GitHubError {
                 write!(f, "GitHub {reason} (HTTP {status}): {endpoint}")
             }
             Self::Decode { endpoint, .. } => write!(f, "invalid GitHub response: {endpoint}"),
+            Self::InvalidPagination => write!(f, "invalid GitHub pagination link"),
         }
     }
 }
@@ -76,6 +78,7 @@ impl std::error::Error for GitHubError {
             Self::Request { source, .. } => Some(source),
             Self::Api { .. } => None,
             Self::Decode { source, .. } => Some(source),
+            Self::InvalidPagination => None,
         }
     }
 }

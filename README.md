@@ -126,7 +126,8 @@ export GITHUB_TOKEN="..."
 peer review main..HEAD --github 123
 ```
 
-`--github` loads the title and description. It cannot be combined with `--title`, `--body-file`, or `--comments-file`.
+`--github` loads the title, description, and conversation comments, including bot
+comments. It cannot be combined with `--title`, `--body-file`, or `--comments-file`.
 The positional target still selects the local commits to review; the command does
 not fetch or check out the pull request. GitHub input requires both a configured
 repository and a non-empty token, including for public repositories. Direct input

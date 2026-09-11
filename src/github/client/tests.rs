@@ -39,8 +39,13 @@ struct Server {
 
 impl Server {
     async fn start(replies: Vec<Reply>) -> Self {
+        Self::start_with(|_| replies).await
+    }
+
+    async fn start_with(replies: impl FnOnce(&Url) -> Vec<Reply>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
+        let replies = replies(&base);
         let requests = Arc::new(Mutex::new(Vec::new()));
         let received = requests.clone();
         let address = base.to_string();
@@ -108,9 +113,23 @@ fn pull() -> Reply {
     Reply::json(json!({"title": "Title", "body": "Description"}))
 }
 
+fn comment(id: u64, author: Value) -> Value {
+    json!({"id": id, "created_at": "2026-01-01T00:00:00Z", "user": author, "body": format!("Comment {id}")})
+}
+
 #[tokio::test]
-async fn loads_title_and_body_and_matches_direct_input() {
-    let server = Server::start(vec![pull()]).await;
+async fn paginates_comments_and_matches_direct_input() {
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([comment(2, Value::Null)])).header(
+            "Link: <{base}repos/owner/repo/issues/123/comments?per_page=100&page=2>; rel=\"next\"",
+        ),
+        Reply::json(json!([comment(
+            1,
+            json!({"login": "bot[bot]", "type": "Bot"})
+        )])),
+    ])
+    .await;
     let context = server
         .client()
         .review_context(&repository(), number())
@@ -118,25 +137,35 @@ async fn loads_title_and_body_and_matches_direct_input() {
         .unwrap();
     let directory = tempfile::tempdir().unwrap();
     let body = directory.path().join("body.md");
+    let comments = directory.path().join("comments.json");
     std::fs::write(&body, "Description").unwrap();
+    std::fs::write(&comments, r#"[{"comments":[{"author":"bot[bot]","body":"Comment 1"}]},{"comments":[{"author":"unknown","body":"Comment 2"}]}]"#).unwrap();
     assert_eq!(
         context,
-        ReviewContext::load(Some("Title".into()), Some(&body), None).unwrap()
+        ReviewContext::load(Some("Title".into()), Some(&body), Some(&comments)).unwrap()
     );
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 1);
+    assert_eq!(requests.len(), 3);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
-    let request = requests[0].to_ascii_lowercase();
-    assert!(request.contains("authorization: bearer test-token\r\n"));
-    assert!(request.contains("accept: application/vnd.github+json\r\n"));
-    assert!(request.contains(&format!("x-github-api-version: {API_VERSION}\r\n")));
-    assert!(request.contains(concat!("user-agent: peer/", env!("CARGO_PKG_VERSION"))));
+    assert!(requests[1].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
+    assert!(requests[2].contains("per_page=100&page=2"));
+    for request in requests {
+        let request = request.to_ascii_lowercase();
+        assert!(request.contains("authorization: bearer test-token\r\n"));
+        assert!(request.contains("accept: application/vnd.github+json\r\n"));
+        assert!(request.contains(&format!("x-github-api-version: {API_VERSION}\r\n")));
+        assert!(request.contains(concat!("user-agent: peer/", env!("CARGO_PKG_VERSION"))));
+    }
 }
 
 #[tokio::test]
-async fn missing_body_matches_empty_input_file() {
-    let server = Server::start(vec![Reply::json(json!({"title": "Title", "body": null}))]).await;
+async fn missing_body_and_comments_match_empty_input_files() {
+    let server = Server::start(vec![
+        Reply::json(json!({"title": "Title", "body": null})),
+        Reply::json(json!([])),
+    ])
+    .await;
     let context = server
         .client()
         .review_context(&repository(), number())
@@ -147,7 +176,7 @@ async fn missing_body_matches_empty_input_file() {
 }
 
 #[tokio::test]
-async fn reports_http_failures_without_retrying() {
+async fn reports_http_failures_without_retrying_or_loading_comments() {
     for status in [401, 403, 404, 429, 500] {
         let mut reply = Reply::json(json!({"message": "error"}));
         reply.status = status;
@@ -180,6 +209,26 @@ async fn distinguishes_rate_limits_from_other_forbidden_responses() {
             ..
         })
     );
+}
+
+#[tokio::test]
+async fn a_later_page_failure_discards_the_whole_context() {
+    let mut failure = Reply::json(json!({}));
+    failure.status = 500;
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([comment(1, Value::Null)])).header("Link: <{base}next>; rel=\"next\""),
+        failure,
+    ])
+    .await;
+    assert_matches!(
+        server
+            .client()
+            .review_context(&repository(), number())
+            .await,
+        Err(GitHubError::Api { status: 500, .. })
+    );
+    assert_eq!(server.requests().len(), 3);
 }
 
 #[tokio::test]
@@ -219,6 +268,81 @@ async fn times_out_without_returning_partial_context() {
         GitHubClient::new("test-token", server.base.clone(), Duration::from_millis(50)).unwrap();
     let error = client.review_context(&repository(), number()).await;
     assert_matches!(error, Err(GitHubError::Request { ref source, .. }) if source.is_timeout());
+}
+
+#[tokio::test]
+async fn rejects_pagination_to_another_origin() {
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([])).header("Link: <https://example.com/next>; rel=\"next\""),
+    ])
+    .await;
+    assert_matches!(
+        server
+            .client()
+            .review_context(&repository(), number())
+            .await,
+        Err(GitHubError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn rejects_pagination_with_url_credentials() {
+    let server = Server::start_with(|base| {
+        let mut next = base.join("next").unwrap();
+        next.set_username("user").unwrap();
+        next.set_password(Some("password")).unwrap();
+        vec![
+            pull(),
+            Reply::json(json!([])).header(&format!("Link: <{next}>; rel=\"next\"")),
+        ]
+    })
+    .await;
+    assert_matches!(
+        server
+            .client()
+            .review_context(&repository(), number())
+            .await,
+        Err(GitHubError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn rejects_malformed_pagination_links() {
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([])).header("Link: invalid; rel=\"next\""),
+    ])
+    .await;
+    assert_matches!(
+        server
+            .client()
+            .review_context(&repository(), number())
+            .await,
+        Err(GitHubError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn rejects_cyclic_pagination() {
+    let server = Server::start(vec![
+        pull(),
+        Reply::json(json!([])).header(
+            "Link: <{base}repos/owner/repo/issues/123/comments?per_page=100>; rel=\"next\"",
+        ),
+    ])
+    .await;
+    assert_matches!(
+        server
+            .client()
+            .review_context(&repository(), number())
+            .await,
+        Err(GitHubError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 2);
 }
 
 #[tokio::test]

@@ -1,3 +1,3 @@
 mod review;
 
-pub use self::review::ReviewContext;
+pub use self::review::{ReviewCommentThread, ReviewContext, ReviewThreadComment};
