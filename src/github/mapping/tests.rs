@@ -1,0 +1,201 @@
+use super::*;
+
+use std::assert_matches;
+
+use serde_json::{Value, json};
+
+fn pull() -> PullRequest {
+    PullRequest {
+        title: "Title".into(),
+        body: Some("Description".into()),
+        base: super::super::client::CommitRef {
+            sha: crate::git::CommitHash::new("0123456").unwrap(),
+        },
+        head: super::super::client::CommitRef {
+            sha: crate::git::CommitHash::new("abc1234").unwrap(),
+        },
+        commits: 1,
+    }
+}
+
+fn review(id: u64, state: &str, body: Value) -> PullRequestReview {
+    serde_json::from_value(json!({
+        "id": id, "state": state, "body": body, "submitted_at": "2026-01-01T00:00:00Z",
+        "user": {"login": "reviewer[bot]", "type": "Bot"}, "commit_id": "abc1234",
+    }))
+    .unwrap()
+}
+
+fn inline(id: u64, parent: Option<u64>) -> Value {
+    json!({
+        "id": id, "in_reply_to_id": parent, "created_at": "2026-01-01T00:00:00Z",
+        "user": {"login": "reviewer[bot]", "type": "Bot"}, "body": format!("Inline {id}"),
+        "path": "src/root.rs", "commit_id": "abc1234", "original_commit_id": "def5678",
+        "line": 42, "original_line": 7, "side": "RIGHT",
+    })
+}
+
+fn with_inline(comments: Vec<Value>) -> ReviewContext {
+    review_context(
+        pull(),
+        vec![],
+        vec![],
+        serde_json::from_value(json!(comments)).unwrap(),
+    )
+}
+
+#[test]
+fn includes_nonempty_submitted_reviews_and_retains_bots() {
+    let mut unsubmitted = review(4, "COMMENTED", json!("Draft"));
+    unsubmitted.submitted_at = None;
+    let mut deleted_author = review(1, "CHANGES_REQUESTED", json!("Please change this"));
+    deleted_author.user = None;
+    let context = review_context(
+        pull(),
+        vec![],
+        vec![
+            review(3, "DISMISSED", json!("Historical rationale")),
+            review(2, "APPROVED", json!("  Verified behavior\n")),
+            review(5, "PENDING", json!("Draft")),
+            review(6, "APPROVED", json!(" \n")),
+            review(7, "COMMENTED", Value::Null),
+            unsubmitted,
+            deleted_author,
+        ],
+        vec![],
+    );
+
+    assert_eq!(context.comments.len(), 3);
+    assert_eq!(context.comments[0].comments[0].author, "unknown");
+    assert_eq!(context.comments[1].comments[0].author, "reviewer[bot]");
+    assert_eq!(
+        context.comments[1].comments[0].body,
+        "  Verified behavior\n"
+    );
+    assert_eq!(context.comments[2].comments[0].body, "Historical rationale");
+    for thread in &context.comments {
+        assert_eq!(thread.commit.as_ref().unwrap().as_ref(), "abc1234");
+        assert_eq!(thread.location, None);
+    }
+}
+
+#[test]
+fn groups_replies_using_the_root_location_and_stable_order() {
+    let mut reply = inline(11, Some(10));
+    reply["path"] = json!("src/reply.rs");
+    reply["line"] = json!(99);
+    let mut earlier_root = inline(20, None);
+    earlier_root["created_at"] = json!("2025-01-01T00:00:00Z");
+    let input = vec![reply, earlier_root, inline(10, None)];
+    let context = with_inline(input.clone());
+    let mut reversed = input;
+    reversed.reverse();
+    assert_eq!(context, with_inline(reversed));
+    assert_eq!(context.comments.len(), 2);
+    assert_eq!(context.comments[0].comments[0].body, "Inline 20");
+    let thread = &context.comments[1];
+    assert_eq!(
+        thread
+            .comments
+            .iter()
+            .map(|comment| comment.body.as_str())
+            .collect::<Vec<_>>(),
+        ["Inline 10", "Inline 11"]
+    );
+    assert_eq!(thread.location.as_ref().unwrap().path, "src/root.rs");
+    assert_eq!(thread.location.as_ref().unwrap().line.unwrap().get(), 42);
+}
+
+#[test]
+fn retains_replies_when_the_root_or_author_is_missing() {
+    let mut first = inline(11, Some(10));
+    first["user"] = Value::Null;
+    let context = with_inline(vec![inline(12, Some(10)), first]);
+    assert_eq!(context.comments.len(), 1);
+    let comments = &context.comments[0].comments;
+    assert_eq!(comments.len(), 2);
+    assert_eq!(comments[0].author, "unknown");
+    assert_eq!(comments[0].body, "Inline 11");
+    assert_eq!(comments[1].body, "Inline 12");
+}
+
+#[test]
+fn pairs_right_side_lines_with_the_matching_commit() {
+    let current = inline(1, None);
+    let mut outdated = inline(2, None);
+    outdated["line"] = Value::Null;
+    let mut left = inline(3, None);
+    left["side"] = json!("LEFT");
+    let mut file = inline(4, None);
+    file["line"] = Value::Null;
+    file["original_line"] = Value::Null;
+    file["side"] = Value::Null;
+    let mut unknown_original = inline(5, None);
+    unknown_original["line"] = Value::Null;
+    unknown_original["original_commit_id"] = Value::Null;
+
+    for (comment, expected_commit, expected_line) in [
+        (current, "abc1234", Some(42)),
+        (outdated, "def5678", Some(7)),
+        (left, "abc1234", None),
+        (file, "abc1234", None),
+        (unknown_original, "abc1234", None),
+    ] {
+        let context = with_inline(vec![comment]);
+        let thread = &context.comments[0];
+        assert_eq!(thread.commit.as_ref().unwrap().as_ref(), expected_commit);
+        let location = thread.location.as_ref().unwrap();
+        assert_eq!(location.path, "src/root.rs");
+        assert_eq!(location.line.map(|line| line.get()), expected_line);
+    }
+}
+
+#[test]
+fn groups_comment_categories_and_matches_direct_context_files() {
+    let issue = serde_json::from_value(json!({
+        "id": 100, "created_at": "2026-02-01T00:00:00Z", "user": {"login": "author"}, "body": "Rationale",
+    })).unwrap();
+    let context = review_context(
+        pull(),
+        vec![issue],
+        vec![review(1, "APPROVED", json!("Verified"))],
+        serde_json::from_value(json!([inline(10, None), inline(11, Some(10))])).unwrap(),
+    );
+    let directory = tempfile::tempdir().unwrap();
+    let body = directory.path().join("body.md");
+    let comments = directory.path().join("comments.json");
+    std::fs::write(&body, "Description").unwrap();
+    std::fs::write(
+        &comments,
+        r#"[
+        {"comments":[{"author":"author","body":"Rationale"}]},
+        {"commit":"abc1234","comments":[{"author":"reviewer[bot]","body":"Verified"}]},
+        {"commit":"abc1234","location":{"path":"src/root.rs","line":42},"comments":[
+            {"author":"reviewer[bot]","body":"Inline 10"},
+            {"author":"reviewer[bot]","body":"Inline 11"}
+        ]}
+    ]"#,
+    )
+    .unwrap();
+    assert_eq!(
+        context,
+        ReviewContext::load(Some("Title".into()), Some(&body), Some(&comments)).unwrap()
+    );
+}
+
+#[test]
+fn rejects_invalid_commit_hashes_at_the_api_boundary() {
+    let mut invalid_hash = inline(1, None);
+    invalid_hash["commit_id"] = json!("invalid-hash");
+    assert_matches!(
+        serde_json::from_value::<ReviewComment>(invalid_hash),
+        Err(_)
+    );
+}
+
+#[test]
+fn rejects_zero_lines_at_the_api_boundary() {
+    let mut zero_line = inline(1, None);
+    zero_line["line"] = json!(0);
+    assert_matches!(serde_json::from_value::<ReviewComment>(zero_line), Err(_));
+}

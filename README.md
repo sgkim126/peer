@@ -111,6 +111,47 @@ Passing that information lets the first stage establish the documented objective
 
 Use `--title` for the review title, `--body-file` for a file containing the description, and `--comments-file` for a JSON file containing comment threads.
 
+To read a GitHub pull request directly, set its repository in `.peer/config.toml`:
+
+```toml
+[github]
+repo = "owner/repository"
+```
+
+Then provide a token with read access to the repository's pull requests through
+`GITHUB_TOKEN` and pass the pull request number:
+
+```bash
+export GITHUB_TOKEN="..."
+peer review --github 123
+```
+
+`--github` selects the pull request's commits and loads its title, description,
+conversation comments, submitted review bodies, and inline comment threads,
+including bot comments. It cannot be combined with a positional target,
+`--title`, `--body-file`, or `--comments-file`.
+The pull request's commits and their history must be available in the local Git
+repository; the command does not fetch or check out the pull request. The usual
+commit limit and merge-commit restrictions apply. GitHub input requires both a
+configured repository and a non-empty token, including for public repositories. Direct input
+does not require either. The default configuration contains an empty repository
+placeholder, and existing configurations can add the optional `[github]` section
+without changing their version. This option supports github.com.
+
+Every run reloads the pull request's commits and context, and changes to that input
+affect the existing review cache. A failed request or an incomplete commit list
+stops the review. GitHub's [pull request commits endpoint](https://docs.github.com/en/rest/pulls/pulls#list-commits-on-a-pull-request)
+returns at most 250 commits.
+
+Conversation comments and non-empty submitted review bodies become individual
+threads. Inline comments retain their reply threads, including discussions on
+outdated code. Threads retain the root comment's commit and file; right-side line
+locations use the matching current or original commit. Left-side locations retain
+the file path without a line because the review context format does not identify
+diff sides. Missing authors are recorded as `unknown`.
+
+To supply context directly:
+
 ```bash
 peer review main..HEAD \
   --title "Add cache pruning support" \

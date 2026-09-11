@@ -702,7 +702,9 @@ impl RenderOptions {
                 format: RenderFormat::Markdown,
             }),
             (OutputFormat::Github, Some(repo)) => {
-                validate_github_repo(&repo)?;
+                let repo = crate::github::Repository::parse(&repo)
+                    .map_err(|_| RenderOptionsError::MalformedRepo)?
+                    .to_string();
                 Ok(Self {
                     format: RenderFormat::Github { repo },
                 })
@@ -774,25 +776,6 @@ fn join_review_sections(sections: impl IntoIterator<Item = String>) -> String {
         .filter(|section| !section.is_empty())
         .collect::<Vec<_>>()
         .join("\n\n")
-}
-
-fn validate_github_repo(repo: &str) -> Result<(), RenderOptionsError> {
-    let Some((owner, name)) = repo.split_once('/') else {
-        return Err(RenderOptionsError::MalformedRepo);
-    };
-    if owner.is_empty()
-        || name.is_empty()
-        || name.contains('/')
-        || !owner.chars().all(is_github_repo_char)
-        || !name.chars().all(is_github_repo_char)
-    {
-        return Err(RenderOptionsError::MalformedRepo);
-    }
-    Ok(())
-}
-
-fn is_github_repo_char(ch: char) -> bool {
-    ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-')
 }
 
 #[derive(Debug)]
@@ -1809,6 +1792,15 @@ mod tests {
             RenderOptions::from_cli(OutputFormat::Github, None),
             Err(RenderOptionsError::GithubRepoRequired)
         );
+    }
+
+    #[test]
+    fn github_preserves_the_malformed_repo_error() {
+        let error = RenderOptions::from_cli(OutputFormat::Github, Some("owner/repo/extra".into()))
+            .unwrap_err();
+
+        assert_eq!(error, RenderOptionsError::MalformedRepo);
+        assert_eq!(error.to_string(), "--repo must use the form owner/name");
     }
 
     #[test]
