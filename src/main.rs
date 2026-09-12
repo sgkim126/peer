@@ -273,6 +273,10 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            if pr.is_some() && format != OutputFormat::Github {
+                eprintln!("failed to configure render: --pr can only be used with --format github");
+                return ExitCode::FAILURE;
+            }
             let mut input = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut input) {
                 eprintln!("failed to read render input: {error}");
@@ -291,7 +295,8 @@ async fn main() -> ExitCode {
             if let Some(number) = pr {
                 let result = async {
                     let repository = github::Repository::parse(
-                        repo.as_deref().expect("clap requires repo with pr"),
+                        repo.as_deref()
+                            .expect("GitHub rendering requires a repository"),
                     )?;
                     github::GitHubClient::from_env()?
                         .publish(&repository, number, &input)

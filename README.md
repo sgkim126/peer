@@ -246,7 +246,19 @@ Add `--pr <number>` to publish the review on that pull request:
 peer render --format github --repo owner/repository --pr 123 < review.json
 ```
 
-Publishing requires a `GITHUB_TOKEN` with pull request write permission. It does not require a local checkout or `.peer` configuration. The command prints the number of posted comments and their URLs; warnings and errors go to stderr. Without `--pr`, GitHub rendering continues to print Markdown without authentication.
+Publication uses the same repository precedence. When `github.repo` is
+configured, the flag can be omitted:
+
+```bash
+peer render --format github --pr 123 < review.json
+```
+
+Publishing requires a `GITHUB_TOKEN` with pull request write permission.
+It does not require a local checkout, and an explicit `--repo` also removes the
+need for `.peer` configuration. The `--pr` option requires `--format github`.
+The command prints the number of posted comments and their URLs; warnings and
+errors go to stderr. Without `--pr`, GitHub rendering continues to print Markdown
+without authentication.
 
 Findings and questions with a usable location are posted inline on the PR's current head. Added lines use the right side of the diff and deleted lines use the left; a location without a line targets the changed file. Questions require exactly one related commit matching their location. Recommendations, items without a usable location, and failed inline comments are collected into one conversation comment. Complete review documents also include their summary and stage details, with counts covering all findings even when some were posted inline.
 

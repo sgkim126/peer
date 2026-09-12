@@ -67,7 +67,7 @@ pub enum Command {
         repo: Option<String>,
 
         /// Publish the GitHub-formatted review to this pull request.
-        #[arg(long, value_name = "PR_NUMBER", requires = "repo")]
+        #[arg(long, value_name = "PR_NUMBER")]
         pr: Option<NonZeroU64>,
     },
 }
@@ -441,10 +441,11 @@ mod tests {
     }
 
     #[test]
-    fn render_with_pull_request_requires_repo() {
+    fn render_with_pull_request_accepts_an_omitted_repository() {
+        let cli = parse(&["peer", "render", "--format", "github", "--pr", "123"]);
         assert_matches!(
-            Cli::try_parse_from(["peer", "render", "--pr", "123"]),
-            Err(_)
+            cli.command,
+            Command::Render { repo: None, pr: Some(number), .. } if number.get() == 123
         );
     }
 }

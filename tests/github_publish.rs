@@ -79,3 +79,33 @@ fn publishing_rejects_terminal_before_reading_input() {
             .contains("--repo can only be used with --format github")
     );
 }
+
+#[test]
+fn publishing_without_repo_rejects_markdown_before_reading_input() {
+    let output = render(&["--format", "markdown", "--pr", "123"], "invalid");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--pr can only be used with --format github")
+    );
+}
+
+#[test]
+fn publishing_without_repo_rejects_terminal_before_reading_input() {
+    let output = render(&["--format", "terminal", "--pr", "123"], "invalid");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--pr can only be used with --format github")
+    );
+}
+
+#[test]
+fn publishing_without_repo_rejects_the_default_format_before_reading_input() {
+    let output = render(&["--pr", "123"], "invalid");
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--pr can only be used with --format github")
+    );
+}

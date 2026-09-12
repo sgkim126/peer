@@ -68,6 +68,32 @@ fn github_uses_the_configured_repository_for_links() {
 }
 
 #[test]
+fn publishing_uses_repository_configuration_before_requiring_authentication() {
+    let directory = project(Some("configured/repository"));
+    assert_error(
+        render(
+            directory.path(),
+            &["--format", "github", "--pr", "123"],
+            FINDING,
+        ),
+        "GitHub access requires a non-empty GITHUB_TOKEN",
+    );
+}
+
+#[test]
+fn publishing_rejects_missing_repository_configuration_before_authentication() {
+    let directory = project(None);
+    assert_error(
+        render(
+            directory.path(),
+            &["--format", "github", "--pr", "123"],
+            FINDING,
+        ),
+        "--format github requires --repo <owner/name> or [github].repo",
+    );
+}
+
+#[test]
 fn github_discovers_repository_configuration_in_a_parent_directory() {
     let directory = project(Some("configured/repository"));
     let nested = directory.path().join("nested/deeper");
