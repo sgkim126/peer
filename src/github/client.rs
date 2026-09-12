@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use log::{debug, trace};
 use reqwest::header::{ACCEPT, AUTHORIZATION, HeaderMap, HeaderValue, LINK};
-use reqwest::{Client, Url};
+use reqwest::{Client, Method, Url};
 use serde::{Deserialize, de::DeserializeOwned};
 
 use crate::context::ReviewContext;
@@ -101,7 +101,7 @@ impl GitHubClient {
         Ok(GitHubReviewInput { context, commits })
     }
 
-    async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitHubError> {
+    pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitHubError> {
         let started = Instant::now();
         debug!("loading GitHub collection: endpoint={path}");
         let mut url = self.base.join(path).expect("valid GitHub API path");
@@ -155,6 +155,38 @@ impl GitHubClient {
     }
 
     async fn get<T: DeserializeOwned>(&self, url: Url) -> Result<(T, HeaderMap), GitHubError> {
+        self.request(url, Method::GET, None).await
+    }
+
+    pub async fn pull_request(
+        &self,
+        repository: &Repository,
+        number: NonZeroU64,
+    ) -> Result<PullRequest, GitHubError> {
+        let url = self
+            .base
+            .join(&format!("repos/{repository}/pulls/{number}"))
+            .expect("valid PR path");
+        self.get(url).await.map(|(pull, _)| pull)
+    }
+
+    pub async fn post<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<T, GitHubError> {
+        let url = self.base.join(path).expect("valid GitHub API path");
+        self.request(url, Method::POST, Some(body))
+            .await
+            .map(|(value, _)| value)
+    }
+
+    async fn request<T: DeserializeOwned>(
+        &self,
+        url: Url,
+        method: Method,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(T, HeaderMap), GitHubError> {
         // Pagination must never forward the token to another host or protocol.
         if url.origin() != self.base.origin()
             || !url.username().is_empty()
@@ -170,8 +202,12 @@ impl GitHubClient {
         }
         let started = Instant::now();
         let endpoint = url.path().to_string();
-        trace!("sending GitHub request: method=GET endpoint={endpoint}");
-        let response = self.http.get(url).send().await.map_err(|source| {
+        trace!("sending GitHub request: method={method} endpoint={endpoint}");
+        let mut request = self.http.request(method, url);
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        let response = request.send().await.map_err(|source| {
             debug!(
                 "GitHub request failed: endpoint={endpoint} timeout={} connect={} duration_ms={}",
                 source.is_timeout(),

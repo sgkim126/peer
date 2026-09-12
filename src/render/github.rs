@@ -28,36 +28,86 @@ pub fn render(input: &RenderInput, repo: &str) -> String {
 }
 
 fn render_document(document: &RenderDocument, repo: &str) -> String {
-    let stages = document
-        .stages
-        .iter()
-        .map(|stage| render_stage(stage, repo))
-        .collect::<Vec<_>>()
-        .join("\n\n");
-    let summary = document.summary.as_ref().map(|summary| {
-        render_review_summary(
-            summary,
-            document.context_usage.as_ref(),
-            &usage_by_model(document),
-            &review_counts(document),
-        )
-    });
-    let context = document
-        .summary
-        .is_none()
-        .then_some(document.context_usage.as_ref())
-        .flatten()
-        .map(render_context_usage);
-    let questions = render_questions(&document.questions, repo);
-    let recommendations = render_recommendations(&document.recommendations, repo);
-    let findings = render_findings(&document.findings, repo);
-    join_review_sections(
-        summary
-            .into_iter()
-            .chain([questions, recommendations, findings])
-            .chain(context)
-            .chain([stages]),
-    )
+    DocumentParts::new(document, repo).render()
+}
+
+#[derive(Clone)]
+pub struct DocumentParts {
+    pub summary: String,
+    pub questions: Vec<String>,
+    pub recommendations: Vec<String>,
+    pub findings: Vec<String>,
+    pub context: String,
+    pub stages: String,
+}
+
+/// Review content that remains meaningful across runs and rebases.
+pub fn summary_identity(document: &RenderDocument) -> serde_json::Value {
+    serde_json::json!({
+        "counts": review_counts(document),
+        "stages": document.stages.iter().map(|stage| serde_json::json!({
+            "stage": stage.stage,
+            "status": stage.status(),
+            "summary": stage.summary(),
+            "error": stage.error().map(display_error),
+        })).collect::<Vec<_>>(),
+    })
+}
+
+impl DocumentParts {
+    pub fn new(document: &RenderDocument, repo: &str) -> Self {
+        let stages = document
+            .stages
+            .iter()
+            .map(|stage| render_stage(stage, repo))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let summary = document.summary.as_ref().map(|summary| {
+            render_review_summary(
+                summary,
+                document.context_usage.as_ref(),
+                &usage_by_model(document),
+                &review_counts(document),
+            )
+        });
+        let context = document
+            .summary
+            .is_none()
+            .then_some(document.context_usage.as_ref())
+            .flatten()
+            .map(render_context_usage);
+        Self {
+            summary: summary.unwrap_or_default(),
+            questions: document
+                .questions
+                .iter()
+                .map(|item| render_question(item, repo))
+                .collect(),
+            recommendations: document
+                .recommendations
+                .iter()
+                .map(|item| render_recommendation(item, repo))
+                .collect(),
+            findings: document
+                .findings
+                .iter()
+                .map(|item| render_finding(item, repo))
+                .collect(),
+            context: context.unwrap_or_default(),
+            stages,
+        }
+    }
+
+    pub fn render(&self) -> String {
+        join_review_sections([
+            self.summary.clone(),
+            render_items("Review questions", &self.questions),
+            render_items("Structural recommendations", &self.recommendations),
+            render_items("Review findings", &self.findings),
+            self.context.clone(),
+            self.stages.clone(),
+        ])
+    }
 }
 
 fn render_stage(result: &RenderStage, repo: &str) -> String {
@@ -157,15 +207,11 @@ fn render_review_summary(
     output.trim_end().to_string()
 }
 
-fn render_questions(questions: &[KnowledgeQuestion], repo: &str) -> String {
-    if questions.is_empty() {
+fn render_items(heading: &str, items: &[String]) -> String {
+    if items.is_empty() {
         return String::new();
     }
-    let mut output = "## Review questions\n".to_string();
-    for question in questions {
-        writeln!(output, "{}", render_question(question, repo)).unwrap();
-    }
-    output.trim_end().to_string()
+    format!("## {heading}\n{}", items.join("\n"))
 }
 
 fn render_question(question: &KnowledgeQuestion, repo: &str) -> String {
@@ -179,17 +225,6 @@ fn render_question(question: &KnowledgeQuestion, repo: &str) -> String {
     )
 }
 
-fn render_recommendations(recommendations: &[StructuralRecommendation], repo: &str) -> String {
-    if recommendations.is_empty() {
-        return String::new();
-    }
-    let mut output = "## Structural recommendations\n".to_string();
-    for recommendation in recommendations {
-        writeln!(output, "{}", render_recommendation(recommendation, repo)).unwrap();
-    }
-    output.trim_end().to_string()
-}
-
 fn render_recommendation(recommendation: &StructuralRecommendation, repo: &str) -> String {
     format!(
         "- **recommendation/{}** — {} Rationale: {} ({})",
@@ -200,15 +235,15 @@ fn render_recommendation(recommendation: &StructuralRecommendation, repo: &str) 
     )
 }
 
+#[cfg(test)]
 fn render_findings(findings: &[RenderFinding], repo: &str) -> String {
-    if findings.is_empty() {
-        return String::new();
-    }
-    let mut output = "## Review findings\n".to_string();
-    for finding in findings {
-        writeln!(output, "{}", render_finding(finding, repo)).unwrap();
-    }
-    output.trim_end().to_string()
+    render_items(
+        "Review findings",
+        &findings
+            .iter()
+            .map(|item| render_finding(item, repo))
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn render_finding(finding: &RenderFinding, repo: &str) -> String {
@@ -394,6 +429,35 @@ mod tests {
 
     use crate::git::CommitHash;
     use crate::stage::FileLocation;
+
+    #[test]
+    fn omitting_items_preserves_full_review_statistics_and_stage_details() {
+        let rendered = crate::render::RenderStageParts::from(result());
+        let document = RenderDocument {
+            summary: Some(ReviewSummary {
+                peer_version: "test".into(),
+                provider: "test".into(),
+                model: "test".into(),
+            }),
+            context_usage: None,
+            ordered_commits: vec![],
+            questions: vec![],
+            recommendations: vec![],
+            findings: rendered.findings,
+            stages: vec![rendered.stage],
+        };
+        let mut parts = DocumentParts::new(&document, "owner/repo");
+        let original = parts.render();
+        parts.findings.clear();
+        let remaining = parts.render();
+
+        assert!(original.contains("## Review findings"));
+        assert!(!remaining.contains("## Review findings"));
+        assert!(remaining.contains("**Info findings:** 1"));
+        assert!(remaining.contains("**High findings:** 1"));
+        assert!(remaining.contains("Reviewed the change\\."));
+        assert!(remaining.contains("### Total token usage"));
+    }
 
     fn result() -> StageResult {
         StageResult {

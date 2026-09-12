@@ -22,6 +22,22 @@ pub enum GitHubError {
     },
     InvalidPagination,
     IncompleteCommits,
+    PullRequestChanged,
+}
+
+impl GitHubError {
+    /// The server may have accepted a POST even though its response was lost.
+    pub fn may_have_published(&self) -> bool {
+        matches!(
+            self,
+            Self::Request { .. }
+                | Self::Decode { .. }
+                | Self::Api {
+                    status: 408 | 500..=599,
+                    ..
+                }
+        )
+    }
 }
 
 impl fmt::Display for GitHubError {
@@ -33,7 +49,7 @@ impl fmt::Display for GitHubError {
             Self::InvalidRepository => write!(f, "GitHub repository must use the form owner/name"),
             Self::MissingToken => write!(
                 f,
-                "--github requires a non-empty GITHUB_TOKEN environment variable"
+                "GitHub access requires a non-empty GITHUB_TOKEN environment variable"
             ),
             Self::InvalidToken => write!(f, "GITHUB_TOKEN is not a valid HTTP bearer token"),
             Self::Client(_) => write!(f, "failed to configure the GitHub HTTP client"),
@@ -68,6 +84,10 @@ impl fmt::Display for GitHubError {
                 f,
                 "GitHub pull request commit list is incomplete or changed while loading; retry with a stable PR containing at most 250 commits"
             ),
+            Self::PullRequestChanged => write!(
+                f,
+                "GitHub pull request changed while loading comment positions; retry with a stable PR"
+            ),
         }
     }
 }
@@ -85,6 +105,7 @@ impl std::error::Error for GitHubError {
             Self::Decode { source, .. } => Some(source),
             Self::InvalidPagination => None,
             Self::IncompleteCommits => None,
+            Self::PullRequestChanged => None,
         }
     }
 }

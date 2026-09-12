@@ -227,6 +227,20 @@ peer review main..HEAD | peer render --format github --repo owner/repository
 ```
 
 The GitHub format requires `--repo` so that feedback can link to repository files.
+Add `--pr <number>` to publish the review on that pull request:
+
+```bash
+peer render --format github --repo owner/repository --pr 123 < review.json
+```
+
+Publishing requires a `GITHUB_TOKEN` with pull request write permission. It does not require a local checkout or `.peer` configuration. The command prints the number of posted comments and their URLs; warnings and errors go to stderr. Without `--pr`, GitHub rendering continues to print Markdown without authentication.
+
+Findings and questions with a usable location are posted inline on the PR's current head. Added lines use the right side of the diff and deleted lines use the left; a location without a line targets the changed file. Questions require exactly one related commit matching their location. Recommendations, items without a usable location, and failed inline comments are collected into one conversation comment. Complete review documents also include their summary and stage details, with counts covering all findings even when some were posted inline.
+
+Published comments contain hidden, versioned fingerprints. Before posting, peer reads all pages of the PR's conversation and inline comments and skips previously published items. Fingerprints include the feedback kind, content, file, and line, but exclude commit SHAs, so rebasing alone does not repeat the same feedback. Summaries are tracked separately and ignore model, version, usage, cost, and iteration changes. Comments without peer fingerprints are not treated as duplicates.
+
+Publishing exits successfully when every new item has been posted inline or collected in the conversation comment. If a response is lost or uncertain, peer reads the comments again before deciding whether a fallback is needed. Failed PR/comment lookups, a PR that changes while loading positions, and unsuccessful final publication return a non-zero status. A later run skips items that were already published successfully. Existing comments are never edited or deleted; duplicate prevention covers sequential reruns, without a lock between simultaneous publishers.
+
 Questions, structural recommendations, and quality or security findings appear in separate `Review questions`, `Structural recommendations`, and `Review findings` sections. Each entry is tagged with its kind, such as `question/rationale`, `recommendation/split_commit`, or `finding/high`. Stage details report status, summary, token usage, and estimated model cost without repeating those results.
 
 JSON output stores the same result types in separate top-level `questions`, `recommendations`, and `findings` arrays.

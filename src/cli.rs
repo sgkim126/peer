@@ -55,6 +55,10 @@ pub enum Command {
 
         #[arg(long, required_if_eq("format", "github"))]
         repo: Option<String>,
+
+        /// Publish the GitHub-formatted review to this pull request.
+        #[arg(long, value_name = "PR_NUMBER", requires = "repo")]
+        pr: Option<NonZeroU64>,
     },
 }
 
@@ -296,6 +300,7 @@ mod tests {
             Command::Render {
                 format: OutputFormat::Terminal,
                 repo: None,
+                pr: None,
             }
         );
     }
@@ -323,6 +328,7 @@ mod tests {
             Command::Render {
                 format: OutputFormat::Github,
                 repo: Some("owner/repository".into()),
+                pr: None,
             }
         );
     }
@@ -332,5 +338,79 @@ mod tests {
         let result = Cli::try_parse_from(["peer", "render", "--format", "github"]);
 
         assert_matches!(result, Err(_));
+    }
+
+    #[test]
+    fn render_accepts_a_positive_pull_request_number() {
+        let cli = parse(&[
+            "peer",
+            "render",
+            "--format",
+            "github",
+            "--repo",
+            "owner/repo",
+            "--pr",
+            "123",
+        ]);
+        assert_matches!(cli.command, Command::Render { pr: Some(number), .. } if number.get() == 123);
+    }
+
+    #[test]
+    fn render_rejects_zero_pull_request_number() {
+        assert_matches!(
+            Cli::try_parse_from([
+                "peer",
+                "render",
+                "--format",
+                "github",
+                "--repo",
+                "owner/repo",
+                "--pr",
+                "0",
+            ]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn render_rejects_negative_pull_request_number() {
+        assert_matches!(
+            Cli::try_parse_from([
+                "peer",
+                "render",
+                "--format",
+                "github",
+                "--repo",
+                "owner/repo",
+                "--pr",
+                "-1",
+            ]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn render_rejects_nonnumeric_pull_request_number() {
+        assert_matches!(
+            Cli::try_parse_from([
+                "peer",
+                "render",
+                "--format",
+                "github",
+                "--repo",
+                "owner/repo",
+                "--pr",
+                "abc",
+            ]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn render_with_pull_request_requires_repo() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "render", "--pr", "123"]),
+            Err(_)
+        );
     }
 }

@@ -241,8 +241,8 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Render { format, repo } => {
-            let options = match render::RenderOptions::from_cli(format, repo) {
+        Command::Render { format, repo, pr } => {
+            let options = match render::RenderOptions::from_cli(format, repo.clone()) {
                 Ok(options) => options,
                 Err(error) => {
                     eprintln!("failed to configure render: {error}");
@@ -264,6 +264,28 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            if let Some(number) = pr {
+                let result = async {
+                    let repository = github::Repository::parse(
+                        repo.as_deref().expect("clap requires repo with pr"),
+                    )?;
+                    github::GitHubClient::from_env()?
+                        .publish(&repository, number, &input)
+                        .await
+                }
+                .await;
+                return match result {
+                    Ok(report) => {
+                        println!("{report}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("failed to publish review: {error}");
+                        debug!("{error:?}");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
             match render::render(input, options) {
                 Ok(output) => {
                     println!("{output}");
