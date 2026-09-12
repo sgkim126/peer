@@ -20,7 +20,7 @@ use clap::Parser;
 use log::{debug, info};
 
 use crate::cache::CacheStore;
-use crate::cli::{Cli, Command};
+use crate::cli::{Cli, Command, OutputFormat};
 use crate::config::{Config, discover, discover_peer_root};
 use crate::error::PeerError;
 use crate::pi::{ModelRef, PiRuntime};
@@ -246,6 +246,26 @@ async fn main() -> ExitCode {
             }
         }
         Command::Render { format, repo, pr } => {
+            let repo = if format == OutputFormat::Github && repo.is_none() {
+                let cwd = match std::env::current_dir() {
+                    Ok(cwd) => cwd,
+                    Err(error) => {
+                        eprintln!("cannot determine current directory.");
+                        debug!("{error:?}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                match discover(&cwd) {
+                    Ok((config, _)) => config.github.repo.filter(|value| !value.trim().is_empty()),
+                    Err(error) => {
+                        eprintln!("failed to configure render: {error}");
+                        debug!("{error:?}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else {
+                repo
+            };
             let options = match render::RenderOptions::from_cli(format, repo.clone()) {
                 Ok(options) => options,
                 Err(error) => {

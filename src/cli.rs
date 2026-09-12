@@ -62,7 +62,8 @@ pub enum Command {
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
 
-        #[arg(long, required_if_eq("format", "github"))]
+        /// Override github.repo for GitHub-formatted output.
+        #[arg(long, value_name = "OWNER/NAME")]
         repo: Option<String>,
 
         /// Publish the GitHub-formatted review to this pull request.
@@ -360,10 +361,17 @@ mod tests {
     }
 
     #[test]
-    fn render_with_github_format_requires_repo() {
-        let result = Cli::try_parse_from(["peer", "render", "--format", "github"]);
+    fn render_with_github_format_accepts_an_omitted_repository() {
+        let cli = parse(&["peer", "render", "--format", "github"]);
 
-        assert_matches!(result, Err(_));
+        assert_matches!(
+            cli.command,
+            Command::Render {
+                format: OutputFormat::Github,
+                repo: None,
+                ..
+            }
+        );
     }
 
     #[test]

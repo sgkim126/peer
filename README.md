@@ -234,7 +234,12 @@ peer review main..HEAD | peer render --format markdown
 peer review main..HEAD | peer render --format github --repo owner/repository
 ```
 
-The GitHub format requires `--repo` so that feedback can link to repository files.
+The GitHub format uses `--repo` or, when omitted, `github.repo` from
+`.peer/config.toml` to link feedback to repository files. The flag takes
+precedence, just as it does for `peer review --github`. Rendering with an
+explicit `--repo` does not read project configuration. The terminal and Markdown
+formats do not read configuration and reject `--repo`.
+
 Add `--pr <number>` to publish the review on that pull request:
 
 ```bash
