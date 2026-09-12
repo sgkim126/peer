@@ -62,7 +62,7 @@ runs:
       run: |
         set -euo pipefail
 
-        npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.83.0
+        npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
         pi --version
 
     - name: Install peer binary
