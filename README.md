@@ -212,6 +212,14 @@ The default configuration includes the following common API-key providers as exa
 See [Pi's provider documentation](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/docs/providers.md) for the complete list of supported providers and authentication methods.
 
 `peer init` copies the default configuration to `.peer/config.toml`.
+Pass `--provider`, `--model`, or `--repo` to set `llm.default_provider`,
+`llm.default_model`, or `github.repo` in the generated configuration.
+Each option is independent; omitted options keep the bundled defaults.
+
+```bash
+peer init --provider openai --model gpt-5.6-terra --repo owner/repository
+```
+
 The configuration selects the default provider and model and limits the number of commits and model iterations.
 The removed `commit_scope`, `commit_sequence`, `size`, and `intent` stage overrides are invalid; use `[stages.knowledge]` instead.
 
