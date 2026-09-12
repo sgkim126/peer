@@ -57,17 +57,17 @@ Running `peer` requires the following tools:
 | --- | --- |
 | Git | 2.30.0 or later |
 | Node.js | 22.19.0 or later |
-| Pi | Exactly 0.83.0 |
+| Pi | Exactly 0.85.1 |
 
 You also need network access to the selected model provider and credentials for that provider.
 
 Install [Node.js 22.19.0 or later](https://nodejs.org/en/download), then install the required version of Pi with npm:
 
 ```bash
-npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.83.0
+npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
 ```
 
-See the [Pi quickstart](https://github.com/earendil-works/pi/blob/v0.83.0/packages/coding-agent/docs/quickstart.md) for other installation and authentication options.
+See the [Pi quickstart](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/docs/quickstart.md) for other installation and authentication options.
 
 Building `peer` from source requires Rust 1.96.0 or later.
 The release binary and the bundled GitHub Action currently support Linux x86-64.
@@ -160,7 +160,7 @@ The default configuration includes the following common API-key providers as exa
 | Anthropic | `ANTHROPIC_API_KEY` |
 | Gemini | `GEMINI_API_KEY` |
 
-See [Pi's provider documentation](https://github.com/earendil-works/pi/blob/v0.83.0/packages/coding-agent/docs/providers.md) for the complete list of supported providers and authentication methods.
+See [Pi's provider documentation](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/docs/providers.md) for the complete list of supported providers and authentication methods.
 
 `peer init` copies the default configuration to `.peer/config.toml`.
 The configuration selects the default provider and model and limits the number of commits and model iterations.
