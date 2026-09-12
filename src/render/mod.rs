@@ -815,11 +815,14 @@ pub enum RenderOptionsError {
 impl fmt::Display for RenderOptionsError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::GithubRepoRequired => write!(f, "--format github requires --repo <owner/name>"),
+            Self::GithubRepoRequired => write!(
+                f,
+                "--format github requires --repo <owner/name> or [github].repo in .peer/config.toml"
+            ),
             Self::RepoRequiresGithubFormat => {
                 write!(f, "--repo can only be used with --format github")
             }
-            Self::MalformedRepo => write!(f, "--repo must use the form owner/name"),
+            Self::MalformedRepo => write!(f, "GitHub repository must use the form owner/name"),
         }
     }
 }
@@ -1800,7 +1803,10 @@ mod tests {
             .unwrap_err();
 
         assert_eq!(error, RenderOptionsError::MalformedRepo);
-        assert_eq!(error.to_string(), "--repo must use the form owner/name");
+        assert_eq!(
+            error.to_string(),
+            "GitHub repository must use the form owner/name"
+        );
     }
 
     #[test]

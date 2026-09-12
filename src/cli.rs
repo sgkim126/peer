@@ -44,6 +44,15 @@ pub enum Command {
         #[arg(long, value_name = "PR_NUMBER", conflicts_with_all = ["target", "title", "body_file", "comments_file"])]
         github: Option<NonZeroU64>,
 
+        /// Override github.repo for this GitHub pull request review.
+        #[arg(
+            long,
+            value_name = "OWNER/NAME",
+            requires = "github",
+            conflicts_with = "target"
+        )]
+        repo: Option<String>,
+
         /// Start resumable stages from the beginning.
         #[arg(long)]
         no_resume: bool,
@@ -53,11 +62,12 @@ pub enum Command {
         #[arg(long, default_value = "terminal")]
         format: OutputFormat,
 
-        #[arg(long, required_if_eq("format", "github"))]
+        /// Override github.repo for GitHub-formatted output.
+        #[arg(long, value_name = "OWNER/NAME")]
         repo: Option<String>,
 
         /// Publish the GitHub-formatted review to this pull request.
-        #[arg(long, value_name = "PR_NUMBER", requires = "repo")]
+        #[arg(long, value_name = "PR_NUMBER")]
         pr: Option<NonZeroU64>,
     },
 }
@@ -125,6 +135,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 github: None,
+                repo: None,
                 no_resume: false,
             }
         );
@@ -161,6 +172,7 @@ mod tests {
                 body_file: Some("body.md".into()),
                 comments_file: Some("comments.json".into()),
                 github: None,
+                repo: None,
                 no_resume: false,
             }
         );
@@ -188,6 +200,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 github: None,
+                repo: None,
                 no_resume: false,
             }
         );
@@ -223,6 +236,20 @@ mod tests {
     fn review_accepts_a_github_pull_request_number() {
         let cli = parse(&["peer", "review", "--github", "123"]);
         assert_matches!(cli.command, Command::Review { target: None, github: Some(number), .. } if number.get() == 123);
+    }
+
+    #[test]
+    fn review_accepts_a_github_repository_override() {
+        let cli = parse(&["peer", "review", "--github", "123", "--repo", "owner/repo"]);
+        assert_matches!(cli.command, Command::Review { repo: Some(repo), .. } if repo == "owner/repo");
+    }
+
+    #[test]
+    fn review_repository_override_requires_github() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "HEAD", "--repo", "owner/repo"]),
+            Err(_)
+        );
     }
 
     #[test]
@@ -334,10 +361,17 @@ mod tests {
     }
 
     #[test]
-    fn render_with_github_format_requires_repo() {
-        let result = Cli::try_parse_from(["peer", "render", "--format", "github"]);
+    fn render_with_github_format_accepts_an_omitted_repository() {
+        let cli = parse(&["peer", "render", "--format", "github"]);
 
-        assert_matches!(result, Err(_));
+        assert_matches!(
+            cli.command,
+            Command::Render {
+                format: OutputFormat::Github,
+                repo: None,
+                ..
+            }
+        );
     }
 
     #[test]
@@ -407,10 +441,11 @@ mod tests {
     }
 
     #[test]
-    fn render_with_pull_request_requires_repo() {
+    fn render_with_pull_request_accepts_an_omitted_repository() {
+        let cli = parse(&["peer", "render", "--format", "github", "--pr", "123"]);
         assert_matches!(
-            Cli::try_parse_from(["peer", "render", "--pr", "123"]),
-            Err(_)
+            cli.command,
+            Command::Render { repo: None, pr: Some(number), .. } if number.get() == 123
         );
     }
 }
