@@ -78,9 +78,9 @@ pub enum Command {
         #[arg(long, value_name = "OWNER/NAME")]
         repo: Option<String>,
 
-        /// Publish the GitHub-formatted review to this pull request.
+        /// Publish the review to this GitHub pull request (requires --format github).
         #[arg(long, value_name = "PR_NUMBER")]
-        pr: Option<NonZeroU64>,
+        github: Option<NonZeroU64>,
     },
 }
 
@@ -369,7 +369,7 @@ mod tests {
             Command::Render {
                 format: OutputFormat::Terminal,
                 repo: None,
-                pr: None,
+                github: None,
             }
         );
     }
@@ -397,7 +397,7 @@ mod tests {
             Command::Render {
                 format: OutputFormat::Github,
                 repo: Some("owner/repository".into()),
-                pr: None,
+                github: None,
             }
         );
     }
@@ -425,10 +425,10 @@ mod tests {
             "github",
             "--repo",
             "owner/repo",
-            "--pr",
+            "--github",
             "123",
         ]);
-        assert_matches!(cli.command, Command::Render { pr: Some(number), .. } if number.get() == 123);
+        assert_matches!(cli.command, Command::Render { github: Some(number), .. } if number.get() == 123);
     }
 
     #[test]
@@ -441,7 +441,7 @@ mod tests {
                 "github",
                 "--repo",
                 "owner/repo",
-                "--pr",
+                "--github",
                 "0",
             ]),
             Err(_)
@@ -458,7 +458,7 @@ mod tests {
                 "github",
                 "--repo",
                 "owner/repo",
-                "--pr",
+                "--github",
                 "-1",
             ]),
             Err(_)
@@ -475,7 +475,7 @@ mod tests {
                 "github",
                 "--repo",
                 "owner/repo",
-                "--pr",
+                "--github",
                 "abc",
             ]),
             Err(_)
@@ -484,10 +484,10 @@ mod tests {
 
     #[test]
     fn render_with_pull_request_accepts_an_omitted_repository() {
-        let cli = parse(&["peer", "render", "--format", "github", "--pr", "123"]);
+        let cli = parse(&["peer", "render", "--format", "github", "--github", "123"]);
         assert_matches!(
             cli.command,
-            Command::Render { repo: None, pr: Some(number), .. } if number.get() == 123
+            Command::Render { repo: None, github: Some(number), .. } if number.get() == 123
         );
     }
 }
