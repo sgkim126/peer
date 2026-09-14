@@ -344,12 +344,19 @@ Terminal, Markdown, and GitHub output show the same models and their usage.
 
 The reported cost comes from the usage information returned by Pi and remains an estimate.
 Actual billing may differ.
+Usage and cost describe the work recorded to produce the result, including completed
+results loaded from cache and earlier attempts in the same resumed Pi session.
+Each model's reported cost is preserved without recalculating prices.
+If Pi usage cannot be read, usage remains zero or unavailable.
 Review feedback is nondeterministic and can be incomplete, so it does not replace human judgment or dedicated verification tools.
 
 ## Cache management
 
 Review results are stored under `.peer/cache`.
 The cache avoids repeating model work when the relevant inputs have not changed.
+Completed results retain their original provider/model usage and cost, even when
+the currently configured model differs.
+Cached results with an incompatible format are regenerated.
 If a stage exhausts its iteration budget or stops because of a transient provider error, `peer`
 stores the completed conversation and resumes it the next time the same stage runs.
 Resumed usage includes all attempts and models recorded in that session. Starting a

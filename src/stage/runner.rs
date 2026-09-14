@@ -104,14 +104,7 @@ struct StageCacheParams<'a> {
 struct CachedReport<R> {
     report: R,
     iterations: u32,
-    provider: String,
-    model: String,
-}
-
-impl<R> CachedReport<R> {
-    fn usage(&self) -> LlmUsage {
-        LlmUsage::zero(&self.provider, &self.model)
-    }
+    usage: LlmUsage,
 }
 
 #[derive(Deserialize)]
@@ -149,7 +142,6 @@ where
             stage.kind().as_str(),
             stage.target()
         );
-        let usage = cached.usage();
         return Ok(StageRun {
             stage: stage.kind(),
             target: stage.target(),
@@ -158,7 +150,7 @@ where
                 report: cached.report,
             },
             iterations: cached.iterations,
-            usage,
+            usage: cached.usage,
         });
     }
     let session_key = CacheKey::from_params(
@@ -240,8 +232,7 @@ where
                 &CachedReport {
                     report: &report,
                     iterations: result.iterations,
-                    provider: config.model.provider().to_string(),
-                    model: config.model.model().to_string(),
+                    usage: result.usage.clone(),
                 },
             );
             trace!(
@@ -362,24 +353,188 @@ impl From<StageKind> for TerminalTool {
 mod tests {
     use super::*;
 
-    #[test]
-    fn cached_reports_preserve_model_provenance() {
-        let cached = CachedReport {
-            report: "reviewed",
+    use crate::git::CommitHash;
+    use crate::llm::LlmModelUsage;
+    use crate::review::{PipelineReviewResult, PipelineStageResult, ReviewSummary};
+    use crate::stage::{QualityReport, StageTarget};
+
+    struct TestStage(CommitHash);
+
+    impl ReviewStage for TestStage {
+        type Report = QualityReport;
+
+        fn kind(&self) -> StageKind {
+            StageKind::Quality
+        }
+
+        fn target(&self) -> StageTarget {
+            StageTarget::Commit(self.0.clone())
+        }
+
+        fn expected_commits(&self) -> &[CommitHash] {
+            std::slice::from_ref(&self.0)
+        }
+
+        fn request(&self) -> StageRequest {
+            StageRequest {
+                system_prompt: "Review the change.".into(),
+                prompt: "Check the target commit.".into(),
+                read_tools: vec![],
+            }
+        }
+
+        fn validate_report(&self, report: &Self::Report) -> Result<(), String> {
+            if report.summary.is_empty() {
+                Err("missing summary".into())
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn cache_key(stage: &TestStage) -> CacheKey {
+        CacheKey::from_params(
+            "typed-stage-quality",
+            &StageCacheParams {
+                stage: stage.kind(),
+                target: stage.target(),
+                expected_commits: stage.expected_commits(),
+                request: &stage.request(),
+            },
+        )
+        .unwrap()
+    }
+
+    fn model_usage(provider: &str, model: &str, units: u64) -> LlmModelUsage {
+        LlmModelUsage {
+            provider: provider.into(),
+            model: model.into(),
+            input_tokens: units * 10,
+            output_tokens: units * 2,
+            cache_read_tokens: units * 3,
+            cache_write_tokens: units * 4,
+            cost_usd: units as f64 * 0.125,
+        }
+    }
+
+    fn original_usage() -> LlmUsage {
+        LlmUsage::from(vec![
+            model_usage("provider-a", "alpha", 1),
+            model_usage("provider-b", "beta", 2),
+        ])
+    }
+
+    fn cached_report(usage: LlmUsage) -> CachedReport<QualityReport> {
+        CachedReport {
+            report: QualityReport {
+                summary: "Reviewed the change.".into(),
+                findings: vec![],
+            },
             iterations: 2,
-            provider: "mistral".to_string(),
-            model: "mistral-medium-3.5".to_string(),
+            usage,
+        }
+    }
+
+    async fn run_without_model(cache: &CacheStore, stage: &TestStage) -> StageRun<QualityReport> {
+        let project_root = cache.version_root().join("nonexistent-project");
+        assert!(!project_root.exists());
+        let mut runtime = PiRuntime::new(project_root, cache.clone());
+        run(
+            &mut runtime,
+            cache,
+            stage,
+            StageRunConfig {
+                model: ModelRef::try_new("unavailable-test-provider", "unavailable-test-model")
+                    .unwrap(),
+                max_iterations: 1,
+                resume: false,
+            },
+        )
+        .await
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn cache_hits_restore_original_usage_for_every_model() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = CacheStore::new(directory.path().join("cache"));
+        let stage = TestStage(CommitHash::new("abc1234").unwrap());
+        let key = cache_key(&stage);
+        let usage = original_usage();
+        let cached = cached_report(usage.clone());
+        update_cache(&cache, &key, &cached);
+
+        let result = run_without_model(&cache, &stage).await;
+
+        assert_eq!(result.usage, usage);
+        assert_eq!(result.iterations, cached.iterations);
+        assert_eq!(
+            result.outcome,
+            StageOutcome::Completed {
+                report: cached.report,
+            }
+        );
+        let stored = cache.read_json::<serde_json::Value>(&key).unwrap().unwrap();
+        assert_eq!(stored["usage"], serde_json::to_value(&usage).unwrap());
+    }
+
+    #[tokio::test]
+    async fn final_json_combines_cached_and_new_stage_usage() {
+        let directory = tempfile::tempdir().unwrap();
+        let cache = CacheStore::new(directory.path().join("cache"));
+        let stage = TestStage(CommitHash::new("abc1234").unwrap());
+        let cached_usage = original_usage();
+        update_cache(
+            &cache,
+            &cache_key(&stage),
+            &cached_report(cached_usage.clone()),
+        );
+        let cached = run_without_model(&cache, &stage).await;
+        let new_commit = CommitHash::new("def5678").unwrap();
+        let new_usage = LlmUsage::from(vec![
+            model_usage("provider-a", "alpha", 3),
+            model_usage("provider-c", "gamma", 4),
+        ]);
+        let new = StageRun {
+            stage: StageKind::Quality,
+            target: StageTarget::Commit(new_commit.clone()),
+            ordered_commits: vec![new_commit.clone()],
+            outcome: StageOutcome::Completed {
+                report: QualityReport {
+                    summary: "Reviewed another change.".into(),
+                    findings: vec![],
+                },
+            },
+            iterations: 1,
+            usage: new_usage.clone(),
+        };
+        let review = PipelineReviewResult {
+            summary: ReviewSummary {
+                peer_version: env!("CARGO_PKG_VERSION").into(),
+            },
+            ordered_commits: vec![stage.0.clone(), new_commit],
+            stages: vec![
+                PipelineStageResult::Quality(cached),
+                PipelineStageResult::Quality(new),
+            ],
+            errors: vec![],
         };
 
-        let value = serde_json::to_value(&cached).unwrap();
-        let restored: CachedReport<String> = serde_json::from_value(value.clone()).unwrap();
-
-        assert_eq!(value["provider"], "mistral");
-        assert_eq!(value["model"], "mistral-medium-3.5");
-        assert_eq!(restored.report, "reviewed");
+        let json = crate::render::render_pipeline_json(review).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let expected = LlmUsage::from(vec![
+            model_usage("provider-a", "alpha", 4),
+            model_usage("provider-b", "beta", 2),
+            model_usage("provider-c", "gamma", 4),
+        ]);
+        assert_eq!(value["usage"], serde_json::to_value(expected).unwrap());
         assert_eq!(
-            restored.usage(),
-            LlmUsage::zero("mistral", "mistral-medium-3.5")
+            value["stages"][0]["outcome"]["usage"],
+            serde_json::to_value(cached_usage).unwrap()
+        );
+        assert_eq!(
+            value["stages"][1]["outcome"]["usage"],
+            serde_json::to_value(new_usage).unwrap()
         );
     }
 
