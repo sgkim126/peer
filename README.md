@@ -352,6 +352,8 @@ Review results are stored under `.peer/cache`.
 The cache avoids repeating model work when the relevant inputs have not changed.
 If a stage exhausts its iteration budget or stops because of a transient provider error, `peer`
 stores the completed conversation and resumes it the next time the same stage runs.
+Resumed usage includes all attempts and models recorded in that session. Starting a
+new session does not include the cost of discarded sessions.
 Pass `--no-resume` to `peer review` to ignore resumable checkpoints for that run.
 
 `peer prune` removes cache data belonging to older `peer` versions while preserving data for the current version.
