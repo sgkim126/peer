@@ -1451,7 +1451,10 @@ mod tests {
         assert_eq!(value["summary"]["provider"], "test-provider");
         assert_eq!(value["summary"]["model"], "test-model");
         assert_eq!(value["summary"].get("usage_by_model"), None);
-        assert_eq!(value["stages"][0]["outcome"]["usage"]["input_tokens"], 100);
+        assert_eq!(
+            value["stages"][0]["outcome"]["usage"][0]["input_tokens"],
+            100
+        );
         assert_eq!(value["stages"].as_array().unwrap().len(), 2);
         assert_eq!(value["stages"][0]["stage"], "security");
         assert_eq!(value["questions"], serde_json::json!([]));
@@ -1501,9 +1504,9 @@ mod tests {
         let output = render_json(review).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
-        assert_eq!(value["context_usage"]["input_tokens"], 40);
-        assert_eq!(value["context_usage"]["output_tokens"], 10);
-        assert_eq!(value["context_usage"]["model"], "test-provider/test-model");
+        assert_eq!(value["context_usage"][0]["input_tokens"], 40);
+        assert_eq!(value["context_usage"][0]["output_tokens"], 10);
+        assert_eq!(value["context_usage"][0]["model"], "test-model");
         assert_eq!(value["stages"][0].get("context_usage"), None);
     }
 
@@ -1579,6 +1582,19 @@ mod tests {
         assert_eq!(decoded, document);
         assert_eq!(value.get("summary"), None);
         assert_eq!(value.get("context_usage"), None);
+    }
+
+    #[test]
+    fn render_input_rejects_legacy_stage_usage_objects() {
+        let mut input = serde_json::to_value(RenderDocument::from(result())).unwrap();
+        input["stages"][0]["outcome"]["usage"] = serde_json::json!({
+            "model": "test-provider/test-model",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cost_usd": 0.001,
+        });
+
+        assert_matches!(serde_json::from_value::<RenderInput>(input), Err(_));
     }
 
     #[test]
@@ -1669,6 +1685,18 @@ mod tests {
                 assert!(!output.contains("Review findings"));
             }
         }
+    }
+
+    #[test]
+    fn execution_failure_usage_serializes_as_a_model_array() {
+        let failure = RenderStageFailure::Execution {
+            reason: "invalid output".into(),
+            usage: Some(result().usage),
+        };
+
+        let value = serde_json::to_value(failure).unwrap();
+
+        assert!(value["usage"].is_array());
     }
 
     #[test]

@@ -149,21 +149,15 @@ fn document() -> RenderInput {
             {"commit": "abc1234", "severity": "low", "message": "Second issue"}
         ],
         "stages": [{"stage": "quality", "target": "abc1234", "outcome": {"status": "clean", "summary": "Reviewed", "iterations": 1,
-            "usage": {
+            "usage": [{
+                "provider": "test",
+                "model": "test",
                 "input_tokens": 10,
                 "output_tokens": 5,
-                "cost_usd": 0.01,
-                "model": "test/test",
-                "models": [{
-                    "provider": "test",
-                    "model": "test",
-                    "input_tokens": 10,
-                    "output_tokens": 5,
-                    "cache_read_tokens": 0,
-                    "cache_write_tokens": 0,
-                    "cost_usd": 0.01
-                }]
-            }
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.01
+            }]
         }}],
     })).unwrap()
 }
