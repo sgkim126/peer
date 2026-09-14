@@ -26,8 +26,6 @@ pub enum ReviewTarget {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewSummary {
     pub peer_version: String,
-    pub provider: String,
-    pub model: String,
 }
 
 pub async fn resolve_target(

@@ -161,8 +161,8 @@ fn render_review_summary(
     counts: &ReviewCounts,
 ) -> String {
     let mut output = format!(
-        "## Review summary\n\n- **Peer version:** {}\n- **Provider:** {}\n- **Model:** {}",
-        summary.peer_version, summary.provider, summary.model,
+        "## Review summary\n\n- **Peer version:** {}",
+        summary.peer_version,
     );
     write!(
         output,
@@ -465,8 +465,6 @@ mod tests {
         let document = RenderDocument {
             summary: Some(ReviewSummary {
                 peer_version: "test".into(),
-                provider: "test".into(),
-                model: "test".into(),
             }),
             context_usage: None,
             ordered_commits: vec![],
@@ -652,8 +650,6 @@ mod tests {
     fn includes_each_model_in_review_summary() {
         let summary = ReviewSummary {
             peer_version: "test".into(),
-            provider: "test".into(),
-            model: "test".into(),
         };
         let usage = LlmUsage::from(vec![
             LlmModelUsage {

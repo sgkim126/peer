@@ -153,8 +153,6 @@ pub async fn run_pipeline(
     let mut result = PipelineReviewResult {
         summary: ReviewSummary {
             peer_version: env!("CARGO_PKG_VERSION").to_string(),
-            provider: config.llm.default_provider.clone(),
-            model: config.llm.default_model.clone(),
         },
         ordered_commits: input
             .commits

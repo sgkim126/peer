@@ -129,8 +129,6 @@ fn render_review_summary(
     let mut output = String::new();
     writeln!(output, "{}", label("Review summary:", use_color)).unwrap();
     writeln!(output, "- Peer version: {}", summary.peer_version).unwrap();
-    writeln!(output, "- Provider: {}", summary.provider).unwrap();
-    writeln!(output, "- Model: {}", summary.model).unwrap();
     writeln!(output, "- Info findings: {}", counts.info).unwrap();
     writeln!(output, "- Low findings: {}", counts.low).unwrap();
     writeln!(output, "- Medium findings: {}", counts.medium).unwrap();
@@ -553,8 +551,6 @@ mod tests {
     fn includes_each_model_in_review_summary() {
         let summary = ReviewSummary {
             peer_version: "test".into(),
-            provider: "test".into(),
-            model: "test".into(),
         };
         let usage = LlmUsage::from(vec![
             LlmModelUsage {

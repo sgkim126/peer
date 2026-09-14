@@ -335,10 +335,10 @@ The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml
 `peer` sends the reviewed code and any supplied review context to the selected model provider.
 Do not review material that the provider is not permitted to receive, and make sure commits submitted for review do not contain passwords, API tokens, or other secrets that must not be disclosed.
 
-Review JSON represents stage `usage` and shared `context_usage` as arrays,
+Review JSON represents each stage's `usage` and the final result's `usage` as arrays,
 with one entry per provider and model. Each entry includes `provider`, `model`,
 `input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `cost_usd`.
-Human-readable totals combine stage and shared context usage by provider and model.
+The final array combines stage and shared context usage by provider and model.
 Terminal, Markdown, and GitHub output show the same models and their usage.
 `peer render` accepts this array format; the previous object format is no longer supported.
 

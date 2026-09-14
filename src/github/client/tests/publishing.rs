@@ -142,7 +142,7 @@ async fn reports_comment_creation_failure_without_retrying() {
 
 fn document() -> RenderInput {
     serde_json::from_value(json!({
-        "summary": {"peer_version": "0.14.0", "provider": "test", "model": "test"},
+        "summary": {"peer_version": "0.14.0"},
         "ordered_commits": ["abc1234"],
         "findings": [
             {"commit": "abc1234", "severity": "high", "message": "First issue", "file": "src/main.rs", "line": 5},
@@ -174,7 +174,6 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
         document.ordered_commits = vec![CommitHash::new("def5678").unwrap()];
         document.stages[0].target =
             crate::stage::StageTarget::Commit(CommitHash::new("def5678").unwrap());
-        document.summary.as_mut().unwrap().model = "different-model".into();
         if let crate::render::RenderStageOutcome::Clean {
             usage, iterations, ..
         } = &mut document.stages[0].outcome
