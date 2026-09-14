@@ -12,7 +12,19 @@ pub struct Cli {
 
 #[derive(Subcommand, Debug, PartialEq)]
 pub enum Command {
-    Init,
+    Init {
+        /// Set llm.default_provider in the generated config.
+        #[arg(long)]
+        provider: Option<String>,
+
+        /// Set llm.default_model in the generated config.
+        #[arg(long)]
+        model: Option<String>,
+
+        /// Set github.repo in the generated config.
+        #[arg(long, value_name = "OWNER/NAME")]
+        repo: Option<String>,
+    },
 
     /// Remove cached values.
     Prune {
@@ -104,7 +116,37 @@ mod tests {
     fn init() {
         let cli = parse(&["peer", "init"]);
 
-        assert_eq!(cli.command, Command::Init);
+        assert_eq!(
+            cli.command,
+            Command::Init {
+                provider: None,
+                model: None,
+                repo: None,
+            }
+        );
+    }
+
+    #[test]
+    fn init_with_config_overrides() {
+        let cli = parse(&[
+            "peer",
+            "init",
+            "--provider",
+            "custom",
+            "--model",
+            "namespace/model",
+            "--repo",
+            "owner/repository",
+        ]);
+
+        assert_eq!(
+            cli.command,
+            Command::Init {
+                provider: Some("custom".into()),
+                model: Some("namespace/model".into()),
+                repo: Some("owner/repository".into()),
+            }
+        );
     }
 
     #[test]
