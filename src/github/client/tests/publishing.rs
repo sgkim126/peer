@@ -149,7 +149,22 @@ fn document() -> RenderInput {
             {"commit": "abc1234", "severity": "low", "message": "Second issue"}
         ],
         "stages": [{"stage": "quality", "target": "abc1234", "outcome": {"status": "clean", "summary": "Reviewed", "iterations": 1,
-            "usage": {"input_tokens": 10, "output_tokens": 5, "cost_usd": 0.01, "model": "test"}}}],
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cost_usd": 0.01,
+                "model": "test/test",
+                "models": [{
+                    "provider": "test",
+                    "model": "test",
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "cache_read_tokens": 0,
+                    "cache_write_tokens": 0,
+                    "cost_usd": 0.01
+                }]
+            }
+        }}],
     })).unwrap()
 }
 
@@ -170,8 +185,11 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
             usage, iterations, ..
         } = &mut document.stages[0].outcome
         {
-            usage.cost_usd = 42.0;
-            usage.input_tokens = 200;
+            let mut model_usage = usage.iter().next().unwrap().clone();
+            model_usage.model = "different-model".into();
+            model_usage.cost_usd = 42.0;
+            model_usage.input_tokens = 200;
+            *usage = crate::llm::LlmUsage::from(vec![model_usage]);
             *iterations = 3;
         }
     }

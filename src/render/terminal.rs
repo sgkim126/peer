@@ -5,7 +5,7 @@ use std::io::IsTerminal;
 use owo_colors::Style;
 
 use crate::git::CommitHash;
-use crate::llm::LlmUsage;
+use crate::llm::{LlmModelUsage, LlmUsage};
 use crate::review::{ModelUsage, ReviewSummary};
 use crate::stage::{
     FileLocation, KnowledgeQuestion, Severity, StageFailure, StageTarget, StructuralRecommendation,
@@ -140,15 +140,20 @@ fn render_review_summary(
     writeln!(output, "- Exhausted stages: {}", counts.exhausted).unwrap();
     writeln!(output, "- Failed stages: {}", counts.failed).unwrap();
     if let Some(usage) = context_usage {
-        writeln!(
-            output,
-            "- Context usage: {} input, {} output, ${:.6} ({})",
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cost_usd,
-            escape_terminal(&usage.model),
-        )
-        .unwrap();
+        if usage.is_empty() {
+            writeln!(output, "- Context usage: none").unwrap();
+        }
+        for model in usage.iter() {
+            write!(output, "- Context usage: ").unwrap();
+            write_model_usage(&mut output, model);
+            writeln!(
+                output,
+                " ({}/{})",
+                escape_terminal(&model.provider),
+                escape_terminal(&model.model),
+            )
+            .unwrap();
+        }
     }
     writeln!(output, "- Total token usage:").unwrap();
     if usage_by_model.is_empty() {
@@ -170,30 +175,38 @@ fn render_review_summary(
 }
 
 fn write_usage(output: &mut String, label: &str, usage: &LlmUsage) {
-    writeln!(output).unwrap();
-    if usage.cache_read_tokens == 0 && usage.cache_write_tokens == 0 {
+    if usage.is_empty() {
+        write!(output, "\n{label}: none").unwrap();
+    }
+    for model in usage.iter() {
+        write!(output, "\n{label}: ").unwrap();
+        write_model_usage(output, model);
         write!(
             output,
-            "{label}: {} input, {} output, ${:.6} ({})",
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cost_usd,
-            escape_terminal(&usage.model)
-        )
-        .unwrap();
-    } else {
-        write!(
-            output,
-            "{label}: {} input, {} output, {} cache read, {} cache write, ${:.6} ({})",
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cache_read_tokens,
-            usage.cache_write_tokens,
-            usage.cost_usd,
-            escape_terminal(&usage.model)
+            " ({}/{})",
+            escape_terminal(&model.provider),
+            escape_terminal(&model.model),
         )
         .unwrap();
     }
+}
+
+fn write_model_usage(output: &mut String, usage: &LlmModelUsage) {
+    write!(
+        output,
+        "{} input, {} output",
+        usage.input_tokens, usage.output_tokens,
+    )
+    .unwrap();
+    if usage.cache_read_tokens != 0 || usage.cache_write_tokens != 0 {
+        write!(
+            output,
+            ", {} cache read, {} cache write",
+            usage.cache_read_tokens, usage.cache_write_tokens,
+        )
+        .unwrap();
+    }
+    write!(output, ", ${:.6}", usage.cost_usd).unwrap();
 }
 
 fn label(value: &str, use_color: bool) -> String {
@@ -444,15 +457,15 @@ mod tests {
             iterations: 2,
             failure: None,
             context_usage: None,
-            usage: LlmUsage {
+            usage: LlmUsage::from(vec![LlmModelUsage {
+                provider: "test-provider".to_string(),
                 input_tokens: 100,
                 output_tokens: 20,
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 cost_usd: 0.001,
                 model: "test-model".to_string(),
-                models: Vec::new(),
-            },
+            }]),
         }
     }
 
@@ -461,26 +474,80 @@ mod tests {
         let rendered = crate::render::RenderStageParts::from(result());
         let output = render_stage(&rendered.stage, false);
 
-        assert!(output.contains("Stage usage: 100 input, 20 output, $0.001000 (test-model)"));
+        assert!(
+            output.contains(
+                "Stage usage: 100 input, 20 output, $0.001000 (test-provider/test-model)"
+            )
+        );
         assert!(!output.contains("\u{1b}["));
     }
 
     #[test]
     fn includes_context_usage_separately() {
         let mut result = result();
-        result.context_usage = Some(LlmUsage {
+        result.context_usage = Some(LlmUsage::from(vec![LlmModelUsage {
+            provider: "test-provider".to_string(),
             input_tokens: 40,
             output_tokens: 10,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             cost_usd: 0.0004,
             model: "context-model".to_string(),
-            models: Vec::new(),
-        });
+        }]));
 
         let output = render_context_usage(result.context_usage.as_ref().unwrap());
 
-        assert!(output.contains("Context usage: 40 input, 10 output, $0.000400 (context-model)"));
+        assert!(output.contains(
+            "Context usage: 40 input, 10 output, $0.000400 (test-provider/context-model)"
+        ));
+    }
+
+    fn multi_model_usage() -> LlmUsage {
+        let first = result().usage.iter().next().unwrap().clone();
+        let second = LlmModelUsage {
+            provider: "other-provider".into(),
+            model: first.model.clone(),
+            input_tokens: 40,
+            output_tokens: 10,
+            cache_read_tokens: 80,
+            cache_write_tokens: 10,
+            cost_usd: 0.0004,
+        };
+        LlmUsage::from(vec![first, second])
+    }
+
+    #[test]
+    fn includes_each_model_in_stage_usage() {
+        let mut result = result();
+        result.usage = multi_model_usage();
+        let rendered = crate::render::RenderStageParts::from(result);
+
+        let output = render_stage(&rendered.stage, false);
+
+        assert!(
+            output.contains(
+                "Stage usage: 100 input, 20 output, $0.001000 (test-provider/test-model)"
+            )
+        );
+        assert!(output.contains(
+            "Stage usage: 40 input, 10 output, 80 cache read, 10 cache write, $0.000400 (other-provider/test-model)"
+        ));
+    }
+
+    #[test]
+    fn includes_each_model_in_context_usage() {
+        let usage = multi_model_usage();
+
+        let output = render_context_usage(&usage);
+
+        assert!(
+            output.contains(
+                "Context usage: 100 input, 20 output, $0.001000 (test-provider/test-model)"
+            )
+        );
+        assert!(output.contains(
+            "Context usage: 40 input, 10 output, 80 cache read, 10 cache write, $0.000400 (other-provider/test-model)"
+        ));
     }
 
     #[test]

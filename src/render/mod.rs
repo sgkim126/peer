@@ -835,6 +835,7 @@ mod tests {
 
     use std::assert_matches;
 
+    use crate::llm::LlmModelUsage;
     use crate::stage::FileLocation;
 
     fn result() -> StageResult {
@@ -869,15 +870,15 @@ mod tests {
             iterations: 2,
             failure: None,
             context_usage: None,
-            usage: LlmUsage {
+            usage: LlmUsage::from(vec![LlmModelUsage {
+                provider: "test-provider".to_string(),
+                model: "test-model".to_string(),
                 input_tokens: 100,
                 output_tokens: 20,
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 cost_usd: 0.001,
-                model: "test-model".to_string(),
-                models: Vec::new(),
-            },
+            }]),
         }
     }
 
@@ -890,15 +891,15 @@ mod tests {
     }
 
     fn review_context_usage() -> LlmUsage {
-        LlmUsage {
+        LlmUsage::from(vec![LlmModelUsage {
+            provider: "test-provider".to_string(),
+            model: "test-model".to_string(),
             input_tokens: 40,
             output_tokens: 10,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             cost_usd: 0.0004,
-            model: "test-model".to_string(),
-            models: Vec::new(),
-        }
+        }])
     }
 
     fn review_ordered_commits() -> Vec<CommitHash> {
@@ -1376,6 +1377,7 @@ mod tests {
         assert_eq!(value["summary"]["provider"], "test-provider");
         assert_eq!(value["summary"]["model"], "test-model");
         assert_eq!(value["summary"].get("usage_by_model"), None);
+        assert_eq!(value["stages"][0]["outcome"]["usage"]["input_tokens"], 100);
         assert_eq!(value["stages"].as_array().unwrap().len(), 2);
         assert_eq!(value["stages"][0]["stage"], "security");
         assert_eq!(value["questions"], serde_json::json!([]));
@@ -1390,20 +1392,20 @@ mod tests {
             (
                 OutputFormat::Terminal,
                 None,
-                "- Context usage: 40 input, 10 output, $0.000400 (test-model)",
-                "  - test-model: 240 input, 50 output, $0.002400",
+                "- Context usage: 40 input, 10 output, $0.000400 (test-provider/test-model)",
+                "  - test-provider/test-model: 240 input, 50 output, $0.002400",
             ),
             (
                 OutputFormat::Markdown,
                 None,
-                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-model)",
-                "- **test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
+                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-provider/test\\-model)",
+                "- **test\\-provider/test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
             ),
             (
                 OutputFormat::Github,
                 Some("owner/repo".to_string()),
-                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-model)",
-                "- **test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
+                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-provider/test\\-model)",
+                "- **test\\-provider/test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
             ),
         ] {
             let mut second = result();
@@ -1427,7 +1429,7 @@ mod tests {
 
         assert_eq!(value["context_usage"]["input_tokens"], 40);
         assert_eq!(value["context_usage"]["output_tokens"], 10);
-        assert_eq!(value["context_usage"]["model"], "test-model");
+        assert_eq!(value["context_usage"]["model"], "test-provider/test-model");
         assert_eq!(value["stages"][0].get("context_usage"), None);
     }
 
@@ -1439,19 +1441,19 @@ mod tests {
             (
                 OutputFormat::Terminal,
                 None,
-                "  - test-model: 200 input, 40 output, $0.002000",
+                "  - test-provider/test-model: 200 input, 40 output, $0.002000",
                 "- Provider: test-provider",
             ),
             (
                 OutputFormat::Markdown,
                 None,
-                "- **test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
+                "- **test\\-provider/test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
                 "- **Provider:** test-provider",
             ),
             (
                 OutputFormat::Github,
                 Some("owner/repo".to_string()),
-                "- **test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
+                "- **test\\-provider/test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
                 "- **Provider:** test-provider",
             ),
         ] {

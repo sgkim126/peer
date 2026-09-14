@@ -43,6 +43,10 @@ impl LlmUsage {
     pub fn iter(&self) -> std::slice::Iter<'_, LlmModelUsage> {
         self.models.iter()
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.models.is_empty()
+    }
 }
 
 impl From<Vec<LlmModelUsage>> for LlmUsage {
