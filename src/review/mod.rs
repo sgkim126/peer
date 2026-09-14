@@ -30,13 +30,6 @@ pub struct ReviewSummary {
     pub model: String,
 }
 
-#[derive(Debug, Default, Clone, PartialEq, Serialize)]
-pub struct ModelUsage {
-    pub input_tokens: u64,
-    pub output_tokens: u64,
-    pub cost_usd: f64,
-}
-
 pub async fn resolve_target(
     target: &str,
     max_commits: u32,

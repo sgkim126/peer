@@ -1,9 +1,8 @@
-use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use crate::git::CommitHash;
 use crate::llm::{LlmModelUsage, LlmUsage};
-use crate::review::{ModelUsage, ReviewSummary};
+use crate::review::ReviewSummary;
 use crate::stage::{
     FileLocation, KnowledgeQuestion, Severity, StageFailure, StageTarget, StructuralRecommendation,
 };
@@ -105,7 +104,7 @@ fn render_context_usage(usage: &LlmUsage) -> String {
 fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
-    usage_by_model: &BTreeMap<String, ModelUsage>,
+    usage_by_model: &LlmUsage,
     counts: &ReviewCounts,
 ) -> String {
     let mut output = format!(
@@ -144,16 +143,16 @@ fn render_review_summary(
     if usage_by_model.is_empty() {
         output.push_str("None.");
     } else {
-        for (model, usage) in usage_by_model {
-            writeln!(
+        for usage in usage_by_model.iter() {
+            write!(
                 output,
-                "- **{}:** {} input tokens, {} output tokens, ${:.6}",
-                escape_markdown(model),
-                usage.input_tokens,
-                usage.output_tokens,
-                usage.cost_usd,
+                "- **{}/{}:** ",
+                escape_markdown(&usage.provider),
+                escape_markdown(&usage.model),
             )
             .unwrap();
+            write_model_usage_summary(&mut output, usage);
+            writeln!(output).unwrap();
         }
     }
     output.trim_end().to_string()
@@ -494,6 +493,45 @@ mod tests {
         assert!(output.contains(
             "- **Input tokens:** 40\n- **Output tokens:** 10\n- **Cache-read tokens:** 80\n- **Cache-write tokens:** 10\n- **Cost:** $0.000400\n- **Model:** other\\-provider/test\\-model"
         ));
+    }
+
+    #[test]
+    fn includes_each_model_in_review_summary() {
+        let summary = ReviewSummary {
+            peer_version: "test".into(),
+            provider: "test".into(),
+            model: "test".into(),
+        };
+        let usage = LlmUsage::from(vec![
+            LlmModelUsage {
+                provider: "provider".into(),
+                model: "alpha".into(),
+                input_tokens: 40,
+                output_tokens: 8,
+                cache_read_tokens: 12,
+                cache_write_tokens: 16,
+                cost_usd: 0.5,
+            },
+            LlmModelUsage {
+                provider: "provider".into(),
+                model: "beta".into(),
+                input_tokens: 20,
+                output_tokens: 4,
+                cache_read_tokens: 6,
+                cache_write_tokens: 8,
+                cost_usd: 0.25,
+            },
+        ]);
+
+        let output = render_review_summary(&summary, None, &usage, &ReviewCounts::default());
+
+        assert!(output.contains(
+            "- **provider/alpha:** 40 input tokens, 8 output tokens, 12 cache-read tokens, 16 cache-write tokens, $0.500000"
+        ));
+        assert!(output.contains(
+            "- **provider/beta:** 20 input tokens, 4 output tokens, 6 cache-read tokens, 8 cache-write tokens, $0.250000"
+        ));
+        assert!(!output.contains("multiple"));
     }
 
     #[test]

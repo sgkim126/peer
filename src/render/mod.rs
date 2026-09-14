@@ -2,7 +2,6 @@ pub mod github;
 mod markdown;
 mod terminal;
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -753,21 +752,16 @@ fn review_counts(document: &RenderDocument) -> ReviewCounts {
     counts
 }
 
-fn usage_by_model(document: &RenderDocument) -> BTreeMap<String, crate::review::ModelUsage> {
-    let mut usage = BTreeMap::new();
-    for item in document
-        .context_usage
-        .iter()
-        .chain(document.stages.iter().filter_map(RenderStage::usage))
-    {
-        let total = usage
-            .entry(item.model.clone())
-            .or_insert_with(crate::review::ModelUsage::default);
-        total.input_tokens += item.input_tokens;
-        total.output_tokens += item.output_tokens;
-        total.cost_usd += item.cost_usd;
-    }
-    usage
+fn usage_by_model(document: &RenderDocument) -> LlmUsage {
+    LlmUsage::from(
+        document
+            .context_usage
+            .iter()
+            .chain(document.stages.iter().filter_map(RenderStage::usage))
+            .flat_map(LlmUsage::iter)
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn join_review_sections(sections: impl IntoIterator<Item = String>) -> String {
@@ -958,12 +952,7 @@ mod tests {
         let totals = usage_by_model(&document);
 
         assert_eq!(document.stages[0].usage(), Some(&expected));
-        assert_eq!(totals[&expected.model].input_tokens, expected.input_tokens);
-        assert_eq!(
-            totals[&expected.model].output_tokens,
-            expected.output_tokens
-        );
-        assert_eq!(totals[&expected.model].cost_usd, expected.cost_usd);
+        assert_eq!(totals, expected);
     }
 
     fn review_document(
@@ -986,6 +975,91 @@ mod tests {
             findings,
             stages,
         }
+    }
+
+    fn model_usage(provider: &str, model: &str, units: u64) -> LlmModelUsage {
+        LlmModelUsage {
+            provider: provider.into(),
+            model: model.into(),
+            input_tokens: units * 10,
+            output_tokens: units * 2,
+            cache_read_tokens: units * 3,
+            cache_write_tokens: units * 4,
+            cost_usd: units as f64 * 0.125,
+        }
+    }
+
+    #[test]
+    fn totals_merge_all_models_across_stages() {
+        let mut first = result();
+        first.usage = LlmUsage::from(vec![
+            model_usage("provider-a", "alpha", 1),
+            model_usage("provider-b", "beta", 2),
+        ]);
+        let mut second = result();
+        second.stage = "quality".into();
+        second.usage = LlmUsage::from(vec![model_usage("provider-a", "alpha", 3)]);
+        let document = review_document(vec![first, second], None);
+
+        assert_eq!(
+            usage_by_model(&document),
+            LlmUsage::from(vec![
+                model_usage("provider-a", "alpha", 4),
+                model_usage("provider-b", "beta", 2),
+            ])
+        );
+    }
+
+    #[test]
+    fn totals_keep_the_same_model_id_separate_for_each_provider() {
+        let mut first = result();
+        first.usage = LlmUsage::from(vec![model_usage("provider-a", "shared", 1)]);
+        let mut second = result();
+        second.usage = LlmUsage::from(vec![model_usage("provider-b", "shared", 2)]);
+        let document = review_document(vec![first, second], None);
+
+        assert_eq!(
+            usage_by_model(&document),
+            LlmUsage::from(vec![
+                model_usage("provider-a", "shared", 1),
+                model_usage("provider-b", "shared", 2),
+            ])
+        );
+    }
+
+    #[test]
+    fn totals_include_context_and_execution_failure_usage_once() {
+        let mut stage = result();
+        stage.usage = LlmUsage::from(vec![model_usage("provider", "model", 1)]);
+        let mut document = review_document(
+            vec![stage],
+            Some(LlmUsage::from(vec![model_usage("provider", "model", 2)])),
+        );
+        document.stages.push(RenderStage {
+            stage: "quality".into(),
+            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            outcome: RenderStageOutcome::Failed {
+                failure: RenderStageFailure::Execution {
+                    reason: "invalid output".into(),
+                    usage: Some(LlmUsage::from(vec![model_usage("provider", "model", 3)])),
+                },
+            },
+        });
+        document.stages.push(RenderStage {
+            stage: "security".into(),
+            target: StageTarget::Commit(CommitHash::new("def5678").unwrap()),
+            outcome: RenderStageOutcome::Failed {
+                failure: RenderStageFailure::Execution {
+                    reason: "provider unavailable".into(),
+                    usage: None,
+                },
+            },
+        });
+
+        assert_eq!(
+            usage_by_model(&document),
+            LlmUsage::from(vec![model_usage("provider", "model", 6)])
+        );
     }
 
     #[test]

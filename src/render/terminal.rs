@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 use std::io::IsTerminal;
 
@@ -6,7 +5,7 @@ use owo_colors::Style;
 
 use crate::git::CommitHash;
 use crate::llm::{LlmModelUsage, LlmUsage};
-use crate::review::{ModelUsage, ReviewSummary};
+use crate::review::ReviewSummary;
 use crate::stage::{
     FileLocation, KnowledgeQuestion, Severity, StageFailure, StageTarget, StructuralRecommendation,
 };
@@ -123,7 +122,7 @@ fn render_context_usage(usage: &LlmUsage) -> String {
 fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
-    usage_by_model: &BTreeMap<String, ModelUsage>,
+    usage_by_model: &LlmUsage,
     counts: &ReviewCounts,
     use_color: bool,
 ) -> String {
@@ -159,16 +158,16 @@ fn render_review_summary(
     if usage_by_model.is_empty() {
         write!(output, "  - none").unwrap();
     } else {
-        for (model, usage) in usage_by_model {
-            writeln!(
+        for usage in usage_by_model.iter() {
+            write!(
                 output,
-                "  - {}: {} input, {} output, ${:.6}",
-                escape_terminal(model),
-                usage.input_tokens,
-                usage.output_tokens,
-                usage.cost_usd,
+                "  - {}/{}: ",
+                escape_terminal(&usage.provider),
+                escape_terminal(&usage.model),
             )
             .unwrap();
+            write_model_usage(&mut output, usage);
+            writeln!(output).unwrap();
         }
     }
     output.trim_end().to_string()
@@ -548,6 +547,45 @@ mod tests {
         assert!(output.contains(
             "Context usage: 40 input, 10 output, 80 cache read, 10 cache write, $0.000400 (other-provider/test-model)"
         ));
+    }
+
+    #[test]
+    fn includes_each_model_in_review_summary() {
+        let summary = ReviewSummary {
+            peer_version: "test".into(),
+            provider: "test".into(),
+            model: "test".into(),
+        };
+        let usage = LlmUsage::from(vec![
+            LlmModelUsage {
+                provider: "provider".into(),
+                model: "alpha".into(),
+                input_tokens: 40,
+                output_tokens: 8,
+                cache_read_tokens: 12,
+                cache_write_tokens: 16,
+                cost_usd: 0.5,
+            },
+            LlmModelUsage {
+                provider: "provider".into(),
+                model: "beta".into(),
+                input_tokens: 20,
+                output_tokens: 4,
+                cache_read_tokens: 6,
+                cache_write_tokens: 8,
+                cost_usd: 0.25,
+            },
+        ]);
+
+        let output = render_review_summary(&summary, None, &usage, &ReviewCounts::default(), false);
+
+        assert!(output.contains(
+            "  - provider/alpha: 40 input, 8 output, 12 cache read, 16 cache write, $0.500000"
+        ));
+        assert!(output.contains(
+            "  - provider/beta: 20 input, 4 output, 6 cache read, 8 cache write, $0.250000"
+        ));
+        assert!(!output.contains("multiple"));
     }
 
     #[test]
