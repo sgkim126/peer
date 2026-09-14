@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
@@ -436,7 +435,7 @@ impl PiRunner {
                     Ok(usage) => usage,
                     Err(error) => {
                         warn!("cannot read Pi usage: {error}");
-                        LlmUsage::zero(request.model.to_string())
+                        LlmUsage::zero(request.model.provider(), request.model.model())
                     }
                 };
                 Ok(PiRunResult {
@@ -451,7 +450,7 @@ impl PiRunner {
                     Ok(usage) => usage,
                     Err(error) => {
                         warn!("cannot read Pi usage: {error}");
-                        LlmUsage::zero(request.model.to_string())
+                        LlmUsage::zero(request.model.provider(), request.model.model())
                     }
                 };
                 Err(PiRunFailure {
@@ -650,7 +649,7 @@ fn usage_from_entries(data: &Value) -> Result<(LlmUsage, Option<String>), PiRunE
         .get("entries")
         .and_then(Value::as_array)
         .ok_or_else(|| PiRunError::InvalidState("get_entries omitted entries".to_string()))?;
-    let mut by_model = BTreeMap::<(String, String), LlmModelUsage>::new();
+    let mut models = Vec::new();
     for message in entries
         .iter()
         .filter(|entry| entry.get("type").and_then(Value::as_str) == Some("message"))
@@ -664,34 +663,24 @@ fn usage_from_entries(data: &Value) -> Result<(LlmUsage, Option<String>), PiRunE
             continue;
         };
         let usage = message.get("usage").unwrap_or(&Value::Null);
-        let total = by_model
-            .entry((provider.to_string(), model.to_string()))
-            .or_insert_with(|| LlmModelUsage {
-                provider: provider.to_string(),
-                model: model.to_string(),
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
-                cost_usd: 0.0,
-            });
-        total.input_tokens += usage.get("input").and_then(Value::as_u64).unwrap_or(0);
-        total.output_tokens += usage.get("output").and_then(Value::as_u64).unwrap_or(0);
-        total.cache_read_tokens += usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
-        total.cache_write_tokens += usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0);
-        total.cost_usd += usage
-            .pointer("/cost/total")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
+        models.push(LlmModelUsage {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            input_tokens: usage.get("input").and_then(Value::as_u64).unwrap_or(0),
+            output_tokens: usage.get("output").and_then(Value::as_u64).unwrap_or(0),
+            cache_read_tokens: usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0),
+            cache_write_tokens: usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0),
+            cost_usd: usage
+                .pointer("/cost/total")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+        });
     }
     let leaf_id = data
         .get("leafId")
         .and_then(Value::as_str)
         .map(str::to_string);
-    Ok((
-        LlmUsage::from(by_model.into_values().collect::<Vec<_>>()),
-        leaf_id,
-    ))
+    Ok((LlmUsage::from(models), leaf_id))
 }
 
 #[cfg(test)]
@@ -770,12 +759,15 @@ mod tests {
         });
 
         let (usage, leaf_id) = usage_from_entries(&data).unwrap();
+        assert_eq!(usage.iter().len(), 1);
+        let usage = usage.iter().next().unwrap();
+        assert_eq!(usage.provider, "mistral");
+        assert_eq!(usage.model, "medium");
         assert_eq!(usage.input_tokens, 30);
         assert_eq!(usage.output_tokens, 5);
         assert_eq!(usage.cache_read_tokens, 16);
         assert_eq!(usage.cache_write_tokens, 1);
         assert!((usage.cost_usd - 0.05).abs() < 1e-9);
-        assert_eq!(usage.models.len(), 1);
         assert_eq!(leaf_id.as_deref(), Some("entry-2"));
     }
 

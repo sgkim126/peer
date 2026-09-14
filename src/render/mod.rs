@@ -1035,7 +1035,7 @@ mod tests {
                 ordered_commits: vec![commit],
                 outcome: StageOutcome::Completed { report },
                 iterations: 1,
-                usage: LlmUsage::zero("test-model"),
+                usage: LlmUsage::zero("test-provider", "test-model"),
             })],
             errors: Vec::new(),
         };
@@ -1127,7 +1127,7 @@ mod tests {
             }]
         }))
         .unwrap();
-        let usage = LlmUsage::zero("test-model");
+        let usage = LlmUsage::zero("test-provider", "test-model");
         let review = PipelineReviewResult {
             summary: review_summary(),
             ordered_commits: ordered_commits.clone(),

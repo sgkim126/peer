@@ -110,7 +110,7 @@ struct CachedReport<R> {
 
 impl<R> CachedReport<R> {
     fn usage(&self) -> LlmUsage {
-        LlmUsage::zero(format!("{}/{}", self.provider, self.model))
+        LlmUsage::zero(&self.provider, &self.model)
     }
 }
 
@@ -379,13 +379,13 @@ mod tests {
         assert_eq!(restored.report, "reviewed");
         assert_eq!(
             restored.usage(),
-            LlmUsage::zero("mistral/mistral-medium-3.5")
+            LlmUsage::zero("mistral", "mistral-medium-3.5")
         );
     }
 
     #[test]
     fn reports_usage_for_invalid_output_errors() {
-        let usage = LlmUsage::zero("test-model");
+        let usage = LlmUsage::zero("test-provider", "test-model");
         let error = StageRunError::InvalidOutput {
             source: serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err(),
             usage: usage.clone(),
@@ -396,7 +396,7 @@ mod tests {
 
     #[test]
     fn reports_usage_for_invalid_question_errors() {
-        let usage = LlmUsage::zero("test-model");
+        let usage = LlmUsage::zero("test-provider", "test-model");
         let error = StageRunError::InvalidQuestions {
             reason: "questions must not be empty".to_string(),
             usage: usage.clone(),
@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn reports_usage_for_invalid_report_errors() {
-        let usage = LlmUsage::zero("test-model");
+        let usage = LlmUsage::zero("test-provider", "test-model");
         let error = StageRunError::InvalidReport {
             reason: "missing summary".to_string(),
             usage: usage.clone(),
@@ -436,7 +436,7 @@ mod tests {
 
     #[test]
     fn reports_usage_for_pi_failures_with_usage() {
-        let usage = LlmUsage::zero("test-model");
+        let usage = LlmUsage::zero("test-provider", "test-model");
         let error = StageRunError::from(PiRunFailure {
             error: PiRunError::InvalidState("missing outcome".to_string()),
             usage: Some(Box::new(usage.clone())),

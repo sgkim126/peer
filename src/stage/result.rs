@@ -98,7 +98,7 @@ mod tests {
             iterations: 1,
             failure: None,
             context_usage: None,
-            usage: LlmUsage::zero("test-model"),
+            usage: LlmUsage::zero("test-provider", "test-model"),
         }
     }
 
