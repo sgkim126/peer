@@ -689,7 +689,7 @@ fn usage_from_entries(data: &Value) -> Result<(LlmUsage, Option<String>), PiRunE
         .and_then(Value::as_str)
         .map(str::to_string);
     Ok((
-        LlmUsage::from_pi_models(by_model.into_values().collect()),
+        LlmUsage::from(by_model.into_values().collect::<Vec<_>>()),
         leaf_id,
     ))
 }

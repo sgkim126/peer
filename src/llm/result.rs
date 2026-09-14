@@ -37,8 +37,10 @@ impl LlmUsage {
             models: Vec::new(),
         }
     }
+}
 
-    pub fn from_pi_models(models: Vec<LlmModelUsage>) -> Self {
+impl From<Vec<LlmModelUsage>> for LlmUsage {
+    fn from(models: Vec<LlmModelUsage>) -> Self {
         let input_tokens = models.iter().map(|usage| usage.input_tokens).sum();
         let output_tokens = models.iter().map(|usage| usage.output_tokens).sum();
         let cache_read_tokens = models.iter().map(|usage| usage.cache_read_tokens).sum();
@@ -80,7 +82,7 @@ mod tests {
 
     #[test]
     fn pi_usage_preserves_cache_tokens_and_model_costs() {
-        let usage = LlmUsage::from_pi_models(vec![LlmModelUsage {
+        let usage = LlmUsage::from(vec![LlmModelUsage {
             provider: "mistral".to_string(),
             model: "mistral-medium-3-5".to_string(),
             input_tokens: 100,
