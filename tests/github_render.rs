@@ -267,6 +267,58 @@ fn terminal_does_not_require_configuration() {
 }
 
 #[test]
+fn terminal_renders_model_usage_arrays_and_derives_totals_from_stages() {
+    let directory = tempfile::tempdir().unwrap();
+    let input = serde_json::json!({
+        "summary": {"peer_version": "test"},
+        "ordered_commits": ["abc1234"],
+        "usage": [],
+        "stages": [{
+            "stage": "quality",
+            "target": "abc1234",
+            "outcome": {
+                "status": "clean",
+                "summary": "No issues.",
+                "iterations": 2,
+                "usage": [
+                    {
+                        "provider": "first",
+                        "model": "shared",
+                        "input_tokens": 10,
+                        "output_tokens": 2,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
+                        "cost_usd": 0.125
+                    }, {
+                        "provider": "second",
+                        "model": "shared",
+                        "input_tokens": 20,
+                        "output_tokens": 4,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
+                        "cost_usd": 0.25
+                    }
+                ]
+            }
+        }]
+    });
+    let output = render(
+        directory.path(),
+        &["--format", "terminal"],
+        &input.to_string(),
+    );
+    assert!(
+        output.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8(output.stdout).unwrap();
+
+    assert!(stdout.contains("  - first/shared: 10 input, 2 output, $0.125000"));
+    assert!(stdout.contains("  - second/shared: 20 input, 4 output, $0.250000"));
+}
+
+#[test]
 fn markdown_rejects_a_repository_flag_before_parsing_input() {
     let directory = malformed_project();
     assert_error(

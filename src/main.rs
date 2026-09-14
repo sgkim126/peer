@@ -206,27 +206,33 @@ async fn main() -> ExitCode {
                 }
             };
             for stage in &result.stages {
-                info!(
-                    "{} stage for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
-                    stage.stage().as_str(),
-                    stage.target(),
-                    stage.usage().model,
-                    stage.usage().cost_usd,
-                    stage.usage().input_tokens,
-                    stage.usage().output_tokens,
-                );
-            }
-            for error in &result.errors {
-                if let Some(usage) = &error.usage {
+                for usage in stage.usage().iter() {
                     info!(
-                        "{} stage for {}: {} model cost: ${:.6} (input {} tokens, output {} tokens)",
-                        error.stage.as_str(),
-                        error.target,
+                        "{} stage for {}: {}/{} model cost: ${:.6} (input {} tokens, output {} tokens)",
+                        stage.stage().as_str(),
+                        stage.target(),
+                        usage.provider,
                         usage.model,
                         usage.cost_usd,
                         usage.input_tokens,
                         usage.output_tokens,
                     );
+                }
+            }
+            for error in &result.errors {
+                if let Some(usage) = &error.usage {
+                    for usage in usage.iter() {
+                        info!(
+                            "{} stage for {}: {}/{} model cost: ${:.6} (input {} tokens, output {} tokens)",
+                            error.stage.as_str(),
+                            error.target,
+                            usage.provider,
+                            usage.model,
+                            usage.cost_usd,
+                            usage.input_tokens,
+                            usage.output_tokens,
+                        );
+                    }
                 }
                 eprintln!("error: {error}");
                 debug!("{error:?}");

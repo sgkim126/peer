@@ -2,7 +2,6 @@ pub mod github;
 mod markdown;
 mod terminal;
 
-use std::collections::BTreeMap;
 use std::fmt;
 
 use serde::{Deserialize, Serialize};
@@ -19,20 +18,84 @@ use crate::stage::{
 };
 
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "RenderDocumentWire", into = "RenderDocumentWire")]
 pub struct RenderDocument {
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<ReviewSummary>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub context_usage: Option<LlmUsage>,
     pub ordered_commits: Vec<CommitHash>,
-    #[serde(default)]
     pub questions: Vec<KnowledgeQuestion>,
-    #[serde(default)]
     pub recommendations: Vec<StructuralRecommendation>,
-    #[serde(default)]
     pub findings: Vec<RenderFinding>,
     pub stages: Vec<RenderStage>,
+}
+
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct RenderDocumentWire {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    summary: Option<ReviewSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    context_usage: Option<LlmUsage>,
+    #[serde(default)]
+    usage: LlmUsage,
+    ordered_commits: Vec<CommitHash>,
+    #[serde(default)]
+    questions: Vec<KnowledgeQuestion>,
+    #[serde(default)]
+    recommendations: Vec<StructuralRecommendation>,
+    #[serde(default)]
+    findings: Vec<RenderFinding>,
+    stages: Vec<RenderStage>,
+}
+
+impl From<RenderDocument> for RenderDocumentWire {
+    fn from(document: RenderDocument) -> Self {
+        let usage = usage_by_model(&document);
+        let RenderDocument {
+            summary,
+            context_usage,
+            ordered_commits,
+            questions,
+            recommendations,
+            findings,
+            stages,
+        } = document;
+        Self {
+            summary,
+            context_usage,
+            usage,
+            ordered_commits,
+            questions,
+            recommendations,
+            findings,
+            stages,
+        }
+    }
+}
+
+impl From<RenderDocumentWire> for RenderDocument {
+    fn from(document: RenderDocumentWire) -> Self {
+        // Totals are derived from stage and context entries so supplied totals cannot go stale.
+        let RenderDocumentWire {
+            summary,
+            context_usage,
+            usage: _,
+            ordered_commits,
+            questions,
+            recommendations,
+            findings,
+            stages,
+        } = document;
+        Self {
+            summary,
+            context_usage,
+            ordered_commits,
+            questions,
+            recommendations,
+            findings,
+            stages,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -753,21 +816,16 @@ fn review_counts(document: &RenderDocument) -> ReviewCounts {
     counts
 }
 
-fn usage_by_model(document: &RenderDocument) -> BTreeMap<String, crate::review::ModelUsage> {
-    let mut usage = BTreeMap::new();
-    for item in document
-        .context_usage
-        .iter()
-        .chain(document.stages.iter().filter_map(RenderStage::usage))
-    {
-        let total = usage
-            .entry(item.model.clone())
-            .or_insert_with(crate::review::ModelUsage::default);
-        total.input_tokens += item.input_tokens;
-        total.output_tokens += item.output_tokens;
-        total.cost_usd += item.cost_usd;
-    }
-    usage
+fn usage_by_model(document: &RenderDocument) -> LlmUsage {
+    LlmUsage::from(
+        document
+            .context_usage
+            .iter()
+            .chain(document.stages.iter().filter_map(RenderStage::usage))
+            .flat_map(LlmUsage::iter)
+            .cloned()
+            .collect::<Vec<_>>(),
+    )
 }
 
 fn join_review_sections(sections: impl IntoIterator<Item = String>) -> String {
@@ -835,6 +893,7 @@ mod tests {
 
     use std::assert_matches;
 
+    use crate::llm::LlmModelUsage;
     use crate::stage::FileLocation;
 
     fn result() -> StageResult {
@@ -869,36 +928,34 @@ mod tests {
             iterations: 2,
             failure: None,
             context_usage: None,
-            usage: LlmUsage {
+            usage: LlmUsage::from(vec![LlmModelUsage {
+                provider: "test-provider".to_string(),
+                model: "test-model".to_string(),
                 input_tokens: 100,
                 output_tokens: 20,
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 cost_usd: 0.001,
-                model: "test-model".to_string(),
-                models: Vec::new(),
-            },
+            }]),
         }
     }
 
     fn review_summary() -> crate::review::ReviewSummary {
         crate::review::ReviewSummary {
             peer_version: "0.1.0".to_string(),
-            provider: "test-provider".to_string(),
-            model: "test-model".to_string(),
         }
     }
 
     fn review_context_usage() -> LlmUsage {
-        LlmUsage {
+        LlmUsage::from(vec![LlmModelUsage {
+            provider: "test-provider".to_string(),
+            model: "test-model".to_string(),
             input_tokens: 40,
             output_tokens: 10,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             cost_usd: 0.0004,
-            model: "test-model".to_string(),
-            models: Vec::new(),
-        }
+        }])
     }
 
     fn review_ordered_commits() -> Vec<CommitHash> {
@@ -957,12 +1014,7 @@ mod tests {
         let totals = usage_by_model(&document);
 
         assert_eq!(document.stages[0].usage(), Some(&expected));
-        assert_eq!(totals[&expected.model].input_tokens, expected.input_tokens);
-        assert_eq!(
-            totals[&expected.model].output_tokens,
-            expected.output_tokens
-        );
-        assert_eq!(totals[&expected.model].cost_usd, expected.cost_usd);
+        assert_eq!(totals, expected);
     }
 
     fn review_document(
@@ -985,6 +1037,91 @@ mod tests {
             findings,
             stages,
         }
+    }
+
+    fn model_usage(provider: &str, model: &str, units: u64) -> LlmModelUsage {
+        LlmModelUsage {
+            provider: provider.into(),
+            model: model.into(),
+            input_tokens: units * 10,
+            output_tokens: units * 2,
+            cache_read_tokens: units * 3,
+            cache_write_tokens: units * 4,
+            cost_usd: units as f64 * 0.125,
+        }
+    }
+
+    #[test]
+    fn totals_merge_all_models_across_stages() {
+        let mut first = result();
+        first.usage = LlmUsage::from(vec![
+            model_usage("provider-a", "alpha", 1),
+            model_usage("provider-b", "beta", 2),
+        ]);
+        let mut second = result();
+        second.stage = "quality".into();
+        second.usage = LlmUsage::from(vec![model_usage("provider-a", "alpha", 3)]);
+        let document = review_document(vec![first, second], None);
+
+        assert_eq!(
+            usage_by_model(&document),
+            LlmUsage::from(vec![
+                model_usage("provider-a", "alpha", 4),
+                model_usage("provider-b", "beta", 2),
+            ])
+        );
+    }
+
+    #[test]
+    fn totals_keep_the_same_model_id_separate_for_each_provider() {
+        let mut first = result();
+        first.usage = LlmUsage::from(vec![model_usage("provider-a", "shared", 1)]);
+        let mut second = result();
+        second.usage = LlmUsage::from(vec![model_usage("provider-b", "shared", 2)]);
+        let document = review_document(vec![first, second], None);
+
+        assert_eq!(
+            usage_by_model(&document),
+            LlmUsage::from(vec![
+                model_usage("provider-a", "shared", 1),
+                model_usage("provider-b", "shared", 2),
+            ])
+        );
+    }
+
+    #[test]
+    fn totals_include_context_and_execution_failure_usage_once() {
+        let mut stage = result();
+        stage.usage = LlmUsage::from(vec![model_usage("provider", "model", 1)]);
+        let mut document = review_document(
+            vec![stage],
+            Some(LlmUsage::from(vec![model_usage("provider", "model", 2)])),
+        );
+        document.stages.push(RenderStage {
+            stage: "quality".into(),
+            target: StageTarget::Commit(CommitHash::new("abc1234").unwrap()),
+            outcome: RenderStageOutcome::Failed {
+                failure: RenderStageFailure::Execution {
+                    reason: "invalid output".into(),
+                    usage: Some(LlmUsage::from(vec![model_usage("provider", "model", 3)])),
+                },
+            },
+        });
+        document.stages.push(RenderStage {
+            stage: "security".into(),
+            target: StageTarget::Commit(CommitHash::new("def5678").unwrap()),
+            outcome: RenderStageOutcome::Failed {
+                failure: RenderStageFailure::Execution {
+                    reason: "provider unavailable".into(),
+                    usage: None,
+                },
+            },
+        });
+
+        assert_eq!(
+            usage_by_model(&document),
+            LlmUsage::from(vec![model_usage("provider", "model", 6)])
+        );
     }
 
     #[test]
@@ -1035,7 +1172,7 @@ mod tests {
                 ordered_commits: vec![commit],
                 outcome: StageOutcome::Completed { report },
                 iterations: 1,
-                usage: LlmUsage::zero("test-model"),
+                usage: LlmUsage::zero("test-provider", "test-model"),
             })],
             errors: Vec::new(),
         };
@@ -1127,7 +1264,7 @@ mod tests {
             }]
         }))
         .unwrap();
-        let usage = LlmUsage::zero("test-model");
+        let usage = LlmUsage::zero("test-provider", "test-model");
         let review = PipelineReviewResult {
             summary: review_summary(),
             ordered_commits: ordered_commits.clone(),
@@ -1372,10 +1509,19 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
         assert!(output.starts_with("{\n  \"summary\""));
-        assert_eq!(value["summary"]["peer_version"], "0.1.0");
-        assert_eq!(value["summary"]["provider"], "test-provider");
-        assert_eq!(value["summary"]["model"], "test-model");
-        assert_eq!(value["summary"].get("usage_by_model"), None);
+        assert_eq!(
+            value["summary"],
+            serde_json::json!({"peer_version": "0.1.0"})
+        );
+        assert_eq!(value["usage"][0]["provider"], "test-provider");
+        assert_eq!(value["usage"][0]["model"], "test-model");
+        assert_eq!(value["usage"][0]["input_tokens"], 200);
+        assert_eq!(value["usage"][0]["output_tokens"], 40);
+        assert_eq!(value["usage"][0]["cost_usd"], 0.002);
+        assert_eq!(
+            value["stages"][0]["outcome"]["usage"][0]["input_tokens"],
+            100
+        );
         assert_eq!(value["stages"].as_array().unwrap().len(), 2);
         assert_eq!(value["stages"][0]["stage"], "security");
         assert_eq!(value["questions"], serde_json::json!([]));
@@ -1390,20 +1536,20 @@ mod tests {
             (
                 OutputFormat::Terminal,
                 None,
-                "- Context usage: 40 input, 10 output, $0.000400 (test-model)",
-                "  - test-model: 240 input, 50 output, $0.002400",
+                "- Context usage: 40 input, 10 output, $0.000400 (test-provider/test-model)",
+                "  - test-provider/test-model: 240 input, 50 output, $0.002400",
             ),
             (
                 OutputFormat::Markdown,
                 None,
-                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-model)",
-                "- **test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
+                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-provider/test\\-model)",
+                "- **test\\-provider/test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
             ),
             (
                 OutputFormat::Github,
                 Some("owner/repo".to_string()),
-                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-model)",
-                "- **test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
+                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-provider/test\\-model)",
+                "- **test\\-provider/test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
             ),
         ] {
             let mut second = result();
@@ -1425,9 +1571,11 @@ mod tests {
         let output = render_json(review).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
 
-        assert_eq!(value["context_usage"]["input_tokens"], 40);
-        assert_eq!(value["context_usage"]["output_tokens"], 10);
-        assert_eq!(value["context_usage"]["model"], "test-model");
+        assert_eq!(value["context_usage"][0]["input_tokens"], 40);
+        assert_eq!(value["context_usage"][0]["output_tokens"], 10);
+        assert_eq!(value["context_usage"][0]["model"], "test-model");
+        assert_eq!(value["usage"][0]["input_tokens"], 140);
+        assert_eq!(value["usage"][0]["output_tokens"], 30);
         assert_eq!(value["stages"][0].get("context_usage"), None);
     }
 
@@ -1435,24 +1583,21 @@ mod tests {
     fn renders_review_summary_before_stages_in_human_readable_formats() {
         let mut second = result();
         second.stage = "quality".into();
-        for (format, repo, expected_usage, expected_provider) in [
+        for (format, repo, expected_usage) in [
             (
                 OutputFormat::Terminal,
                 None,
-                "  - test-model: 200 input, 40 output, $0.002000",
-                "- Provider: test-provider",
+                "  - test-provider/test-model: 200 input, 40 output, $0.002000",
             ),
             (
                 OutputFormat::Markdown,
                 None,
-                "- **test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
-                "- **Provider:** test-provider",
+                "- **test\\-provider/test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
             ),
             (
                 OutputFormat::Github,
                 Some("owner/repo".to_string()),
-                "- **test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
-                "- **Provider:** test-provider",
+                "- **test\\-provider/test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
             ),
         ] {
             let review = review_document(vec![result(), second.clone()], None);
@@ -1466,7 +1611,9 @@ mod tests {
             assert!(output.contains(expected_usage));
             assert!(output.contains("Review summary"));
             assert!(output.contains("Peer version:"));
-            assert!(output.contains(expected_provider));
+            let summary = &output[..output.find("Total token usage").unwrap()];
+            assert!(!summary.contains("Provider:"));
+            assert!(!summary.contains("Model:"));
             assert!(
                 output.find("Review summary").unwrap() < output.find("Total token usage").unwrap()
             );
@@ -1503,6 +1650,67 @@ mod tests {
         assert_eq!(decoded, document);
         assert_eq!(value.get("summary"), None);
         assert_eq!(value.get("context_usage"), None);
+    }
+
+    #[test]
+    fn serialized_totals_are_recomputed_from_stage_and_context_usage() {
+        let document = review_document(vec![result()], Some(review_context_usage()));
+        let mut input = serde_json::to_value(&document).unwrap();
+        input["usage"] = serde_json::to_value(LlmUsage::from(vec![model_usage(
+            "stale-provider",
+            "stale-model",
+            99,
+        )]))
+        .unwrap();
+
+        let decoded: RenderDocument = serde_json::from_value(input).unwrap();
+        let output = serde_json::to_value(&decoded).unwrap();
+
+        assert_eq!(decoded, document);
+        assert_eq!(output["usage"].as_array().unwrap().len(), 1);
+        assert_eq!(output["usage"][0]["provider"], "test-provider");
+        assert_eq!(output["usage"][0]["input_tokens"], 140);
+        assert_eq!(output["usage"][0]["output_tokens"], 30);
+        let round_trip: RenderDocument = serde_json::from_value(output).unwrap();
+        assert_eq!(usage_by_model(&round_trip), usage_by_model(&document));
+    }
+
+    #[test]
+    fn document_totals_can_be_omitted_from_render_input() {
+        let document = RenderDocument::from(result());
+        let mut input = serde_json::to_value(&document).unwrap();
+        input.as_object_mut().unwrap().remove("usage");
+
+        let decoded: RenderDocument = serde_json::from_value(input).unwrap();
+
+        assert_eq!(decoded, document);
+        assert_eq!(usage_by_model(&decoded), result().usage);
+    }
+
+    #[test]
+    fn render_input_rejects_legacy_stage_usage_objects() {
+        let mut input = serde_json::to_value(RenderDocument::from(result())).unwrap();
+        input["stages"][0]["outcome"]["usage"] = serde_json::json!({
+            "model": "test-provider/test-model",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cost_usd": 0.001,
+        });
+
+        assert_matches!(serde_json::from_value::<RenderInput>(input), Err(_));
+    }
+
+    #[test]
+    fn render_input_rejects_usage_objects_for_document_totals() {
+        let mut input = serde_json::to_value(RenderDocument::from(result())).unwrap();
+        input["usage"] = serde_json::json!({
+            "model": "test-provider/test-model",
+            "input_tokens": 100,
+            "output_tokens": 20,
+            "cost_usd": 0.001,
+        });
+
+        assert_matches!(serde_json::from_value::<RenderInput>(input), Err(_));
     }
 
     #[test]
@@ -1593,6 +1801,18 @@ mod tests {
                 assert!(!output.contains("Review findings"));
             }
         }
+    }
+
+    #[test]
+    fn execution_failure_usage_serializes_as_a_model_array() {
+        let failure = RenderStageFailure::Execution {
+            reason: "invalid output".into(),
+            usage: Some(result().usage),
+        };
+
+        let value = serde_json::to_value(failure).unwrap();
+
+        assert!(value["usage"].is_array());
     }
 
     #[test]

@@ -1,12 +1,11 @@
-use std::collections::BTreeMap;
 use std::fmt::{self, Write};
 use std::io::IsTerminal;
 
 use owo_colors::Style;
 
 use crate::git::CommitHash;
-use crate::llm::LlmUsage;
-use crate::review::{ModelUsage, ReviewSummary};
+use crate::llm::{LlmModelUsage, LlmUsage};
+use crate::review::ReviewSummary;
 use crate::stage::{
     FileLocation, KnowledgeQuestion, Severity, StageFailure, StageTarget, StructuralRecommendation,
 };
@@ -123,15 +122,13 @@ fn render_context_usage(usage: &LlmUsage) -> String {
 fn render_review_summary(
     summary: &ReviewSummary,
     context_usage: Option<&LlmUsage>,
-    usage_by_model: &BTreeMap<String, ModelUsage>,
+    usage_by_model: &LlmUsage,
     counts: &ReviewCounts,
     use_color: bool,
 ) -> String {
     let mut output = String::new();
     writeln!(output, "{}", label("Review summary:", use_color)).unwrap();
     writeln!(output, "- Peer version: {}", summary.peer_version).unwrap();
-    writeln!(output, "- Provider: {}", summary.provider).unwrap();
-    writeln!(output, "- Model: {}", summary.model).unwrap();
     writeln!(output, "- Info findings: {}", counts.info).unwrap();
     writeln!(output, "- Low findings: {}", counts.low).unwrap();
     writeln!(output, "- Medium findings: {}", counts.medium).unwrap();
@@ -140,60 +137,73 @@ fn render_review_summary(
     writeln!(output, "- Exhausted stages: {}", counts.exhausted).unwrap();
     writeln!(output, "- Failed stages: {}", counts.failed).unwrap();
     if let Some(usage) = context_usage {
-        writeln!(
-            output,
-            "- Context usage: {} input, {} output, ${:.6} ({})",
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cost_usd,
-            escape_terminal(&usage.model),
-        )
-        .unwrap();
+        if usage.is_empty() {
+            writeln!(output, "- Context usage: none").unwrap();
+        }
+        for model in usage.iter() {
+            write!(output, "- Context usage: ").unwrap();
+            write_model_usage(&mut output, model);
+            writeln!(
+                output,
+                " ({}/{})",
+                escape_terminal(&model.provider),
+                escape_terminal(&model.model),
+            )
+            .unwrap();
+        }
     }
     writeln!(output, "- Total token usage:").unwrap();
     if usage_by_model.is_empty() {
         write!(output, "  - none").unwrap();
     } else {
-        for (model, usage) in usage_by_model {
-            writeln!(
+        for usage in usage_by_model.iter() {
+            write!(
                 output,
-                "  - {}: {} input, {} output, ${:.6}",
-                escape_terminal(model),
-                usage.input_tokens,
-                usage.output_tokens,
-                usage.cost_usd,
+                "  - {}/{}: ",
+                escape_terminal(&usage.provider),
+                escape_terminal(&usage.model),
             )
             .unwrap();
+            write_model_usage(&mut output, usage);
+            writeln!(output).unwrap();
         }
     }
     output.trim_end().to_string()
 }
 
 fn write_usage(output: &mut String, label: &str, usage: &LlmUsage) {
-    writeln!(output).unwrap();
-    if usage.cache_read_tokens == 0 && usage.cache_write_tokens == 0 {
+    if usage.is_empty() {
+        write!(output, "\n{label}: none").unwrap();
+    }
+    for model in usage.iter() {
+        write!(output, "\n{label}: ").unwrap();
+        write_model_usage(output, model);
         write!(
             output,
-            "{label}: {} input, {} output, ${:.6} ({})",
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cost_usd,
-            escape_terminal(&usage.model)
-        )
-        .unwrap();
-    } else {
-        write!(
-            output,
-            "{label}: {} input, {} output, {} cache read, {} cache write, ${:.6} ({})",
-            usage.input_tokens,
-            usage.output_tokens,
-            usage.cache_read_tokens,
-            usage.cache_write_tokens,
-            usage.cost_usd,
-            escape_terminal(&usage.model)
+            " ({}/{})",
+            escape_terminal(&model.provider),
+            escape_terminal(&model.model),
         )
         .unwrap();
     }
+}
+
+fn write_model_usage(output: &mut String, usage: &LlmModelUsage) {
+    write!(
+        output,
+        "{} input, {} output",
+        usage.input_tokens, usage.output_tokens,
+    )
+    .unwrap();
+    if usage.cache_read_tokens != 0 || usage.cache_write_tokens != 0 {
+        write!(
+            output,
+            ", {} cache read, {} cache write",
+            usage.cache_read_tokens, usage.cache_write_tokens,
+        )
+        .unwrap();
+    }
+    write!(output, ", ${:.6}", usage.cost_usd).unwrap();
 }
 
 fn label(value: &str, use_color: bool) -> String {
@@ -444,15 +454,15 @@ mod tests {
             iterations: 2,
             failure: None,
             context_usage: None,
-            usage: LlmUsage {
+            usage: LlmUsage::from(vec![LlmModelUsage {
+                provider: "test-provider".to_string(),
                 input_tokens: 100,
                 output_tokens: 20,
                 cache_read_tokens: 0,
                 cache_write_tokens: 0,
                 cost_usd: 0.001,
                 model: "test-model".to_string(),
-                models: Vec::new(),
-            },
+            }]),
         }
     }
 
@@ -461,26 +471,117 @@ mod tests {
         let rendered = crate::render::RenderStageParts::from(result());
         let output = render_stage(&rendered.stage, false);
 
-        assert!(output.contains("Stage usage: 100 input, 20 output, $0.001000 (test-model)"));
+        assert!(
+            output.contains(
+                "Stage usage: 100 input, 20 output, $0.001000 (test-provider/test-model)"
+            )
+        );
         assert!(!output.contains("\u{1b}["));
     }
 
     #[test]
     fn includes_context_usage_separately() {
         let mut result = result();
-        result.context_usage = Some(LlmUsage {
+        result.context_usage = Some(LlmUsage::from(vec![LlmModelUsage {
+            provider: "test-provider".to_string(),
             input_tokens: 40,
             output_tokens: 10,
             cache_read_tokens: 0,
             cache_write_tokens: 0,
             cost_usd: 0.0004,
             model: "context-model".to_string(),
-            models: Vec::new(),
-        });
+        }]));
 
         let output = render_context_usage(result.context_usage.as_ref().unwrap());
 
-        assert!(output.contains("Context usage: 40 input, 10 output, $0.000400 (context-model)"));
+        assert!(output.contains(
+            "Context usage: 40 input, 10 output, $0.000400 (test-provider/context-model)"
+        ));
+    }
+
+    fn multi_model_usage() -> LlmUsage {
+        let first = result().usage.iter().next().unwrap().clone();
+        let second = LlmModelUsage {
+            provider: "other-provider".into(),
+            model: first.model.clone(),
+            input_tokens: 40,
+            output_tokens: 10,
+            cache_read_tokens: 80,
+            cache_write_tokens: 10,
+            cost_usd: 0.0004,
+        };
+        LlmUsage::from(vec![first, second])
+    }
+
+    #[test]
+    fn includes_each_model_in_stage_usage() {
+        let mut result = result();
+        result.usage = multi_model_usage();
+        let rendered = crate::render::RenderStageParts::from(result);
+
+        let output = render_stage(&rendered.stage, false);
+
+        assert!(
+            output.contains(
+                "Stage usage: 100 input, 20 output, $0.001000 (test-provider/test-model)"
+            )
+        );
+        assert!(output.contains(
+            "Stage usage: 40 input, 10 output, 80 cache read, 10 cache write, $0.000400 (other-provider/test-model)"
+        ));
+    }
+
+    #[test]
+    fn includes_each_model_in_context_usage() {
+        let usage = multi_model_usage();
+
+        let output = render_context_usage(&usage);
+
+        assert!(
+            output.contains(
+                "Context usage: 100 input, 20 output, $0.001000 (test-provider/test-model)"
+            )
+        );
+        assert!(output.contains(
+            "Context usage: 40 input, 10 output, 80 cache read, 10 cache write, $0.000400 (other-provider/test-model)"
+        ));
+    }
+
+    #[test]
+    fn includes_each_model_in_review_summary() {
+        let summary = ReviewSummary {
+            peer_version: "test".into(),
+        };
+        let usage = LlmUsage::from(vec![
+            LlmModelUsage {
+                provider: "provider".into(),
+                model: "alpha".into(),
+                input_tokens: 40,
+                output_tokens: 8,
+                cache_read_tokens: 12,
+                cache_write_tokens: 16,
+                cost_usd: 0.5,
+            },
+            LlmModelUsage {
+                provider: "provider".into(),
+                model: "beta".into(),
+                input_tokens: 20,
+                output_tokens: 4,
+                cache_read_tokens: 6,
+                cache_write_tokens: 8,
+                cost_usd: 0.25,
+            },
+        ]);
+
+        let output = render_review_summary(&summary, None, &usage, &ReviewCounts::default(), false);
+
+        assert!(output.contains(
+            "  - provider/alpha: 40 input, 8 output, 12 cache read, 16 cache write, $0.500000"
+        ));
+        assert!(output.contains(
+            "  - provider/beta: 20 input, 4 output, 6 cache read, 8 cache write, $0.250000"
+        ));
+        assert!(!output.contains("multiple"));
     }
 
     #[test]

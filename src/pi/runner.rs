@@ -1,4 +1,3 @@
-use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
 
@@ -188,8 +187,6 @@ struct SessionRecord {
     status: SessionStatus,
     session_id: String,
     session_path: PathBuf,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    last_usage_entry_id: Option<String>,
 }
 
 impl SessionRecord {
@@ -268,9 +265,7 @@ impl PiRunner {
         record.status = SessionStatus::Running;
         self.write_session(&request.session_key, &record)?;
 
-        let result = self
-            .run_configured(&request, &mut record, continuation)
-            .await;
+        let result = self.run_configured(&request, &record, continuation).await;
         record.status = result.as_ref().map_or_else(
             |failure| failure.error.session_status(),
             |_| SessionStatus::Completed,
@@ -337,7 +332,6 @@ impl PiRunner {
             status: SessionStatus::Running,
             session_id,
             session_path: session_path.to_path_buf(),
-            last_usage_entry_id: None,
         })
     }
 
@@ -350,7 +344,7 @@ impl PiRunner {
     async fn run_configured(
         &mut self,
         request: &PiRunRequest,
-        record: &mut SessionRecord,
+        record: &SessionRecord,
         continuation: bool,
     ) -> Result<PiRunResult, PiRunFailure> {
         let config_bytes = serde_json::to_vec(&request.config)
@@ -414,7 +408,7 @@ impl PiRunner {
                     // Do not request usage over a failed RPC connection
                     return Err(error.into());
                 }
-                let usage = match self.read_usage(record).await {
+                let usage = match read_usage(&mut self.client).await {
                     Ok(usage) => Some(usage),
                     Err(usage_error) => {
                         debug!("cannot read Pi usage after run failure: {usage_error:?}");
@@ -432,11 +426,11 @@ impl PiRunner {
                 outcome,
                 iterations,
             } => {
-                let usage = match self.read_usage(record).await {
+                let usage = match read_usage(&mut self.client).await {
                     Ok(usage) => usage,
                     Err(error) => {
                         warn!("cannot read Pi usage: {error}");
-                        LlmUsage::zero(request.model.to_string())
+                        LlmUsage::zero(request.model.provider(), request.model.model())
                     }
                 };
                 Ok(PiRunResult {
@@ -447,11 +441,11 @@ impl PiRunner {
                 })
             }
             WaitOutcome::Exhausted { turns } => {
-                let usage = match self.read_usage(record).await {
+                let usage = match read_usage(&mut self.client).await {
                     Ok(usage) => usage,
                     Err(error) => {
                         warn!("cannot read Pi usage: {error}");
-                        LlmUsage::zero(request.model.to_string())
+                        LlmUsage::zero(request.model.provider(), request.model.model())
                     }
                 };
                 Err(PiRunFailure {
@@ -460,29 +454,6 @@ impl PiRunner {
                 })
             }
         }
-    }
-
-    async fn read_usage(&mut self, record: &mut SessionRecord) -> Result<LlmUsage, PiRunError> {
-        let entries_command = match &record.last_usage_entry_id {
-            Some(entry_id) => json!({
-                "type": "get_entries",
-                "since": entry_id
-            }),
-            None => json!({
-                "type": "get_entries"
-            }),
-        };
-        let entries = self
-            .client
-            .request(entries_command)
-            .await?
-            .data
-            .ok_or_else(|| PiRunError::InvalidState("get_entries omitted data".to_string()))?;
-        let (usage, leaf_id) = usage_from_entries(&entries)?;
-        if let Some(leaf_id) = leaf_id {
-            record.last_usage_entry_id = Some(leaf_id);
-        }
-        Ok(usage)
     }
 
     async fn wait_for_outcome(
@@ -572,6 +543,19 @@ enum WaitOutcome {
     Exhausted { turns: u32 },
 }
 
+async fn read_usage<R, W>(client: &mut RpcClient<R, W>) -> Result<LlmUsage, PiRunError>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
+    let entries = client
+        .request(json!({ "type": "get_entries" }))
+        .await?
+        .data
+        .ok_or_else(|| PiRunError::InvalidState("get_entries omitted data".to_string()))?;
+    usage_from_entries(&entries)
+}
+
 async fn wait_for_configuration<R, W>(
     client: &mut RpcClient<R, W>,
     digest: &str,
@@ -645,12 +629,12 @@ struct ConfigureEnvelope<'a> {
     config: &'a RunConfig,
 }
 
-fn usage_from_entries(data: &Value) -> Result<(LlmUsage, Option<String>), PiRunError> {
+fn usage_from_entries(data: &Value) -> Result<LlmUsage, PiRunError> {
     let entries = data
         .get("entries")
         .and_then(Value::as_array)
         .ok_or_else(|| PiRunError::InvalidState("get_entries omitted entries".to_string()))?;
-    let mut by_model = BTreeMap::<(String, String), LlmModelUsage>::new();
+    let mut models = Vec::new();
     for message in entries
         .iter()
         .filter(|entry| entry.get("type").and_then(Value::as_str) == Some("message"))
@@ -664,34 +648,20 @@ fn usage_from_entries(data: &Value) -> Result<(LlmUsage, Option<String>), PiRunE
             continue;
         };
         let usage = message.get("usage").unwrap_or(&Value::Null);
-        let total = by_model
-            .entry((provider.to_string(), model.to_string()))
-            .or_insert_with(|| LlmModelUsage {
-                provider: provider.to_string(),
-                model: model.to_string(),
-                input_tokens: 0,
-                output_tokens: 0,
-                cache_read_tokens: 0,
-                cache_write_tokens: 0,
-                cost_usd: 0.0,
-            });
-        total.input_tokens += usage.get("input").and_then(Value::as_u64).unwrap_or(0);
-        total.output_tokens += usage.get("output").and_then(Value::as_u64).unwrap_or(0);
-        total.cache_read_tokens += usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0);
-        total.cache_write_tokens += usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0);
-        total.cost_usd += usage
-            .pointer("/cost/total")
-            .and_then(Value::as_f64)
-            .unwrap_or(0.0);
+        models.push(LlmModelUsage {
+            provider: provider.to_string(),
+            model: model.to_string(),
+            input_tokens: usage.get("input").and_then(Value::as_u64).unwrap_or(0),
+            output_tokens: usage.get("output").and_then(Value::as_u64).unwrap_or(0),
+            cache_read_tokens: usage.get("cacheRead").and_then(Value::as_u64).unwrap_or(0),
+            cache_write_tokens: usage.get("cacheWrite").and_then(Value::as_u64).unwrap_or(0),
+            cost_usd: usage
+                .pointer("/cost/total")
+                .and_then(Value::as_f64)
+                .unwrap_or(0.0),
+        });
     }
-    let leaf_id = data
-        .get("leafId")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    Ok((
-        LlmUsage::from_pi_models(by_model.into_values().collect()),
-        leaf_id,
-    ))
+    Ok(LlmUsage::from(models))
 }
 
 #[cfg(test)]
@@ -701,6 +671,8 @@ mod tests {
     use std::assert_matches;
 
     use tokio::io::{AsyncWriteExt, BufReader, duplex};
+
+    use crate::pi::rpc::{read_record, write_record};
 
     #[tokio::test]
     async fn returns_after_the_extension_acknowledges_configuration() {
@@ -727,9 +699,8 @@ mod tests {
         server.await.unwrap();
     }
 
-    #[test]
-    fn aggregates_pi_usage_by_provider_and_model() {
-        let data = json!({
+    fn session_entries() -> Value {
+        json!({
             "entries": [
                 {
                     "type": "message",
@@ -767,16 +738,91 @@ mod tests {
                 }
             ],
             "leafId": "entry-2"
-        });
+        })
+    }
 
-        let (usage, leaf_id) = usage_from_entries(&data).unwrap();
+    #[test]
+    fn aggregates_pi_usage_by_provider_and_model() {
+        let usage = usage_from_entries(&session_entries()).unwrap();
+        assert_eq!(usage.iter().len(), 1);
+        let usage = usage.iter().next().unwrap();
+        assert_eq!(usage.provider, "mistral");
+        assert_eq!(usage.model, "medium");
         assert_eq!(usage.input_tokens, 30);
         assert_eq!(usage.output_tokens, 5);
         assert_eq!(usage.cache_read_tokens, 16);
         assert_eq!(usage.cache_write_tokens, 1);
         assert!((usage.cost_usd - 0.05).abs() < 1e-9);
-        assert_eq!(usage.models.len(), 1);
-        assert_eq!(leaf_id.as_deref(), Some("entry-2"));
+    }
+
+    async fn read_usage_snapshots(snapshots: Vec<Value>) -> Vec<LlmUsage> {
+        let (client_stream, server_stream) = duplex(4096);
+        let (client_reader, client_writer) = tokio::io::split(client_stream);
+        let mut client = RpcClient::new(BufReader::new(client_reader), client_writer);
+        let count = snapshots.len();
+        let server = tokio::spawn(async move {
+            let (server_reader, mut server_writer) = tokio::io::split(server_stream);
+            let mut server_reader = BufReader::new(server_reader);
+            for data in snapshots {
+                let command: Value = read_record(&mut server_reader).await.unwrap();
+                assert_eq!(command["type"], "get_entries");
+                assert_eq!(command.get("since"), None);
+                write_record(
+                    &mut server_writer,
+                    &json!({
+                        "id": command["id"],
+                        "type": "response",
+                        "command": "get_entries",
+                        "success": true,
+                        "data": data,
+                    }),
+                )
+                .await
+                .unwrap();
+            }
+        });
+
+        let mut usages = Vec::new();
+        for _ in 0..count {
+            usages.push(read_usage(&mut client).await.unwrap());
+        }
+        server.await.unwrap();
+        usages
+    }
+
+    #[tokio::test]
+    async fn reads_all_session_usage_after_model_changes() {
+        let mut after = session_entries();
+        after["entries"][1]["message"]["provider"] = json!("openai");
+        after["entries"][1]["message"]["model"] = json!("reasoning");
+        let before = json!({
+            "entries": [after["entries"][0]],
+            "leafId": "entry-1",
+        });
+
+        let usages = read_usage_snapshots(vec![before, after]).await;
+
+        assert_eq!(usages[0].iter().len(), 1);
+        let models: Vec<_> = usages[1].iter().collect();
+        assert_eq!(models.len(), 2);
+        assert_eq!(Some(models[0]), usages[0].iter().next());
+        assert_eq!(models[1].provider, "openai");
+        assert_eq!(models[1].model, "reasoning");
+        assert_eq!(models[1].input_tokens, 20);
+        assert_eq!(models[1].output_tokens, 3);
+        assert_eq!(models[1].cache_read_tokens, 9);
+        assert_eq!(models[1].cache_write_tokens, 0);
+        assert_eq!(models[1].cost_usd, 0.03);
+    }
+
+    #[tokio::test]
+    async fn repeated_usage_reads_do_not_duplicate_session_totals() {
+        let entries = session_entries();
+
+        let usages = read_usage_snapshots(vec![entries.clone(), entries]).await;
+
+        assert_eq!(usages[0], usages[1]);
+        assert_eq!(usages[1].iter().next().unwrap().input_tokens, 30);
     }
 
     #[test]
@@ -796,7 +842,6 @@ mod tests {
             status,
             session_id: "session-1".to_string(),
             session_path: PathBuf::from("pi-sessions/session.jsonl"),
-            last_usage_entry_id: None,
         }
     }
 

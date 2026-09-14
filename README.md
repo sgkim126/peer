@@ -335,16 +335,32 @@ The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml
 `peer` sends the reviewed code and any supplied review context to the selected model provider.
 Do not review material that the provider is not permitted to receive, and make sure commits submitted for review do not contain passwords, API tokens, or other secrets that must not be disclosed.
 
+Review JSON represents each stage's `usage` and the final result's `usage` as arrays,
+with one entry per provider and model. Each entry includes `provider`, `model`,
+`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `cost_usd`.
+The final array combines stage and shared context usage by provider and model.
+Terminal, Markdown, and GitHub output show the same models and their usage.
+`peer render` accepts this array format; the previous object format is no longer supported.
+
 The reported cost comes from the usage information returned by Pi and remains an estimate.
 Actual billing may differ.
+Usage and cost describe the work recorded to produce the result, including completed
+results loaded from cache and earlier attempts in the same resumed Pi session.
+Each model's reported cost is preserved without recalculating prices.
+If Pi usage cannot be read, usage remains zero or unavailable.
 Review feedback is nondeterministic and can be incomplete, so it does not replace human judgment or dedicated verification tools.
 
 ## Cache management
 
 Review results are stored under `.peer/cache`.
 The cache avoids repeating model work when the relevant inputs have not changed.
+Completed results retain their original provider/model usage and cost, even when
+the currently configured model differs.
+Cached results with an incompatible format are regenerated.
 If a stage exhausts its iteration budget or stops because of a transient provider error, `peer`
 stores the completed conversation and resumes it the next time the same stage runs.
+Resumed usage includes all attempts and models recorded in that session. Starting a
+new session does not include the cost of discarded sessions.
 Pass `--no-resume` to `peer review` to ignore resumable checkpoints for that run.
 
 `peer prune` removes cache data belonging to older `peer` versions while preserving data for the current version.

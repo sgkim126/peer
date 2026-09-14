@@ -142,14 +142,23 @@ async fn reports_comment_creation_failure_without_retrying() {
 
 fn document() -> RenderInput {
     serde_json::from_value(json!({
-        "summary": {"peer_version": "0.14.0", "provider": "test", "model": "test"},
+        "summary": {"peer_version": "0.14.0"},
         "ordered_commits": ["abc1234"],
         "findings": [
             {"commit": "abc1234", "severity": "high", "message": "First issue", "file": "src/main.rs", "line": 5},
             {"commit": "abc1234", "severity": "low", "message": "Second issue"}
         ],
         "stages": [{"stage": "quality", "target": "abc1234", "outcome": {"status": "clean", "summary": "Reviewed", "iterations": 1,
-            "usage": {"input_tokens": 10, "output_tokens": 5, "cost_usd": 0.01, "model": "test"}}}],
+            "usage": [{
+                "provider": "test",
+                "model": "test",
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": 0.01
+            }]
+        }}],
     })).unwrap()
 }
 
@@ -165,13 +174,15 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
         document.ordered_commits = vec![CommitHash::new("def5678").unwrap()];
         document.stages[0].target =
             crate::stage::StageTarget::Commit(CommitHash::new("def5678").unwrap());
-        document.summary.as_mut().unwrap().model = "different-model".into();
         if let crate::render::RenderStageOutcome::Clean {
             usage, iterations, ..
         } = &mut document.stages[0].outcome
         {
-            usage.cost_usd = 42.0;
-            usage.input_tokens = 200;
+            let mut model_usage = usage.iter().next().unwrap().clone();
+            model_usage.model = "different-model".into();
+            model_usage.cost_usd = 42.0;
+            model_usage.input_tokens = 200;
+            *usage = crate::llm::LlmUsage::from(vec![model_usage]);
             *iterations = 3;
         }
     }
