@@ -20,7 +20,7 @@ fn render(arguments: &[&str], input: &str) -> Output {
 const FINDING: &str = r#"{"commit":"abc1234","severity":"high","message":"Check this."}"#;
 
 #[test]
-fn github_output_without_pr_does_not_require_authentication_or_a_checkout() {
+fn github_output_without_publishing_does_not_require_authentication_or_a_checkout() {
     let output = render(&["--format", "github", "--repo", "owner/repo"], FINDING);
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("**finding/high**"));
@@ -29,7 +29,14 @@ fn github_output_without_pr_does_not_require_authentication_or_a_checkout() {
 #[test]
 fn publishing_requires_a_token_without_discovering_project_configuration() {
     let output = render(
-        &["--format", "github", "--repo", "owner/repo", "--pr", "123"],
+        &[
+            "--format",
+            "github",
+            "--repo",
+            "owner/repo",
+            "--github",
+            "123",
+        ],
         FINDING,
     );
     assert_eq!(output.status.code(), Some(1));
@@ -48,7 +55,7 @@ fn publishing_rejects_markdown_before_reading_input() {
             "markdown",
             "--repo",
             "owner/repo",
-            "--pr",
+            "--github",
             "123",
         ],
         "invalid",
@@ -68,7 +75,7 @@ fn publishing_rejects_terminal_before_reading_input() {
             "terminal",
             "--repo",
             "owner/repo",
-            "--pr",
+            "--github",
             "123",
         ],
         "invalid",
@@ -82,30 +89,30 @@ fn publishing_rejects_terminal_before_reading_input() {
 
 #[test]
 fn publishing_without_repo_rejects_markdown_before_reading_input() {
-    let output = render(&["--format", "markdown", "--pr", "123"], "invalid");
+    let output = render(&["--format", "markdown", "--github", "123"], "invalid");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--pr can only be used with --format github")
+            .contains("--github can only be used with --format github")
     );
 }
 
 #[test]
 fn publishing_without_repo_rejects_terminal_before_reading_input() {
-    let output = render(&["--format", "terminal", "--pr", "123"], "invalid");
+    let output = render(&["--format", "terminal", "--github", "123"], "invalid");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--pr can only be used with --format github")
+            .contains("--github can only be used with --format github")
     );
 }
 
 #[test]
 fn publishing_without_repo_rejects_the_default_format_before_reading_input() {
-    let output = render(&["--pr", "123"], "invalid");
+    let output = render(&["--github", "123"], "invalid");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--pr can only be used with --format github")
+            .contains("--github can only be used with --format github")
     );
 }

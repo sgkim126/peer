@@ -73,7 +73,7 @@ fn publishing_uses_repository_configuration_before_requiring_authentication() {
     assert_error(
         render(
             directory.path(),
-            &["--format", "github", "--pr", "123"],
+            &["--format", "github", "--github", "123"],
             FINDING,
         ),
         "GitHub access requires a non-empty GITHUB_TOKEN",
@@ -86,7 +86,7 @@ fn publishing_rejects_missing_repository_configuration_before_authentication() {
     assert_error(
         render(
             directory.path(),
-            &["--format", "github", "--pr", "123"],
+            &["--format", "github", "--github", "123"],
             FINDING,
         ),
         "--format github requires --repo <owner/name> or [github].repo",

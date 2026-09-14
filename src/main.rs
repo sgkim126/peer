@@ -249,7 +249,11 @@ async fn main() -> ExitCode {
                 }
             }
         }
-        Command::Render { format, repo, pr } => {
+        Command::Render {
+            format,
+            repo,
+            github,
+        } => {
             let repo = if format == OutputFormat::Github && repo.is_none() {
                 let cwd = match std::env::current_dir() {
                     Ok(cwd) => cwd,
@@ -277,8 +281,10 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            if pr.is_some() && format != OutputFormat::Github {
-                eprintln!("failed to configure render: --pr can only be used with --format github");
+            if github.is_some() && format != OutputFormat::Github {
+                eprintln!(
+                    "failed to configure render: --github can only be used with --format github"
+                );
                 return ExitCode::FAILURE;
             }
             let mut input = String::new();
@@ -296,7 +302,7 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            if let Some(number) = pr {
+            if let Some(number) = github {
                 let result = async {
                     let repository = github::Repository::parse(
                         repo.as_deref()
