@@ -1,5 +1,5 @@
 name: Peer Review
-description: Run peer init if needed, then produce a peer review JSON document.
+description: Initialize peer if needed, review a GitHub pull request, and publish the results.
 
 inputs:
   version:
@@ -19,35 +19,35 @@ inputs:
     description: Cache key for peer's review cache. Leave empty to disable caching.
     required: false
     default: ""
-  target:
-    description: Git revision or range to review.
+  pr-number:
+    description: GitHub pull request number to review.
     required: true
-  title:
-    description: Pull request title to pass to peer review.
-    required: false
-    default: ""
-  body-file:
-    description: Path to a file containing the pull request body.
-    required: false
-    default: ""
-  comments-file:
-    description: Path to a JSON file containing review comment threads.
-    required: false
-    default: ""
+  repo:
+    description: GitHub repository name in owner/name form.
+    required: true
   trace:
     description: Enable peer trace logging.
     required: false
     default: "false"
 outputs:
-  exit-code:
+  review-exit-code:
     description: Exit code returned by peer review.
     value: ${{ steps.review.outputs.exit-code }}
+  render-exit-code:
+    description: Exit code returned by peer render.
+    value: ${{ steps.render.outputs.exit-code }}
   review-json-path:
     description: Path to the peer review JSON file on the runner.
     value: ${{ steps.review.outputs.review-json-path }}
-  stderr-path:
+  review-stderr-path:
     description: Path to the peer review stderr file on the runner.
     value: ${{ steps.review.outputs.stderr-path }}
+  render-stdout-path:
+    description: Path to the peer render publication report on the runner.
+    value: ${{ steps.render.outputs.stdout-path }}
+  render-stderr-path:
+    description: Path to the peer render stderr file on the runner.
+    value: ${{ steps.render.outputs.stderr-path }}
 
 runs:
   using: composite
@@ -103,11 +103,13 @@ runs:
 
     - name: Initialize peer config
       shell: bash
+      env:
+        PEER_REVIEW_REPO: ${{ inputs.repo }}
       run: |
         set -euo pipefail
 
         if [ ! -d .peer ]; then
-          peer init
+          peer init --repo "$PEER_REVIEW_REPO"
         fi
 
         mkdir -p .peer/cache
@@ -126,10 +128,8 @@ runs:
         PEER_REVIEW_PROVIDER: ${{ inputs.provider }}
         PEER_REVIEW_MODEL: ${{ inputs.model }}
         PEER_REVIEW_NO_RESUME: ${{ inputs.no-resume }}
-        PEER_REVIEW_TARGET: ${{ inputs.target }}
-        PEER_REVIEW_TITLE: ${{ inputs.title }}
-        PEER_REVIEW_BODY_FILE: ${{ inputs.body-file }}
-        PEER_REVIEW_COMMENTS_FILE: ${{ inputs.comments-file }}
+        PEER_REVIEW_PR_NUMBER: ${{ inputs.pr-number }}
+        PEER_REVIEW_REPO: ${{ inputs.repo }}
         PEER_REVIEW_TRACE: ${{ inputs.trace }}
       run: |
         set -euo pipefail
@@ -155,7 +155,7 @@ runs:
         review_json="$RUNNER_TEMP/peer-review.json"
         stderr="$RUNNER_TEMP/peer-review-stderr.log"
         args=(
-          review "$PEER_REVIEW_TARGET"
+          review --github "$PEER_REVIEW_PR_NUMBER" --repo "$PEER_REVIEW_REPO"
         )
 
         if [ -n "$PEER_REVIEW_PROVIDER" ]; then
@@ -170,16 +170,6 @@ runs:
         if [ "$PEER_REVIEW_TRACE" = "true" ]; then
           export RUST_LOG=trace
         fi
-        if [ -n "$PEER_REVIEW_TITLE" ]; then
-          args+=(--title "$PEER_REVIEW_TITLE")
-        fi
-        if [ -n "$PEER_REVIEW_BODY_FILE" ]; then
-          args+=(--body-file "$PEER_REVIEW_BODY_FILE")
-        fi
-        if [ -n "$PEER_REVIEW_COMMENTS_FILE" ]; then
-          args+=(--comments-file "$PEER_REVIEW_COMMENTS_FILE")
-        fi
-
         {
           echo "### peer review command"
           echo
@@ -200,4 +190,43 @@ runs:
 
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         echo "review-json-path=$review_json" >> "$GITHUB_OUTPUT"
+        echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
+
+    - name: Publish peer review
+      id: render
+      if: ${{ always() && steps.review.outputs.review-json-path != '' }}
+      shell: bash
+      env:
+        PEER_RENDER_INPUT_FILE: ${{ steps.review.outputs.review-json-path }}
+        PEER_RENDER_REPO: ${{ inputs.repo }}
+        PEER_RENDER_PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        set -euo pipefail
+
+        stdout="$RUNNER_TEMP/peer-render-stdout.log"
+        stderr="$RUNNER_TEMP/peer-render-stderr.log"
+
+        {
+          echo "### peer render command"
+          echo
+          echo '```bash'
+          printf 'peer render --format github --repo %q --github %q < %q\n' \
+            "$PEER_RENDER_REPO" "$PEER_RENDER_PR_NUMBER" "$PEER_RENDER_INPUT_FILE"
+          echo '```'
+          echo
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        set +e
+        peer render --format github --repo "$PEER_RENDER_REPO" \
+          --github "$PEER_RENDER_PR_NUMBER" \
+          > "$stdout" \
+          2> >(tee "$stderr" >&2) \
+          < "$PEER_RENDER_INPUT_FILE"
+        code=$?
+        set -e
+
+        cat "$stdout"
+
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        echo "stdout-path=$stdout" >> "$GITHUB_OUTPUT"
         echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
