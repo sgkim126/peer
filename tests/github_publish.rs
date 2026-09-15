@@ -108,11 +108,12 @@ fn publishing_without_repo_rejects_terminal_before_reading_input() {
 }
 
 #[test]
-fn publishing_without_repo_rejects_the_default_format_before_reading_input() {
-    let output = render(&["--github", "123"], "invalid");
+fn publishing_with_default_format_requires_a_token() {
+    let output = render(&["--github", "123", "--repo", "owner/repo"], FINDING);
     assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--github can only be used with --format github")
+            .contains("GitHub access requires a non-empty GITHUB_TOKEN")
     );
 }

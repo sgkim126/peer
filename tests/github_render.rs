@@ -81,6 +81,15 @@ fn publishing_uses_repository_configuration_before_requiring_authentication() {
 }
 
 #[test]
+fn publishing_with_default_format_uses_repository_configuration_before_requiring_authentication() {
+    let directory = project(Some("configured/repository"));
+    assert_error(
+        render(directory.path(), &["--github", "123"], FINDING),
+        "GitHub access requires a non-empty GITHUB_TOKEN",
+    );
+}
+
+#[test]
 fn publishing_rejects_missing_repository_configuration_before_authentication() {
     let directory = project(None);
     assert_error(
