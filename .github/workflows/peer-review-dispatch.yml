@@ -38,7 +38,7 @@ permissions:
   pull-requests: write
 
 env:
-  PEER_VERSION: "0.13.1"
+  PEER_VERSION: "0.15.0"
 
 jobs:
   review:
@@ -80,47 +80,9 @@ jobs:
             });
 
             core.setOutput('pr-number', String(prNumber));
-            core.setOutput('base-sha', pull.base.sha);
             core.setOutput('head-sha', pull.head.sha);
-            core.setOutput('title', pull.title ?? '');
             core.setOutput('provider', provider);
             core.setOutput('model', model);
-
-      - name: Create peer review placeholder
-        id: placeholder
-        uses: actions/github-script@v9
-        env:
-          PEER_VERSION: ${{ env.PEER_VERSION }}
-          REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
-          REVIEW_MODEL: ${{ steps.review.outputs.model }}
-          REVIEW_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-        with:
-          script: |
-            const peerVersion = process.env.PEER_VERSION;
-            const provider = process.env.REVIEW_PROVIDER;
-            const model = process.env.REVIEW_MODEL;
-            const triggeredBy = process.env.REVIEW_TRIGGERING_ACTOR;
-            const metadata = [
-              `peer version: ${peerVersion}`,
-              `provider: ${provider}`,
-              `model: ${model}`,
-            ].join('\n');
-            const commentMetadata = [
-              metadata,
-              `Triggered by @${triggeredBy}`,
-              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
-            ].join('\n');
-
-            const { data: comment } = await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: Number('${{ steps.review.outputs.pr-number }}'),
-              body: `${commentMetadata}\n\n⏳ peer review in progress.`,
-            });
-
-            core.setOutput('comment-id', String(comment.id));
-            core.setOutput('comment-url', comment.html_url);
-            core.setOutput('metadata', metadata);
 
       - name: Checkout pull request
         uses: actions/checkout@v7
@@ -135,85 +97,6 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .peer-action
 
-      - name: Compute pull request merge base
-        id: merge-base
-        env:
-          BASE_SHA: ${{ steps.review.outputs.base-sha }}
-          HEAD_SHA: ${{ steps.review.outputs.head-sha }}
-        run: |
-          set -euo pipefail
-          if ! merge_base="$(git merge-base "$BASE_SHA" "$HEAD_SHA")"; then
-            echo "Could not find a merge base between $BASE_SHA and $HEAD_SHA." >&2
-            exit 1
-          fi
-          echo "base-sha=$merge_base" >> "$GITHUB_OUTPUT"
-
-      - name: Prepare review context
-        id: context
-        uses: actions/github-script@v9
-        with:
-          script: |
-            const fs = require('fs');
-            const os = require('os');
-            const path = require('path');
-            const prNumber = Number('${{ steps.review.outputs.pr-number }}');
-
-            const { data: pull } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-            });
-
-            const isBotComment = (comment) => comment.user?.type === 'Bot';
-            const issueComments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: prNumber,
-              per_page: 100,
-            });
-            const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: prNumber,
-              per_page: 100,
-            });
-
-            const threads = [];
-            for (const comment of issueComments) {
-              if (isBotComment(comment)) continue;
-              threads.push({ comments: [{
-                author: comment.user?.login ?? 'unknown',
-                body: comment.body ?? '',
-              }] });
-            }
-
-            const reviewThreads = new Map();
-            for (const comment of reviewComments) {
-              if (isBotComment(comment)) continue;
-              const root = String(comment.in_reply_to_id ?? comment.id);
-              const thread = reviewThreads.get(root) ?? {
-                commit: comment.commit_id,
-                location: comment.path && (comment.line ?? comment.original_line)
-                  ? { path: comment.path, line: comment.line ?? comment.original_line }
-                  : undefined,
-                comments: [],
-              };
-              thread.comments.push({
-                author: comment.user?.login ?? 'unknown',
-                body: comment.body ?? '',
-              });
-              reviewThreads.set(root, thread);
-            }
-            threads.push(...reviewThreads.values());
-
-            const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'peer-review-'));
-            const bodyFile = path.join(dir, 'body.md');
-            const commentsFile = path.join(dir, 'comments.json');
-            fs.writeFileSync(bodyFile, pull.body ?? '');
-            fs.writeFileSync(commentsFile, JSON.stringify(threads, null, 2));
-            core.setOutput('body-file', bodyFile);
-            core.setOutput('comments-file', commentsFile);
-
       - name: Run peer review
         id: peer
         uses: ./.peer-action/.github/actions/peer-review
@@ -223,352 +106,27 @@ jobs:
           model: ${{ steps.review.outputs.model }}
           no-resume: ${{ inputs.no_resume }}
           cache-key: peer-cache-${{ runner.os }}-${{ github.repository }}-pr-${{ steps.review.outputs.pr-number }}
-          target: ${{ steps.merge-base.outputs.base-sha }}..${{ steps.review.outputs.head-sha }}
-          title: ${{ steps.review.outputs.title }}
-          body-file: ${{ steps.context.outputs.body-file }}
-          comments-file: ${{ steps.context.outputs.comments-file }}
+          pr-number: ${{ steps.review.outputs.pr-number }}
+          repo: ${{ github.repository }}
           trace: ${{ inputs.trace }}
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-      - name: Prepare peer render inputs
-        id: render-inputs
-        uses: actions/github-script@v9
-        env:
-          REVIEW_JSON_PATH: ${{ steps.peer.outputs.review-json-path }}
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-            let review;
-            try {
-              review = JSON.parse(
-                fs.readFileSync(process.env.REVIEW_JSON_PATH, 'utf8'),
-              );
-            } catch (error) {
-              core.warning(`Could not read peer review JSON: ${error.message}`);
-              return;
-            }
-            const inputFile = path.join(
-              process.env.RUNNER_TEMP,
-              'peer-render-inputs.json',
-            );
-            const items = [
-              ...(Array.isArray(review.questions) ? review.questions : []),
-              ...(Array.isArray(review.recommendations) ? review.recommendations : []),
-              ...(Array.isArray(review.findings) ? review.findings : []),
-            ];
-            fs.writeFileSync(inputFile, JSON.stringify([review, ...items]));
-            core.setOutput('input-file', inputFile);
-
-      - name: Render peer review
+      - name: Publish peer review
         id: render
-        if: always() && steps.render-inputs.outputs.input-file != ''
+        if: always() && steps.peer.outputs.review-json-path != ''
         uses: ./.peer-action/.github/actions/peer-render
         with:
           version: ${{ env.PEER_VERSION }}
-          input-file: ${{ steps.render-inputs.outputs.input-file }}
+          input-file: ${{ steps.peer.outputs.review-json-path }}
           repo: ${{ github.repository }}
-
-      - name: Publish peer review
-        if: always() && steps.placeholder.outputs.comment-id != ''
-        uses: actions/github-script@v9
+          pr-number: ${{ steps.review.outputs.pr-number }}
         env:
-          REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
-          REVIEW_EXIT_CODE: ${{ steps.peer.outputs.exit-code }}
-          REVIEW_JSON_PATH: ${{ steps.peer.outputs.review-json-path }}
-          RENDER_RESULTS_PATH: ${{ steps.render.outputs.results-path }}
-          REVIEW_BASE_SHA: ${{ steps.merge-base.outputs.base-sha }}
-          REVIEW_HEAD_SHA: ${{ steps.review.outputs.head-sha }}
-          REVIEW_PR_NUMBER: ${{ steps.review.outputs.pr-number }}
-          REVIEW_COMMENT_ID: ${{ steps.placeholder.outputs.comment-id }}
-          REVIEW_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
-        with:
-          script: |
-            const fs = require('fs');
-            const {
-              publishWithoutRenderedRange,
-              removeRanges,
-              renderedItemRanges,
-              reviewCommentPosition,
-              standaloneQuestionBody,
-            } = require(
-              './.peer-action/.github/scripts/peer-review-comments.cjs',
-            );
-
-            const readJson = (file, description) => {
-              if (!file) return undefined;
-              try {
-                return JSON.parse(fs.readFileSync(file, 'utf8'));
-              } catch (error) {
-                core.warning(`Could not read ${description}: ${error.message}`);
-                return undefined;
-              }
-            };
-
-            const review = readJson(
-              process.env.REVIEW_JSON_PATH,
-              'peer review JSON',
-            );
-            const renderResults = readJson(
-              process.env.RENDER_RESULTS_PATH,
-              'peer render results',
-            ) ?? [];
-            const primaryRender = renderResults[0];
-            const reviewExitCode = process.env.REVIEW_EXIT_CODE;
-            const renderExitCode = String(primaryRender?.exit_code ?? 'unknown');
-            const exitCode = reviewExitCode !== '0' ? reviewExitCode : renderExitCode;
-            const metadata = exitCode === '0' ? '' : process.env.REVIEW_METADATA;
-            const commentMetadata = [
-              metadata,
-              `Triggered by @${process.env.REVIEW_TRIGGERING_ACTOR}`,
-              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
-            ].filter(Boolean).join('\n');
-            const standaloneMetadata = [
-              process.env.REVIEW_METADATA,
-              `Triggered by @${process.env.REVIEW_TRIGGERING_ACTOR}`,
-              `[workflow run](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})`,
-            ].filter(Boolean).join('\n');
-            const standaloneQuestion = (rendered) => (
-              standaloneQuestionBody(rendered, standaloneMetadata)
-            );
-            let output = typeof primaryRender?.stdout === 'string'
-              ? primaryRender.stdout.trim()
-              : '';
-
-            const hashesMatch = (left, right) => (
-              typeof left === 'string'
-              && typeof right === 'string'
-              && (left.startsWith(right) || right.startsWith(left))
-            );
-
-            const resolveCommit = async (commit) => {
-              const result = await exec.getExecOutput(
-                'git',
-                ['rev-parse', '--verify', `${commit}^{commit}`],
-                { ignoreReturnCode: true, silent: true },
-              );
-              const resolved = result.stdout.trim();
-              return result.exitCode === 0 && /^[0-9a-f]{40}$/i.test(resolved)
-                ? resolved
-                : undefined;
-            };
-
-            const diffCache = new Map();
-            const locationDiff = async (file) => {
-              if (diffCache.has(file)) return diffCache.get(file);
-              const result = await exec.getExecOutput(
-                'git',
-                [
-                  'diff',
-                  '--no-color',
-                  '--no-ext-diff',
-                  '--no-textconv',
-                  '--unified=0',
-                  `${process.env.REVIEW_BASE_SHA}..${process.env.REVIEW_HEAD_SHA}`,
-                  '--',
-                  file,
-                ],
-                { ignoreReturnCode: true, silent: true },
-              );
-              const diff = result.exitCode === 0 && result.stdout.trim()
-                ? result.stdout
-                : undefined;
-              diffCache.set(file, diff);
-              return diff;
-            };
-
-            const inlinePosition = async (location) => {
-              const diff = await locationDiff(location.path);
-              return reviewCommentPosition(diff, location.line);
-            };
-
-            const inlineLocation = (type, item) => {
-              if (type === 'finding') {
-                if (
-                  typeof item.commit !== 'string'
-                  || typeof item.file !== 'string'
-                  || item.file.length === 0
-                ) {
-                  return undefined;
-                }
-                return { commit: item.commit, path: item.file, line: item.line };
-              }
-
-              if (
-                !Array.isArray(item.related_commits)
-                || item.related_commits.length !== 1
-                || !item.location
-              ) {
-                return undefined;
-              }
-
-              const commit = item.related_commits[0];
-              const location = item.location;
-              if (
-                typeof location.file !== 'string'
-                || location.file.length === 0
-                || !hashesMatch(commit, location.commit)
-              ) {
-                return undefined;
-              }
-              const fullCommit = commit.length >= location.commit.length
-                ? commit
-                : location.commit;
-              return { commit: fullCommit, path: location.file, line: location.line };
-            };
-
-            if (review && output) {
-              const groups = [
-                ['question', review.questions],
-                ['recommendation', review.recommendations],
-                ['finding', review.findings],
-              ];
-              const itemRanges = renderedItemRanges(
-                output,
-                renderResults.slice(1).map((result) => (
-                  typeof result?.stdout === 'string'
-                    ? result.stdout.trim()
-                    : ''
-                )),
-              );
-              const publishedRanges = [];
-              let resultIndex = 1;
-              for (const [type, items] of groups) {
-                if (!Array.isArray(items)) continue;
-                for (const item of items) {
-                  const result = renderResults[resultIndex];
-                  const renderedRange = itemRanges[resultIndex - 1];
-                  resultIndex += 1;
-                  const rendered = typeof result?.stdout === 'string'
-                    ? result.stdout.trim()
-                    : '';
-                  if (result?.exit_code !== 0 || !rendered) {
-                    core.warning(`Could not render ${type}.`);
-                    continue;
-                  }
-
-                  if (!renderedRange) {
-                    core.warning(`Could not locate rendered ${type} in peer review output.`);
-                    if (!publishWithoutRenderedRange(type)) continue;
-                  }
-
-                  const location = inlineLocation(type, item);
-                  let locationCommit;
-                  let position;
-                  if (location) {
-                    locationCommit = await resolveCommit(location.commit);
-                    if (!locationCommit) {
-                      core.warning(
-                        `Could not resolve ${type} commit ${location.commit}.`,
-                      );
-                    } else {
-                      position = await inlinePosition(location);
-                      if (!position) {
-                        core.warning(
-                          `Could not position ${type} at ${location.commit}:${location.path}${location.line ? `:${location.line}` : ''}.`,
-                        );
-                      }
-                    }
-                  }
-
-                  if (
-                    type === 'question'
-                    && (!location || !locationCommit || !position)
-                  ) {
-                    try {
-                      await github.rest.issues.createComment({
-                        owner: context.repo.owner,
-                        repo: context.repo.repo,
-                        issue_number: Number(process.env.REVIEW_PR_NUMBER),
-                        body: standaloneQuestion(rendered),
-                      });
-                      if (renderedRange) publishedRanges.push(renderedRange);
-                    } catch (error) {
-                      core.warning(`Could not publish question: ${error.message}`);
-                    }
-                    continue;
-                  }
-
-                  if (!location || !locationCommit || !position) continue;
-
-                  const params = {
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    pull_number: Number(process.env.REVIEW_PR_NUMBER),
-                    body: rendered,
-                    commit_id: process.env.REVIEW_HEAD_SHA,
-                    path: location.path,
-                    ...position,
-                  };
-
-                  try {
-                    await github.rest.pulls.createReviewComment(params);
-                    if (renderedRange) publishedRanges.push(renderedRange);
-                  } catch (error) {
-                    core.warning(
-                      `Could not publish ${type} at ${location.commit}:${location.path}: ${error.message}`,
-                    );
-                    if (type === 'question') {
-                      try {
-                        await github.rest.issues.createComment({
-                          owner: context.repo.owner,
-                          repo: context.repo.repo,
-                          issue_number: Number(process.env.REVIEW_PR_NUMBER),
-                          body: standaloneQuestion(rendered),
-                        });
-                        if (renderedRange) publishedRanges.push(renderedRange);
-                      } catch (fallbackError) {
-                        core.warning(
-                          `Could not publish question as an issue comment: ${fallbackError.message}`,
-                        );
-                      }
-                    }
-                  }
-                }
-              }
-
-              output = removeRanges(output, publishedRanges);
-
-              const itemHeadings = new Set([
-                '## Review questions',
-                '## Structural recommendations',
-                '## Review findings',
-              ]);
-              const lines = output.split('\n');
-              const sectionHasBody = (headingIndex) => {
-                for (let index = headingIndex + 1; index < lines.length; index += 1) {
-                  if (lines[index].startsWith('## ')) return false;
-                  if (lines[index].trim() !== '') return true;
-                }
-                return false;
-              };
-              output = lines
-                .filter((line, index) => (
-                  !itemHeadings.has(line)
-                  || sectionHasBody(index)
-                ))
-                .join('\n')
-                .replace(/\n{3,}/g, '\n\n')
-                .trim();
-            }
-
-            const status = exitCode === '0'
-              ? '✅ peer review completed.'
-              : `❌ peer review failed (exit code: ${exitCode || 'unknown'}).`;
-            const body = output
-              ? `${commentMetadata}\n\n${status}\n\n${output}`
-              : `${commentMetadata}\n\n${status}`;
-
-            await github.rest.issues.updateComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              comment_id: Number(process.env.REVIEW_COMMENT_ID),
-              body,
-            });
+          GITHUB_TOKEN: ${{ github.token }}
 
       - name: Upload peer review stderr
         if: always()
@@ -581,23 +139,53 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-      - name: Add peer review comment to summary
-        if: always() && steps.placeholder.outputs.comment-url != ''
+      - name: Add peer review summary
+        if: always()
         uses: actions/github-script@v9
         env:
-          REVIEW_METADATA: ${{ steps.placeholder.outputs.metadata }}
+          REVIEW_PR_NUMBER: ${{ steps.review.outputs.pr-number }}
+          REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
+          REVIEW_MODEL: ${{ steps.review.outputs.model }}
+          REVIEW_EXIT_CODE: ${{ steps.peer.outputs.exit-code }}
+          RENDER_EXIT_CODE: ${{ steps.render.outputs.exit-code }}
+          RENDER_STDOUT_PATH: ${{ steps.render.outputs.stdout-path }}
+          REVIEW_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |
-            const metadata = process.env.REVIEW_METADATA;
-            const metadataItems = metadata
-              .split('\n')
-              .filter(Boolean);
-            await core.summary
-              .addLink(
-                'Pull request #${{ steps.review.outputs.pr-number }}',
-                '${{ github.server_url }}/${{ github.repository }}/pull/${{ steps.review.outputs.pr-number }}',
-              )
-              .addHeading('Peer Review')
-              .addList(metadataItems)
-              .addLink('View peer review comment', '${{ steps.placeholder.outputs.comment-url }}')
+            const fs = require('fs');
+            const reviewExitCode = process.env.REVIEW_EXIT_CODE;
+            const renderExitCode = process.env.RENDER_EXIT_CODE;
+            const exitCode = reviewExitCode !== '0' ? reviewExitCode : renderExitCode;
+            const metadata = [
+              `peer version: ${process.env.PEER_VERSION}`,
+              `provider: ${process.env.REVIEW_PROVIDER || 'unknown'}`,
+              `model: ${process.env.REVIEW_MODEL || 'unknown'}`,
+              `review exit code: ${reviewExitCode || 'unknown'}`,
+              `render exit code: ${renderExitCode || 'unknown'}`,
+              `Triggered by @${process.env.REVIEW_TRIGGERING_ACTOR}`,
+            ];
+            let output = '';
+            if (process.env.RENDER_STDOUT_PATH) {
+              try {
+                output = fs.readFileSync(process.env.RENDER_STDOUT_PATH, 'utf8').trim();
+              } catch (error) {
+                core.warning(`Could not read peer publication output: ${error.message}`);
+              }
+            }
+
+            const status = exitCode === '0'
+              ? '✅ peer review completed.'
+              : `❌ peer review failed (exit code: ${exitCode || 'unknown'}).`;
+            const summary = core.summary.addHeading('Peer Review');
+            if (process.env.REVIEW_PR_NUMBER) {
+              summary.addLink(
+                `Pull request #${process.env.REVIEW_PR_NUMBER}`,
+                `${{ github.server_url }}/${{ github.repository }}/pull/${process.env.REVIEW_PR_NUMBER}`,
+              );
+            }
+            await summary
+              .addList(metadata)
+              .addRaw(`\n${status}\n\n${output}\n`)
               .write();
+
+            if (exitCode !== '0') core.setFailed(status);

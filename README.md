@@ -286,10 +286,10 @@ The selected model receives the review metadata, commit messages, changed-file s
 
 ## GitHub Actions
 
-The bundled composite action downloads a selected `peer` release, initializes the repository when necessary, optionally restores the review cache, and exposes the review's exit code and output paths.
-It currently runs only on a Linux x86-64 runner.
+The bundled composite actions download a selected `peer` release, review a GitHub pull request, and publish the results. They currently run only on a Linux x86-64 runner.
+The review action initializes the repository when necessary with `peer init --repo`, optionally restores the review cache, and exposes the review's exit code and output paths.
 
-The following workflow reviews a pull request without collecting its body and comment threads.
+The following workflow uses `peer` 0.15.0 to load the pull request's commits, title, body, and discussions with `peer review --github`, then publish the review with `peer render --github`.
 
 ```yaml
 name: Peer review
@@ -299,6 +299,7 @@ on:
 
 permissions:
   contents: read
+  pull-requests: write
 
 jobs:
   review:
@@ -308,27 +309,41 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
 
       - id: peer
         uses: sgkim126/peer/.github/actions/peer-review@main
         with:
-          version: "0.12.0"
+          version: "0.15.0"
           provider: mistral
-          target: ${{ github.event.pull_request.base.sha }}..${{ github.event.pull_request.head.sha }}
+          pr-number: ${{ github.event.pull_request.number }}
+          repo: ${{ github.repository }}
         env:
+          GITHUB_TOKEN: ${{ github.token }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
+      - id: publish
+        uses: sgkim126/peer/.github/actions/peer-render@main
+        with:
+          version: "0.15.0"
+          input-file: ${{ steps.peer.outputs.review-json-path }}
+          pr-number: ${{ github.event.pull_request.number }}
+          repo: ${{ github.repository }}
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
       - name: Fail when the review is unsuccessful
-        if: steps.peer.outputs.exit-code != '0'
+        if: steps.peer.outputs.exit-code != '0' || steps.publish.outputs.exit-code != '0'
         run: exit 1
 ```
 
-The action captures the review status instead of failing its own step, which allows a later step to publish the output before deciding whether the job should fail.
-It exposes `exit-code`, `review-json-path`, and `stderr-path`.
+Both actions capture the command status instead of failing their own step, allowing publication before the job checks the result.
+The review action exposes `exit-code`, `review-json-path`, and `stderr-path`. The render action accepts one review JSON document and exposes `exit-code`, `stdout-path`, and `stderr-path`.
+Both commands require `GITHUB_TOKEN`; publishing requires pull request write permission. The review action requires the pull request's commits and history in the local checkout.
 
-See [`.github/actions/peer-review/action.yml`](.github/actions/peer-review/action.yml) for the complete input and output reference.
-The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml`](.github/workflows/peer-review-dispatch.yml) shows how to collect a pull request's title, body, and comments, maintain a placeholder comment, and publish the GitHub-formatted review.
+See [`.github/actions/peer-review/action.yml`](.github/actions/peer-review/action.yml) and [`.github/actions/peer-render/action.yml`](.github/actions/peer-render/action.yml) for the complete input and output reference.
+The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml`](.github/workflows/peer-review-dispatch.yml) records status and publication results in the Actions job summary and publishes the review with `peer render --github`.
 
 ## Privacy and cost
 
