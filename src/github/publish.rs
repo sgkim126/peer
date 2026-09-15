@@ -12,6 +12,8 @@ use super::feedback::{PreparedReview, fingerprints, marker};
 use super::position::{ChangedFile, comment_position};
 use super::{GitHubClient, GitHubError, Repository};
 
+pub const CONVERSATION_MARKER: &str = "<!-- peer-review:conversation:v1 -->";
+
 #[derive(Debug, Default)]
 pub struct PublishReport {
     pub urls: Vec<String>,
@@ -185,6 +187,7 @@ impl GitHubClient {
             .collect::<Vec<_>>();
         let body = review.aggregate(&fallback, include_summary);
         if !body.trim().is_empty() {
+            let body = format!("{body}\n\n{CONVERSATION_MARKER}");
             match self
                 .post::<PublishedComment>(
                     &format!("repos/{repository}/issues/{number}/comments"),

@@ -4,6 +4,8 @@ use std::assert_matches;
 
 use serde_json::{Value, json};
 
+use super::super::feedback::{fingerprints, marker};
+
 fn pull() -> PullRequest {
     PullRequest {
         title: "Title".into(),
@@ -42,6 +44,121 @@ fn with_inline(comments: Vec<Value>) -> ReviewContext {
         vec![],
         serde_json::from_value(json!(comments)).unwrap(),
     )
+}
+
+#[test]
+fn conversation_marker_is_recognized_as_the_entire_body() {
+    assert!(is_peer_conversation(CONVERSATION_MARKER));
+}
+
+#[test]
+fn conversation_marker_is_recognized_after_review_text() {
+    let body = format!("Review\n\n{CONVERSATION_MARKER}");
+    assert!(is_peer_conversation(&body));
+}
+
+#[test]
+fn conversation_marker_is_recognized_with_surrounding_whitespace_and_crlf() {
+    let body = format!("Review\r\n \t{CONVERSATION_MARKER} \t\r\nMore text");
+    assert!(is_peer_conversation(&body));
+}
+
+#[test]
+fn empty_body_is_not_a_peer_conversation() {
+    assert!(!is_peer_conversation(""));
+}
+
+#[test]
+fn fingerprint_marker_is_not_a_peer_conversation() {
+    let body = marker(&"a".repeat(64));
+    assert!(!is_peer_conversation(&body));
+}
+
+#[test]
+fn quoted_conversation_marker_is_not_recognized() {
+    let body = format!("> {CONVERSATION_MARKER}");
+    assert!(!is_peer_conversation(&body));
+}
+
+#[test]
+fn conversation_marker_with_leading_text_is_not_recognized() {
+    let body = format!("Quoted: {CONVERSATION_MARKER}");
+    assert!(!is_peer_conversation(&body));
+}
+
+#[test]
+fn conversation_marker_with_trailing_text_is_not_recognized() {
+    let body = format!("{CONVERSATION_MARKER} extra text");
+    assert!(!is_peer_conversation(&body));
+}
+
+#[test]
+fn incomplete_conversation_marker_is_not_recognized() {
+    assert!(!is_peer_conversation("<!-- peer-review:conversation:v1"));
+}
+
+#[test]
+fn unsupported_conversation_marker_version_is_not_recognized() {
+    let body = CONVERSATION_MARKER.replace(":v1", ":v2");
+    assert!(!is_peer_conversation(&body));
+}
+
+#[test]
+fn conversation_marker_contains_no_fingerprints() {
+    assert!(fingerprints(CONVERSATION_MARKER).is_empty());
+}
+
+#[test]
+fn skips_marked_conversation_comments_and_preserves_other_context() {
+    let marked = format!("Peer review\n\n{CONVERSATION_MARKER}");
+    let legacy = format!("Previous peer review\n\n{}", marker(&"a".repeat(64)));
+    let comments = serde_json::from_value(json!([
+        {"id": 5, "created_at": "2026-01-01T00:00:00Z", "user": null, "body": marked},
+        {"id": 4, "created_at": "2026-01-01T00:00:00Z", "user": {"login": "other[bot]"}, "body": "Bot feedback"},
+        {"id": 3, "created_at": "2026-01-01T00:00:00Z", "user": {"login": "peer[bot]"}, "body": legacy},
+        {"id": 2, "created_at": "2026-01-01T00:00:00Z", "user": {"login": "peer[bot]"}, "body": marked},
+        {"id": 1, "created_at": "2026-01-01T00:00:00Z", "user": {"login": "author"}, "body": "Human answer"},
+    ])).unwrap();
+    let mut root = inline(10, None);
+    root["body"] = json!(marked);
+    let context = review_context(
+        pull(),
+        comments,
+        vec![review(1, "COMMENTED", json!(marked))],
+        serde_json::from_value(json!([root, inline(11, Some(10))])).unwrap(),
+    );
+
+    assert_eq!(context.title.as_deref(), Some("Title"));
+    assert_eq!(context.body.as_deref(), Some("Description"));
+    assert_eq!(
+        context
+            .comments
+            .iter()
+            .map(|thread| thread.comments[0].body.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "Human answer",
+            legacy.as_str(),
+            "Bot feedback",
+            &marked,
+            &marked
+        ]
+    );
+    let thread = &context.comments[4];
+    assert_eq!(thread.location.as_ref().unwrap().path, "src/root.rs");
+    assert_eq!(thread.comments.len(), 2);
+    assert_eq!(thread.comments[1].body, "Inline 11");
+}
+
+#[test]
+fn all_marked_conversation_comments_leave_no_threads() {
+    let comments = serde_json::from_value(json!([{
+        "id": 1, "created_at": "2026-01-01T00:00:00Z", "user": {"login": "author"},
+        "body": format!("Peer review\n\n{CONVERSATION_MARKER}"),
+    }]))
+    .unwrap();
+    let context = review_context(pull(), comments, vec![], vec![]);
+    assert_eq!(context.comments, vec![]);
 }
 
 #[test]

@@ -135,8 +135,11 @@ peer review --github 123 --repo owner/repository
 
 `--github` selects the pull request's commits and loads its title, description,
 conversation comments, submitted review bodies, and inline comment threads,
-including bot comments. It cannot be combined with a positional target,
-`--title`, `--body-file`, or `--comments-file`.
+including bot comments. Conversation comments with a standalone
+`<!-- peer-review:conversation:v1 -->` marker are excluded from review input.
+Older peer comments containing only duplicate-prevention fingerprints remain
+included, as do inline threads and submitted review bodies. It cannot be combined
+with a positional target, `--title`, `--body-file`, or `--comments-file`.
 The pull request's commits and their history must be available in the local Git
 repository; the command does not fetch or check out the pull request. The usual
 commit limit and merge-commit restrictions apply. GitHub input requires both a
@@ -271,6 +274,8 @@ without authentication.
 Findings and questions with a usable location are posted inline on the PR's current head. Added lines use the right side of the diff and deleted lines use the left; a location without a line targets the changed file. Questions require exactly one related commit matching their location. Recommendations, items without a usable location, and failed inline comments are collected into one conversation comment. Complete review documents also include their summary and stage details, with counts covering all findings even when some were posted inline.
 
 Published comments contain hidden, versioned fingerprints. Before posting, peer reads all pages of the PR's conversation and inline comments and skips previously published items. Fingerprints include the feedback kind, content, file, and line, but exclude commit SHAs, so rebasing alone does not repeat the same feedback. Summaries are tracked separately and ignore model, version, usage, cost, and iteration changes. Comments without peer fingerprints are not treated as duplicates.
+
+New conversation comments also include a hidden `<!-- peer-review:conversation:v1 -->` marker so subsequent `peer review --github` runs exclude them from review input. This includes standalone, combined, summary-only, and fallback conversation comments. File and line comments do not receive this marker.
 
 Publishing exits successfully when every new item has been posted inline or collected in the conversation comment. If a response is lost or uncertain, peer reads the comments again before deciding whether a fallback is needed. Failed PR/comment lookups, a PR that changes while loading positions, and unsuccessful final publication return a non-zero status. A later run skips items that were already published successfully. Existing comments are never edited or deleted; duplicate prevention covers sequential reruns, without a lock between simultaneous publishers.
 

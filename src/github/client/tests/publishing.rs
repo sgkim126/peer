@@ -1,4 +1,5 @@
 use super::*;
+use crate::github::publish::CONVERSATION_MARKER;
 use crate::render::{RenderInput, github};
 
 mod inline;
@@ -98,6 +99,7 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
         .unwrap()
         .to_string();
     assert!(body.starts_with(&github::render(&input, "owner/repo")));
+    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 1);
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     assert_eq!(report.urls.len(), 1);
     assert_eq!(report.published, 1);

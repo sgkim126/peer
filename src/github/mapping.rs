@@ -7,6 +7,7 @@ use crate::context::{
 };
 
 use super::client::{IssueComment, PullRequest, PullRequestReview, ReviewComment, User};
+use super::publish::CONVERSATION_MARKER;
 
 pub fn review_context(
     pull: PullRequest,
@@ -20,6 +21,17 @@ pub fn review_context(
         reviews.len(),
         review_comments.len()
     );
+    comments.retain(|comment| {
+        if is_peer_conversation(&comment.body) {
+            trace!(
+                "skipping GitHub conversation comment: comment_id={} reason=peer_conversation",
+                comment.id
+            );
+            false
+        } else {
+            true
+        }
+    });
     let conversation_threads = comments.len();
     let review_count = reviews.len();
     comments.sort_by(|left, right| (&left.created_at, left.id).cmp(&(&right.created_at, right.id)));
@@ -128,6 +140,10 @@ pub fn review_context(
         body: Some(pull.body.unwrap_or_default()),
         comments: threads,
     }
+}
+
+fn is_peer_conversation(body: &str) -> bool {
+    body.lines().any(|line| line.trim() == CONVERSATION_MARKER)
 }
 
 fn thread_comment(user: Option<User>, body: String) -> ReviewThreadComment {
