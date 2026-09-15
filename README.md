@@ -237,7 +237,7 @@ See [`resources/default_config.toml`](resources/default_config.toml) for every c
 
 ## Output and exit status
 
-`peer review` always outputs JSON. Pipe that document to `peer render` to produce a human-readable format; terminal output is the renderer's default. `peer render` also accepts a single `KnowledgeQuestion`, `StructuralRecommendation`, or `RenderFinding` JSON object.
+`peer review` always outputs JSON. Pipe that document to `peer render` to produce a human-readable format; terminal output is the renderer's default unless `--github` is supplied. `peer render` also accepts a single `KnowledgeQuestion`, `StructuralRecommendation`, or `RenderFinding` JSON object.
 
 ```bash
 peer review main..HEAD
@@ -251,22 +251,24 @@ precedence, just as it does for `peer review --github`. Rendering with an
 explicit `--repo` does not read project configuration. The terminal and Markdown
 formats do not read configuration and reject `--repo`.
 
-Add `--github <PR_NUMBER>` to publish the review on that pull request:
+Add `--github <PR_NUMBER>` to publish the review on that pull request. When
+`--format` is omitted, `--github` defaults it to `github`:
 
 ```bash
-peer render --format github --repo owner/repository --github 123 < review.json
+peer render --repo owner/repository --github 123 < review.json
 ```
 
 Publication uses the same repository precedence. When `github.repo` is
 configured, the flag can be omitted:
 
 ```bash
-peer render --format github --github 123 < review.json
+peer render --github 123 < review.json
 ```
 
 Publishing requires a `GITHUB_TOKEN` with pull request write permission.
 It does not require a local checkout, and an explicit `--repo` also removes the
-need for `.peer` configuration. The `--github` option requires `--format github`.
+need for `.peer` configuration. Explicit `--format terminal` or `--format markdown`
+cannot be combined with `--github`.
 The command prints the number of posted comments and their URLs; warnings and
 errors go to stderr. Without `--github`, GitHub rendering continues to print Markdown
 without authentication.

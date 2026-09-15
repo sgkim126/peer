@@ -71,14 +71,19 @@ pub enum Command {
     },
 
     Render {
-        #[arg(long, default_value = "terminal")]
+        /// Output format (defaults to github when --github is supplied).
+        #[arg(
+            long,
+            default_value = "terminal",
+            default_value_if("github", clap::builder::ArgPredicate::IsPresent, "github")
+        )]
         format: OutputFormat,
 
         /// Override github.repo for GitHub-formatted output.
         #[arg(long, value_name = "OWNER/NAME")]
         repo: Option<String>,
 
-        /// Publish the review to this GitHub pull request (requires --format github).
+        /// Publish the review to this GitHub pull request (defaults --format to github).
         #[arg(long, value_name = "PR_NUMBER")]
         github: Option<NonZeroU64>,
     },
@@ -488,6 +493,19 @@ mod tests {
         assert_matches!(
             cli.command,
             Command::Render { repo: None, github: Some(number), .. } if number.get() == 123
+        );
+    }
+
+    #[test]
+    fn render_with_pull_request_defaults_to_github_format() {
+        let cli = parse(&["peer", "render", "--github", "123"]);
+        assert_matches!(
+            cli.command,
+            Command::Render {
+                format: OutputFormat::Github,
+                repo: None,
+                github: Some(number),
+            } if number.get() == 123
         );
     }
 }
