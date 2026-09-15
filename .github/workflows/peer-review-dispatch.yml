@@ -97,7 +97,7 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: .peer-action
 
-      - name: Run peer review
+      - name: Review and publish with peer
         id: peer
         uses: ./.peer-action/.github/actions/peer-review
         with:
@@ -116,26 +116,14 @@ jobs:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
 
-      - name: Publish peer review
-        id: render
-        if: always() && steps.peer.outputs.review-json-path != ''
-        uses: ./.peer-action/.github/actions/peer-render
-        with:
-          version: ${{ env.PEER_VERSION }}
-          input-file: ${{ steps.peer.outputs.review-json-path }}
-          repo: ${{ github.repository }}
-          pr-number: ${{ steps.review.outputs.pr-number }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
       - name: Upload peer review stderr
         if: always()
         uses: actions/upload-artifact@v7
         with:
           name: peer-review-stderr
           path: |
-            ${{ steps.peer.outputs.stderr-path }}
-            ${{ steps.render.outputs.stderr-path }}
+            ${{ steps.peer.outputs.review-stderr-path }}
+            ${{ steps.peer.outputs.render-stderr-path }}
           retention-days: 7
           if-no-files-found: warn
 
@@ -146,9 +134,9 @@ jobs:
           REVIEW_PR_NUMBER: ${{ steps.review.outputs.pr-number }}
           REVIEW_PROVIDER: ${{ steps.review.outputs.provider }}
           REVIEW_MODEL: ${{ steps.review.outputs.model }}
-          REVIEW_EXIT_CODE: ${{ steps.peer.outputs.exit-code }}
-          RENDER_EXIT_CODE: ${{ steps.render.outputs.exit-code }}
-          RENDER_STDOUT_PATH: ${{ steps.render.outputs.stdout-path }}
+          REVIEW_EXIT_CODE: ${{ steps.peer.outputs.review-exit-code }}
+          RENDER_EXIT_CODE: ${{ steps.peer.outputs.render-exit-code }}
+          RENDER_STDOUT_PATH: ${{ steps.peer.outputs.render-stdout-path }}
           REVIEW_TRIGGERING_ACTOR: ${{ github.triggering_actor }}
         with:
           script: |

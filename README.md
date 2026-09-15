@@ -286,8 +286,8 @@ The selected model receives the review metadata, commit messages, changed-file s
 
 ## GitHub Actions
 
-The bundled composite actions download a selected `peer` release, review a GitHub pull request, and publish the results. They currently run only on a Linux x86-64 runner.
-The review action initializes the repository when necessary with `peer init --repo`, optionally restores the review cache, and exposes the review's exit code and output paths.
+The bundled composite action downloads a selected `peer` release, reviews a GitHub pull request, and publishes the results. It currently runs only on a Linux x86-64 runner.
+The action initializes the repository when necessary with `peer init --repo`, optionally restores the review cache, and exposes separate exit codes and output paths for review and publication.
 
 The following workflow uses `peer` 0.15.0 to load the pull request's commits, title, body, and discussions with `peer review --github`, then publish the review with `peer render --github`.
 
@@ -323,26 +323,16 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
 
-      - id: publish
-        uses: sgkim126/peer/.github/actions/peer-render@main
-        with:
-          version: "0.15.0"
-          input-file: ${{ steps.peer.outputs.review-json-path }}
-          pr-number: ${{ github.event.pull_request.number }}
-          repo: ${{ github.repository }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-
-      - name: Fail when the review is unsuccessful
-        if: steps.peer.outputs.exit-code != '0' || steps.publish.outputs.exit-code != '0'
+      - name: Fail when review or publication is unsuccessful
+        if: always() && (steps.peer.outputs.review-exit-code != '0' || steps.peer.outputs.render-exit-code != '0')
         run: exit 1
 ```
 
-Both actions capture the command status instead of failing their own step, allowing publication before the job checks the result.
-The review action exposes `exit-code`, `review-json-path`, and `stderr-path`. The render action accepts one review JSON document and exposes `exit-code`, `stdout-path`, and `stderr-path`.
-Both commands require `GITHUB_TOKEN`; publishing requires pull request write permission. The review action requires the pull request's commits and history in the local checkout.
+The action captures each command's status instead of failing on a non-zero command exit. It attempts publication whenever the review command produces an output path, including when review returns a non-zero status, so any partial review can be published before the job checks both results. Setup or input validation failures still fail the action and can leave outputs unset.
+The action exposes `review-exit-code`, `render-exit-code`, `review-json-path`, `review-stderr-path`, `render-stdout-path`, and `render-stderr-path`.
+Both commands require `GITHUB_TOKEN` with pull request write permission for publishing. The action also requires the selected provider's credentials and the pull request's commits and history in the local checkout.
 
-See [`.github/actions/peer-review/action.yml`](.github/actions/peer-review/action.yml) and [`.github/actions/peer-render/action.yml`](.github/actions/peer-render/action.yml) for the complete input and output reference.
+See [`.github/actions/peer-review/action.yml`](.github/actions/peer-review/action.yml) for the complete input and output reference.
 The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml`](.github/workflows/peer-review-dispatch.yml) records status and publication results in the Actions job summary and publishes the review with `peer render --github`.
 
 ## Privacy and cost

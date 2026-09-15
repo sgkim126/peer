@@ -1,5 +1,5 @@
 name: Peer Review
-description: Run peer init if needed, then produce a peer review JSON document.
+description: Initialize peer if needed, review a GitHub pull request, and publish the results.
 
 inputs:
   version:
@@ -30,15 +30,24 @@ inputs:
     required: false
     default: "false"
 outputs:
-  exit-code:
+  review-exit-code:
     description: Exit code returned by peer review.
     value: ${{ steps.review.outputs.exit-code }}
+  render-exit-code:
+    description: Exit code returned by peer render.
+    value: ${{ steps.render.outputs.exit-code }}
   review-json-path:
     description: Path to the peer review JSON file on the runner.
     value: ${{ steps.review.outputs.review-json-path }}
-  stderr-path:
+  review-stderr-path:
     description: Path to the peer review stderr file on the runner.
     value: ${{ steps.review.outputs.stderr-path }}
+  render-stdout-path:
+    description: Path to the peer render publication report on the runner.
+    value: ${{ steps.render.outputs.stdout-path }}
+  render-stderr-path:
+    description: Path to the peer render stderr file on the runner.
+    value: ${{ steps.render.outputs.stderr-path }}
 
 runs:
   using: composite
@@ -181,4 +190,43 @@ runs:
 
         echo "exit-code=$code" >> "$GITHUB_OUTPUT"
         echo "review-json-path=$review_json" >> "$GITHUB_OUTPUT"
+        echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
+
+    - name: Publish peer review
+      id: render
+      if: ${{ always() && steps.review.outputs.review-json-path != '' }}
+      shell: bash
+      env:
+        PEER_RENDER_INPUT_FILE: ${{ steps.review.outputs.review-json-path }}
+        PEER_RENDER_REPO: ${{ inputs.repo }}
+        PEER_RENDER_PR_NUMBER: ${{ inputs.pr-number }}
+      run: |
+        set -euo pipefail
+
+        stdout="$RUNNER_TEMP/peer-render-stdout.log"
+        stderr="$RUNNER_TEMP/peer-render-stderr.log"
+
+        {
+          echo "### peer render command"
+          echo
+          echo '```bash'
+          printf 'peer render --format github --repo %q --github %q < %q\n' \
+            "$PEER_RENDER_REPO" "$PEER_RENDER_PR_NUMBER" "$PEER_RENDER_INPUT_FILE"
+          echo '```'
+          echo
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        set +e
+        peer render --format github --repo "$PEER_RENDER_REPO" \
+          --github "$PEER_RENDER_PR_NUMBER" \
+          > "$stdout" \
+          2> >(tee "$stderr" >&2) \
+          < "$PEER_RENDER_INPUT_FILE"
+        code=$?
+        set -e
+
+        cat "$stdout"
+
+        echo "exit-code=$code" >> "$GITHUB_OUTPUT"
+        echo "stdout-path=$stdout" >> "$GITHUB_OUTPUT"
         echo "stderr-path=$stderr" >> "$GITHUB_OUTPUT"
