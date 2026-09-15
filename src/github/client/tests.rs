@@ -351,6 +351,49 @@ async fn paginates_comments_and_matches_direct_input() {
 }
 
 #[tokio::test]
+async fn skips_peer_conversation_comments_across_pages() {
+    use crate::github::feedback::marker;
+    use crate::github::publish::CONVERSATION_MARKER;
+
+    let mut first = comment(1, json!({"login": "peer[bot]"}));
+    first["body"] = json!(format!("First peer review\n\n{CONVERSATION_MARKER}"));
+    let mut second = comment(3, Value::Null);
+    second["body"] = json!(format!("Second peer review\n\n{CONVERSATION_MARKER}"));
+    let mut legacy = comment(2, json!({"login": "peer[bot]"}));
+    let legacy_body = format!("Previous peer review\n\n{}", marker(&"a".repeat(64)));
+    legacy["body"] = json!(legacy_body);
+    let server =
+        Server::start(vec![
+        pull(),
+        Reply::json(json!([first])).header(
+            "Link: <{base}repos/owner/repo/issues/123/comments?per_page=100&page=2>; rel=\"next\"",
+        ),
+        Reply::json(json!([second, comment(4, json!({"login": "author"})), legacy])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([{"sha": "abc1234"}])),
+        pull(),
+    ])
+        .await;
+    let context = server
+        .client()
+        .review_input(&repository(), number())
+        .await
+        .unwrap()
+        .context;
+
+    assert_eq!(
+        context
+            .comments
+            .iter()
+            .map(|thread| thread.comments[0].body.as_str())
+            .collect::<Vec<_>>(),
+        [legacy_body.as_str(), "Comment 4"]
+    );
+    assert_eq!(server.requests().len(), 7);
+}
+
+#[tokio::test]
 async fn missing_body_and_comments_match_empty_input_files() {
     let pull = json!({
         "title": "Title", "body": null,

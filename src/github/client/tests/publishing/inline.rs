@@ -62,6 +62,12 @@ async fn publishes_file_comment_at_the_current_head_with_a_hidden_fingerprint() 
     assert_eq!(params["subject_type"], "file");
     assert!(params.get("line").is_none());
     assert!(params.get("side").is_none());
+    assert!(
+        !params["body"]
+            .as_str()
+            .unwrap()
+            .contains(CONVERSATION_MARKER)
+    );
     assert_eq!(
         crate::github::feedback::fingerprints(params["body"].as_str().unwrap()).len(),
         1
@@ -100,6 +106,7 @@ async fn combines_inline_failures_with_unpositioned_items_and_summary() {
     assert!(body.contains("Second issue"));
     assert!(body.contains("## Review summary"));
     assert!(body.contains("<summary>Stage:"));
+    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 1);
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 3);
     assert_eq!(report.inline, 0);
     assert_eq!(report.urls.len(), 1);
@@ -133,6 +140,7 @@ async fn keeps_summary_and_full_counts_even_when_every_item_is_inline() {
     assert!(!body.contains("## Review findings"));
     assert!(body.contains("**High findings:** 1"));
     assert!(body.contains("<summary>Stage:"));
+    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 1);
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 2);
@@ -158,6 +166,15 @@ async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
         .unwrap();
     assert_eq!(report.inline, 0);
     assert_eq!(server.requests().len(), 5);
+    let params = request_body(server.requests().last().unwrap());
+    assert_eq!(
+        params["body"]
+            .as_str()
+            .unwrap()
+            .matches(CONVERSATION_MARKER)
+            .count(),
+        1
+    );
     assert!(
         server
             .requests()
@@ -317,6 +334,7 @@ async fn unlocated_questions_and_recommendations_share_one_comment() {
         .to_string();
     assert!(body.contains("## Review questions"));
     assert!(body.contains("## Structural recommendations"));
+    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 1);
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 2);
     assert_eq!(report.urls.len(), 1);
 }
@@ -339,6 +357,12 @@ async fn publishes_inline_on_a_changed_line() {
     assert_eq!(params["line"], 5);
     assert_eq!(params["side"], "RIGHT");
     assert!(params.get("subject_type").is_none());
+    assert!(
+        !params["body"]
+            .as_str()
+            .unwrap()
+            .contains(CONVERSATION_MARKER)
+    );
     assert_eq!(report.inline, 1);
 }
 
