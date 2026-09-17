@@ -2,8 +2,8 @@ use std::collections::{BTreeSet, HashSet};
 
 use serde_json::{Value, json};
 
-use crate::render::{RenderInput, github};
-use crate::stage::FileLocation;
+use crate::render::{RenderFinding, RenderInput, github};
+use crate::stage::{FileLocation, KnowledgeQuestion, StructuralRecommendation};
 
 use super::Repository;
 
@@ -109,9 +109,28 @@ impl PreparedReview {
 }
 
 fn prepare_item(input: &RenderInput, repository: &Repository) -> Feedback {
-    let (kind, tag, identity) = match input {
-        RenderInput::KnowledgeQuestion(question) => (
-            FeedbackKind::Question,
+    let body = github::render(input, &repository.to_string());
+    match input {
+        RenderInput::KnowledgeQuestion(question) => prepare_question(question, body),
+        RenderInput::StructuralRecommendation(recommendation) => {
+            prepare_recommendation(recommendation, body)
+        }
+        RenderInput::Finding(finding) => prepare_finding(finding, body),
+        RenderInput::Document(_) => unreachable!("documents are flattened before preparing items"),
+    }
+}
+
+fn prepare_question(question: &KnowledgeQuestion, body: String) -> Feedback {
+    let location = match question.related_commits.as_slice() {
+        [commit] => question
+            .location
+            .as_ref()
+            .filter(|location| location.commit.matches(commit))
+            .map(|location| location.file.clone()),
+        _ => None,
+    };
+    Feedback {
+        fingerprint: fingerprint(
             "question",
             json!({
                 "category": question.category,
@@ -121,8 +140,15 @@ fn prepare_item(input: &RenderInput, repository: &Repository) -> Feedback {
                 "location": question.location.as_ref().map(|location| &location.file),
             }),
         ),
-        RenderInput::StructuralRecommendation(recommendation) => (
-            FeedbackKind::Recommendation,
+        body,
+        location,
+        kind: FeedbackKind::Question,
+    }
+}
+
+fn prepare_recommendation(recommendation: &StructuralRecommendation, body: String) -> Feedback {
+    Feedback {
+        fingerprint: fingerprint(
             "recommendation",
             json!({
                 "kind": recommendation.kind,
@@ -130,8 +156,15 @@ fn prepare_item(input: &RenderInput, repository: &Repository) -> Feedback {
                 "rationale": recommendation.rationale,
             }),
         ),
-        RenderInput::Finding(finding) => (
-            FeedbackKind::Finding,
+        body,
+        location: None,
+        kind: FeedbackKind::Recommendation,
+    }
+}
+
+fn prepare_finding(finding: &RenderFinding, body: String) -> Feedback {
+    Feedback {
+        fingerprint: fingerprint(
             "finding",
             json!({
                 "severity": finding.severity,
@@ -140,31 +173,9 @@ fn prepare_item(input: &RenderInput, repository: &Repository) -> Feedback {
                 "security": finding.security,
             }),
         ),
-        RenderInput::Document(_) => unreachable!("documents are flattened before preparing items"),
-    };
-    Feedback {
-        fingerprint: fingerprint(tag, identity),
-        body: github::render(input, &repository.to_string()),
-        location: inline_location(input),
-        kind,
-    }
-}
-
-fn inline_location(input: &RenderInput) -> Option<FileLocation> {
-    match input {
-        RenderInput::Document(_) => None,
-        RenderInput::KnowledgeQuestion(question) => {
-            let [commit] = question.related_commits.as_slice() else {
-                return None;
-            };
-            question
-                .location
-                .as_ref()
-                .filter(|location| location.commit.matches(commit))
-                .map(|location| location.file.clone())
-        }
-        RenderInput::StructuralRecommendation(_) => None,
-        RenderInput::Finding(finding) => finding.location.clone(),
+        body,
+        location: finding.location.clone(),
+        kind: FeedbackKind::Finding,
     }
 }
 
