@@ -17,11 +17,6 @@ use super::{
 pub fn render(input: &RenderInput) -> String {
     match input {
         RenderInput::Document(document) => render_document(document),
-        RenderInput::KnowledgeQuestion(question) => render_question(question),
-        RenderInput::StructuralRecommendation(recommendation) => {
-            render_recommendation(recommendation)
-        }
-        RenderInput::Finding(finding) => render_finding(finding),
     }
 }
 

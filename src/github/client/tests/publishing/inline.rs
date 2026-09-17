@@ -2,21 +2,24 @@ use super::*;
 
 fn file_finding() -> RenderInput {
     serde_json::from_value(json!({
-        "commit": "abc1234",
-        "severity": "high",
-        "message": "Check @team <script>.",
-        "file": "src/main.rs"
+        "ordered_commits": ["abc1234"],
+        "stages": [],
+        "findings": [{
+            "commit": "abc1234",
+            "severity": "high",
+            "message": "Check @team <script>.",
+            "file": "src/main.rs"
+        }],
     }))
     .unwrap()
 }
 
 fn file_document() -> RenderInput {
     let mut input = document();
-    if let RenderInput::Document(document) = &mut input {
-        for finding in &mut document.findings {
-            if let Some(location) = &mut finding.location {
-                location.line = None;
-            }
+    let RenderInput::Document(document) = &mut input;
+    for finding in &mut document.findings {
+        if let Some(location) = &mut finding.location {
+            location.line = None;
         }
     }
     input
@@ -45,9 +48,8 @@ async fn publishes_file_comment_at_the_current_head_with_a_hidden_fingerprint() 
     replies.push(created());
     let server = Server::start(replies).await;
     let mut input = file_finding();
-    if let RenderInput::Finding(finding) = &mut input {
-        finding.commit = CommitHash::new("def5678").unwrap();
-    }
+    let RenderInput::Document(document) = &mut input;
+    document.findings[0].commit = CommitHash::new("def5678").unwrap();
     let report = server
         .client()
         .publish(&repository(), number(), &input)
@@ -121,9 +123,8 @@ async fn combines_inline_failures_with_unpositioned_items_and_summary() {
 #[tokio::test]
 async fn keeps_summary_and_full_counts_even_when_every_item_is_inline() {
     let mut input = file_document();
-    if let RenderInput::Document(document) = &mut input {
-        document.findings.pop();
-    }
+    let RenderInput::Document(document) = &mut input;
+    document.findings.pop();
     let mut replies = before_inline();
     replies.extend([created(), created()]);
     let server = Server::start(replies).await;
@@ -186,15 +187,19 @@ async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
 
 fn file_question(related_commits: &[&str], location_commit: &str) -> RenderInput {
     serde_json::from_value(json!({
-        "category": "rationale",
-        "question": "Why?",
-        "evidence": "Changed code",
-        "why_it_matters": "Compatibility",
-        "related_commits": related_commits,
-        "location": {
-            "commit": location_commit,
-            "file": "src/main.rs"
-        },
+        "ordered_commits": related_commits,
+        "stages": [],
+        "questions": [{
+            "category": "rationale",
+            "question": "Why?",
+            "evidence": "Changed code",
+            "why_it_matters": "Compatibility",
+            "related_commits": related_commits,
+            "location": {
+                "commit": location_commit,
+                "file": "src/main.rs"
+            },
+        }],
     }))
     .unwrap()
 }
@@ -369,9 +374,8 @@ async fn publishes_inline_on_a_changed_line() {
 #[tokio::test]
 async fn unchanged_lines_fall_back_to_a_conversation_comment() {
     let mut input = finding();
-    if let RenderInput::Finding(finding) = &mut input {
-        finding.location.as_mut().unwrap().line = Some(4);
-    }
+    let RenderInput::Document(document) = &mut input;
+    document.findings[0].location.as_mut().unwrap().line = Some(4);
     let mut replies = before_inline();
     replies.push(created());
     let server = Server::start(replies).await;
@@ -476,9 +480,8 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
 #[tokio::test]
 async fn zero_line_falls_back_to_a_conversation_comment() {
     let mut input = finding();
-    if let RenderInput::Finding(finding) = &mut input {
-        finding.location.as_mut().unwrap().line = Some(0);
-    }
+    let RenderInput::Document(document) = &mut input;
+    document.findings[0].location.as_mut().unwrap().line = Some(0);
     let mut replies = before_inline();
     replies.push(created());
     let server = Server::start(replies).await;
@@ -501,9 +504,8 @@ async fn zero_line_falls_back_to_a_conversation_comment() {
 #[tokio::test]
 async fn line_outside_patch_falls_back_to_a_conversation_comment() {
     let mut input = finding();
-    if let RenderInput::Finding(finding) = &mut input {
-        finding.location.as_mut().unwrap().line = Some(100);
-    }
+    let RenderInput::Document(document) = &mut input;
+    document.findings[0].location.as_mut().unwrap().line = Some(100);
     let mut replies = before_inline();
     replies.push(created());
     let server = Server::start(replies).await;

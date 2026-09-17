@@ -29,33 +29,31 @@ pub struct PreparedReview {
 
 impl PreparedReview {
     pub fn new(input: &RenderInput, repository: &Repository) -> Self {
-        let (inputs, parts) = match input {
-            RenderInput::Document(document) => (
-                document
-                    .questions
-                    .iter()
-                    .cloned()
-                    .map(RenderInput::from)
-                    .chain(
-                        document
-                            .recommendations
-                            .iter()
-                            .cloned()
-                            .map(RenderInput::from),
-                    )
-                    .chain(document.findings.iter().cloned().map(RenderInput::from))
-                    .collect::<Vec<_>>(),
-                Some(github::DocumentParts::new(
-                    document,
-                    &repository.to_string(),
-                )),
-            ),
-            item => (vec![item.clone()], None),
-        };
-        let items: Vec<_> = inputs
+        let RenderInput::Document(document) = input;
+        let parts = github::DocumentParts::new(document, &repository.to_string());
+        let items: Vec<_> = document
+            .questions
             .iter()
-            .map(|item| prepare_item(item, repository))
+            .zip(&parts.questions)
+            .map(|(question, body)| prepare_question(question, body.clone()))
+            .chain(
+                document
+                    .recommendations
+                    .iter()
+                    .zip(&parts.recommendations)
+                    .map(|(recommendation, body)| {
+                        prepare_recommendation(recommendation, body.clone())
+                    }),
+            )
+            .chain(
+                document
+                    .findings
+                    .iter()
+                    .zip(&parts.findings)
+                    .map(|(finding, body)| prepare_finding(finding, body.clone())),
+            )
             .collect();
+        let parts = Some(parts);
         let summary_fingerprint = match (input, &parts) {
             (RenderInput::Document(document), Some(parts))
                 if !parts.summary.is_empty()
@@ -105,18 +103,6 @@ impl PreparedReview {
             output.push_str(&format!("\n\n{}", marker(fingerprint)));
         }
         output
-    }
-}
-
-fn prepare_item(input: &RenderInput, repository: &Repository) -> Feedback {
-    let body = github::render(input, &repository.to_string());
-    match input {
-        RenderInput::KnowledgeQuestion(question) => prepare_question(question, body),
-        RenderInput::StructuralRecommendation(recommendation) => {
-            prepare_recommendation(recommendation, body)
-        }
-        RenderInput::Finding(finding) => prepare_finding(finding, body),
-        RenderInput::Document(_) => unreachable!("documents are flattened before preparing items"),
     }
 }
 
@@ -212,9 +198,14 @@ pub fn fingerprints(body: &str) -> HashSet<String> {
 mod tests {
     use super::*;
 
-    fn identity(value: Value, repo: &str) -> String {
+    fn identity(section: &str, value: Value, repo: &str) -> String {
         PreparedReview::new(
-            &serde_json::from_value(value).unwrap(),
+            &serde_json::from_value(json!({
+                "ordered_commits": [],
+                "stages": [],
+                (section): [value]
+            }))
+            .unwrap(),
             &Repository::parse(repo).unwrap(),
         )
         .items[0]
@@ -250,59 +241,59 @@ mod tests {
     #[test]
     fn finding_fingerprint_ignores_commit() {
         let mut value = finding();
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("findings", value.clone(), "owner/repo");
         value["commit"] = json!("def5678");
 
-        assert_eq!(identity(value, "owner/repo"), original);
+        assert_eq!(identity("findings", value, "owner/repo"), original);
     }
 
     #[test]
     fn finding_fingerprint_distinguishes_message() {
         let mut value = finding();
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("findings", value.clone(), "owner/repo");
         value["message"] = json!("Other issue");
 
-        assert_ne!(identity(value, "owner/repo"), original);
+        assert_ne!(identity("findings", value, "owner/repo"), original);
     }
 
     #[test]
     fn finding_fingerprint_distinguishes_severity() {
         let mut value = finding();
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("findings", value.clone(), "owner/repo");
         value["severity"] = json!("low");
 
-        assert_ne!(identity(value, "owner/repo"), original);
+        assert_ne!(identity("findings", value, "owner/repo"), original);
     }
 
     #[test]
     fn finding_fingerprint_distinguishes_file() {
         let mut value = finding();
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("findings", value.clone(), "owner/repo");
         value["file"] = json!("src/other.rs");
 
-        assert_ne!(identity(value, "owner/repo"), original);
+        assert_ne!(identity("findings", value, "owner/repo"), original);
     }
 
     #[test]
     fn finding_fingerprint_distinguishes_line() {
         let mut value = finding();
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("findings", value.clone(), "owner/repo");
         value["line"] = json!(6);
 
-        assert_ne!(identity(value, "owner/repo"), original);
+        assert_ne!(identity("findings", value, "owner/repo"), original);
     }
 
     #[test]
     fn finding_fingerprint_distinguishes_security() {
         let mut value = finding();
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("findings", value.clone(), "owner/repo");
         value["security"] = json!({
             "attacker_control": "request",
             "sensitive_operation": "write",
             "impact": "data loss"
         });
 
-        assert_ne!(identity(value, "owner/repo"), original);
+        assert_ne!(identity("findings", value, "owner/repo"), original);
     }
 
     #[test]
@@ -313,27 +304,27 @@ mod tests {
             "message": "Issue"
         });
         assert_eq!(
-            identity(value.clone(), "owner/repo"),
-            identity(value, "other/repository")
+            identity("findings", value.clone(), "owner/repo"),
+            identity("findings", value, "other/repository")
         );
     }
 
     #[test]
     fn question_fingerprint_ignores_related_commits() {
         let mut value = question();
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("questions", value.clone(), "owner/repo");
         value["related_commits"] = json!(["def5678"]);
 
-        assert_eq!(identity(value, "owner/repo"), original);
+        assert_eq!(identity("questions", value, "owner/repo"), original);
     }
 
     #[test]
     fn question_fingerprint_ignores_location_commit() {
         let mut value = question();
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("questions", value.clone(), "owner/repo");
         value["location"]["commit"] = json!("def5678");
 
-        assert_eq!(identity(value, "owner/repo"), original);
+        assert_eq!(identity("questions", value, "owner/repo"), original);
     }
 
     #[test]
@@ -344,10 +335,10 @@ mod tests {
             "rationale": "Separate concerns",
             "related_commits": ["abc1234"]
         });
-        let original = identity(value.clone(), "owner/repo");
+        let original = identity("recommendations", value.clone(), "owner/repo");
         value["related_commits"] = json!(["def5678"]);
 
-        assert_eq!(identity(value, "owner/repo"), original);
+        assert_eq!(identity("recommendations", value, "owner/repo"), original);
     }
 
     #[test]

@@ -2,7 +2,11 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
-const FINDING: &str = r#"{"commit":"abc1234","severity":"high","message":"Check this."}"#;
+const FINDING: &str = r#"{
+    "ordered_commits": ["abc1234"],
+    "findings": [{"commit":"abc1234","severity":"high","message":"Check this."}],
+    "stages": []
+}"#;
 
 fn project(repository: Option<&str>) -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();

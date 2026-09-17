@@ -111,16 +111,10 @@ pub struct RenderFinding {
 }
 
 /// A JSON value accepted by the `render` command.
-///
-/// Individual review items are promoted to a minimal render document so they
-/// use the same formatting and escaping rules as a complete review.
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(untagged)]
 pub enum RenderInput {
     Document(RenderDocument),
-    KnowledgeQuestion(KnowledgeQuestion),
-    StructuralRecommendation(StructuralRecommendation),
-    Finding(RenderFinding),
 }
 
 impl From<RenderDocument> for RenderInput {
@@ -132,24 +126,6 @@ impl From<RenderDocument> for RenderInput {
 impl From<PipelineReviewResult> for RenderInput {
     fn from(review: PipelineReviewResult) -> Self {
         Self::Document(review.into())
-    }
-}
-
-impl From<KnowledgeQuestion> for RenderInput {
-    fn from(question: KnowledgeQuestion) -> Self {
-        Self::KnowledgeQuestion(question)
-    }
-}
-
-impl From<StructuralRecommendation> for RenderInput {
-    fn from(recommendation: StructuralRecommendation) -> Self {
-        Self::StructuralRecommendation(recommendation)
-    }
-}
-
-impl From<RenderFinding> for RenderInput {
-    fn from(finding: RenderFinding) -> Self {
-        Self::Finding(finding)
     }
 }
 
@@ -1724,82 +1700,13 @@ mod tests {
     }
 
     #[test]
-    fn render_input_deserializes_knowledge_question() {
-        let input = serde_json::from_str::<RenderInput>(
+    fn render_input_rejects_individual_review_items() {
+        for input in [
             r#"{"category":"rationale","question":"Why?","evidence":"The choice is not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#,
-        )
-        .unwrap();
-
-        assert_matches!(input, RenderInput::KnowledgeQuestion(question) if question.question == "Why?");
-    }
-
-    #[test]
-    fn render_input_deserializes_structural_recommendation() {
-        let input = serde_json::from_str::<RenderInput>(
             r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#,
-        )
-        .unwrap();
-
-        assert_matches!(
-            input,
-            RenderInput::StructuralRecommendation(recommendation)
-                if recommendation.message == "Split this commit."
-        );
-    }
-
-    #[test]
-    fn render_input_deserializes_render_finding() {
-        let input = serde_json::from_str::<RenderInput>(
             r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#,
-        )
-        .unwrap();
-
-        assert_matches!(input, RenderInput::Finding(finding) if finding.message == "Validate the input.");
-    }
-
-    #[test]
-    fn individual_inputs_render_without_document_section_headings() {
-        let inputs = [
-            (
-                serde_json::from_str::<RenderInput>(
-                    r#"{"category":"rationale","question":"Why?","evidence":"Not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#,
-                )
-                .unwrap(),
-                "Why",
-            ),
-            (
-                serde_json::from_str::<RenderInput>(
-                    r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#,
-                )
-                .unwrap(),
-                "Split this commit",
-            ),
-            (
-                serde_json::from_str::<RenderInput>(
-                    r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#,
-                )
-                .unwrap(),
-                "Validate the input",
-            ),
-        ];
-
-        for (input, expected) in inputs {
-            for (format, repo) in [
-                (OutputFormat::Terminal, None),
-                (OutputFormat::Markdown, None),
-                (OutputFormat::Github, Some("owner/repo".to_string())),
-            ] {
-                let output = render(
-                    input.clone(),
-                    RenderOptions::from_cli(format, repo).unwrap(),
-                )
-                .unwrap();
-
-                assert!(output.contains(expected));
-                assert!(!output.contains("Review questions"));
-                assert!(!output.contains("Structural recommendations"));
-                assert!(!output.contains("Review findings"));
-            }
+        ] {
+            assert_matches!(serde_json::from_str::<RenderInput>(input), Err(_));
         }
     }
 

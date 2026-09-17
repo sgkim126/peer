@@ -8,11 +8,15 @@ mod revalidation;
 
 fn finding() -> RenderInput {
     serde_json::from_value(json!({
-        "commit": "abc1234",
-        "severity": "high",
-        "message": "Check @team <script>.",
-        "file": "src/main.rs",
-        "line": 5,
+        "ordered_commits": ["abc1234"],
+        "stages": [],
+        "findings": [{
+            "commit": "abc1234",
+            "severity": "high",
+            "message": "Check @team <script>.",
+            "file": "src/main.rs",
+            "line": 5,
+        }],
     }))
     .unwrap()
 }
@@ -169,24 +173,23 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
     let mut input = document();
     let body = published_body(&input).await;
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 3);
-    if let RenderInput::Document(document) = &mut input {
-        for finding in &mut document.findings {
-            finding.commit = CommitHash::new("def5678").unwrap();
-        }
-        document.ordered_commits = vec![CommitHash::new("def5678").unwrap()];
-        document.stages[0].target =
-            crate::stage::StageTarget::Commit(CommitHash::new("def5678").unwrap());
-        if let crate::render::RenderStageOutcome::Clean {
-            usage, iterations, ..
-        } = &mut document.stages[0].outcome
-        {
-            let mut model_usage = usage.iter().next().unwrap().clone();
-            model_usage.model = "different-model".into();
-            model_usage.cost_usd = 42.0;
-            model_usage.input_tokens = 200;
-            *usage = crate::llm::LlmUsage::from(vec![model_usage]);
-            *iterations = 3;
-        }
+    let RenderInput::Document(document) = &mut input;
+    for finding in &mut document.findings {
+        finding.commit = CommitHash::new("def5678").unwrap();
+    }
+    document.ordered_commits = vec![CommitHash::new("def5678").unwrap()];
+    document.stages[0].target =
+        crate::stage::StageTarget::Commit(CommitHash::new("def5678").unwrap());
+    if let crate::render::RenderStageOutcome::Clean {
+        usage, iterations, ..
+    } = &mut document.stages[0].outcome
+    {
+        let mut model_usage = usage.iter().next().unwrap().clone();
+        model_usage.model = "different-model".into();
+        model_usage.cost_usd = 42.0;
+        model_usage.input_tokens = 200;
+        *usage = crate::llm::LlmUsage::from(vec![model_usage]);
+        *iterations = 3;
     }
     let server = Server::start(vec![
         pull(),
@@ -254,9 +257,8 @@ async fn finds_duplicates_on_later_pages_of_inline_comments() {
 async fn only_new_items_are_included_while_statistics_cover_the_full_review() {
     let mut input = document();
     let body = published_body(&input).await;
-    if let RenderInput::Document(document) = &mut input {
-        document.findings[1].message = "Changed issue".into();
-    }
+    let RenderInput::Document(document) = &mut input;
+    document.findings[1].message = "Changed issue".into();
     let server = Server::start(vec![
         pull(),
         Reply::json(json!([{ "body": body }])),
@@ -285,9 +287,8 @@ async fn only_new_items_are_included_while_statistics_cover_the_full_review() {
 #[tokio::test]
 async fn duplicates_within_one_input_are_published_once() {
     let mut input = document();
-    if let RenderInput::Document(document) = &mut input {
-        document.findings.push(document.findings[0].clone());
-    }
+    let RenderInput::Document(document) = &mut input;
+    document.findings.push(document.findings[0].clone());
     let body = published_body(&input).await;
     assert_eq!(body.matches("First issue").count(), 1);
     assert!(body.contains("**High findings:** 2"));
