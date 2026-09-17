@@ -24,7 +24,8 @@ If your primary goal is to detect as many implementation bugs as possible, consi
 Problems that can be detected by compilers, linters, type checkers, formatters, or dedicated security scanners should primarily be handled by those deterministic tools.
 Using an LLM as the primary mechanism for finding the same problems is unnecessarily expensive, while relying on nondeterministic output for repeatable enforcement is inherently unreliable.
 
-Instead, `peer` focuses on questions that surface undocumented intent, constraints, rationale, tradeoffs, operational expectations, and verification knowledge. It reports implementation problems as a secondary benefit, but it is not designed to maximize bug-finding coverage.
+Instead, `peer` focuses on questions that surface undocumented intent, constraints, rationale, tradeoffs, operational expectations, and verification knowledge.
+It reports implementation problems as a secondary benefit, but it is not designed to maximize bug-finding coverage.
 
 The security review is intended to identify contextual risks that may not be captured by mechanical rules.
 It is not a replacement for SAST, dependency scanning, secret scanning, or other dedicated security tooling.
@@ -33,21 +34,17 @@ It is not a replacement for SAST, dependency scanning, secret scanning, or other
 
 Every review uses four stages:
 
-- `review_context` builds a source-backed statement of the documented objective and expected behavior. It blocks only when missing or contradictory information makes a defensible review impossible.
-
-- `knowledge` reviews the whole change for important decisions that are visible in the implementation but not explained in the supplied context. It asks evidence-backed questions that only the author can answer and makes structural recommendations when the evidence is conclusive without additional intent.
-
-- `quality` reviews each commit for non-security correctness, reliability, maintainability, and design problems that require contextual judgment.
-
-- `security` reviews each commit for vulnerabilities with a credible attacker-controlled path, sensitive operation, and impact.
-
-The knowledge stage considers pull-request scope, commit sequence, atomicity, and message-to-diff intent as complementary ways to find missing context. It first searches the supplied discussion, repository documentation, and directly relevant code, and does not ask questions whose answers are already available. There is no fixed question limit; every reported question must independently preserve information that matters to future review, operation, or maintenance.
-
-`peer review` runs `review_context`, then `knowledge`, then the per-commit `quality` and `security` stages. Ordinary knowledge questions do not stop the later bug reviews. Any stage may instead request blocking clarification when it cannot complete defensibly. Blocking clarification, execution failure, or iteration exhaustion prevents successful completion.
+- `review_context` establishes the documented objective and expected behavior.
+- `knowledge` surfaces undocumented decisions and structural recommendations.
+- `quality` reviews each commit for problems that require contextual judgment.
+- `security` reviews each commit for contextual vulnerabilities.
 
 `peer` uses the models and providers supported by Pi.
-A review can incorporate its title, body, and existing comment threads so that feedback is grounded in the discussion surrounding the change. Results can be rendered for a terminal, as JSON or Markdown, or with GitHub links.
+A review can incorporate its title, body, and existing comment threads so that feedback is grounded in the discussion surrounding the change.
+Results can be rendered for a terminal, as JSON or Markdown, or with GitHub links.
 The rendered result also reports stage status, token usage, and estimated model cost.
+
+See [Reviewing changes](https://github.com/sgkim126/peer/wiki/Reviewing-Changes) for the review stages and their completion rules.
 
 ## Requirements and installation
 
@@ -69,26 +66,16 @@ npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
 
 See the [Pi quickstart](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/docs/quickstart.md) for other installation and authentication options.
 
-Building `peer` from source requires Rust 1.96.0 or later.
 The release binary and the bundled GitHub Action currently support Linux x86-64.
 
 To install a release binary, download `peer-linux-x86_64-<version>.tar.gz` from [GitHub Releases](https://github.com/sgkim126/peer/releases), extract the archive, and place the `peer` executable somewhere on `PATH`.
 
-To build `peer` from source, run:
-
-```bash
-git clone https://github.com/sgkim126/peer.git
-cd peer
-cargo build --release
-```
-
-The resulting executable is available at `target/release/peer`.
+For source builds and development requirements, see [Development](https://github.com/sgkim126/peer/wiki/Development).
 
 ## Quick start
 
 Run `peer init` from the root of the Git repository that you want to review.
 The command adds a `.peer` directory and its configuration to the repository.
-Reviews use subdirectories beneath `.peer` to cache their work as needed.
 
 Set the API key expected by the default provider, then review a commit or a commit range:
 
@@ -100,295 +87,37 @@ peer review main..HEAD
 
 A single revision such as `HEAD` reviews one commit.
 A two-dot range such as `main..HEAD` reviews the complete change before reviewing each commit for quality and security problems.
-Three-dot ranges are not supported.
-Review targets must not contain merge commits.
-The default configuration accepts at most ten commits in one review.
 
-## Review context
+See [Reviewing changes](https://github.com/sgkim126/peer/wiki/Reviewing-Changes) for supported targets, commit limits, and review context.
 
-The title, body, and existing discussion explain why a change exists and which constraints shaped it.
-Passing that information lets the first stage establish the documented objective and expected behavior, and lets the knowledge stage avoid asking questions that have already been answered. Missing metadata is not an error by itself. The context stage requests blocking clarification only when the available sources are missing or contradictory enough that the review has no defensible basis.
-
-Use `--title` for the review title, `--body-file` for a file containing the description, and `--comments-file` for a JSON file containing comment threads.
-
-To read a GitHub pull request directly, set its repository in `.peer/config.toml`:
-
-```toml
-[github]
-repo = "owner/repository"
-```
-
-Then provide a token with read access to the repository's pull requests through
-`GITHUB_TOKEN` and pass the pull request number:
+`peer review` outputs JSON.
+Pipe it to `peer render` for terminal output:
 
 ```bash
-export GITHUB_TOKEN="..."
-peer review --github 123
+peer review main..HEAD | peer render
 ```
 
-Use `--repo owner/repository` with `--github` to override `github.repo` for
-one review, or to supply the repository when it is not configured:
+## Documentation
 
-```bash
-peer review --github 123 --repo owner/repository
-```
+See the [wiki home](https://github.com/sgkim126/peer/wiki) for the full documentation.
 
-`--github` selects the pull request's commits and loads its title, description,
-conversation comments, submitted review bodies, and inline comment threads,
-including bot comments. Conversation comments with a standalone
-`<!-- peer-review:conversation:v1 -->` marker are excluded from review input.
-Older peer comments containing only duplicate-prevention fingerprints remain
-included, as do inline threads and submitted review bodies. It cannot be combined
-with a positional target, `--title`, `--body-file`, or `--comments-file`.
-The pull request's commits and their history must be available in the local Git
-repository; the command does not fetch or check out the pull request. The usual
-commit limit and merge-commit restrictions apply. GitHub input requires both a
-repository from `--repo` or configuration and a non-empty token, including for
-public repositories. Direct input does not require either. The default
-configuration contains an empty repository
-placeholder, and existing configurations can add the optional `[github]` section
-without changing their version. This option supports github.com.
-
-Every run reloads the pull request's commits and context, and changes to that input
-affect the existing review cache. A failed request or an incomplete commit list
-stops the review. GitHub's [pull request commits endpoint](https://docs.github.com/en/rest/pulls/pulls#list-commits-on-a-pull-request)
-returns at most 250 commits.
-
-Conversation comments and non-empty submitted review bodies become individual
-threads. Inline comments retain their reply threads, including discussions on
-outdated code. Threads retain the root comment's commit and file; right-side line
-locations use the matching current or original commit. Left-side locations retain
-the file path without a line because the review context format does not identify
-diff sides. Missing authors are recorded as `unknown`.
-
-To supply context directly:
-
-```bash
-peer review main..HEAD \
-  --title "Add cache pruning support" \
-  --body-file /tmp/review-body.md \
-  --comments-file /tmp/review-comments.json
-```
-
-The comments file contains an array of threads.
-Every thread contains comments and may identify a commit and source location.
-
-```json
-[
-  {
-    "commit": "abc1234",
-    "location": {
-      "path": "src/cache/mod.rs",
-      "line": 42
-    },
-    "comments": [
-      {
-        "author": "alice",
-        "body": "Should old cache versions be removed automatically?"
-      },
-      {
-        "author": "bob",
-        "body": "Keep the current version unless --all is specified."
-      }
-    ]
-  }
-]
-```
-
-The `commit` and `location` fields are optional.
-Each comment must contain an `author` and a `body`.
-
-Knowledge questions are normal successful review feedback. Answer one by adding the answer to a human-authored pull-request comment or to the pull-request description, then run the review again. The comment may optionally quote the question for context, but it must contain the answer. The new description and comments become review input, so sufficiently documented decisions are not asked again.
-
-## Providers and configuration
-
-`peer` uses the providers and authentication methods supported by Pi.
-The default configuration includes the following common API-key providers as examples:
-
-| Provider | API key environment variable |
+| Guide | Contents |
 | --- | --- |
-| Mistral | `MISTRAL_API_KEY` |
-| OpenAI | `OPENAI_API_KEY` |
-| Anthropic | `ANTHROPIC_API_KEY` |
-| Gemini | `GEMINI_API_KEY` |
-
-See [Pi's provider documentation](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/docs/providers.md) for the complete list of supported providers and authentication methods.
-
-`peer init` copies the default configuration to `.peer/config.toml`.
-Pass `--provider`, `--model`, or `--repo` to set `llm.default_provider`,
-`llm.default_model`, or `github.repo` in the generated configuration.
-Each option is independent; omitted options keep the bundled defaults.
-
-```bash
-peer init --provider openai --model gpt-5.6-terra --repo owner/repository
-```
-
-The configuration selects the default provider and model and limits the number of commits and model iterations.
-The removed `commit_scope`, `commit_sequence`, `size`, and `intent` stage overrides are invalid; use `[stages.knowledge]` instead.
-
-Use `--provider` or `--model` to override the configured defaults for one review.
-
-```bash
-peer review main..HEAD --provider openai
-peer review main..HEAD --provider anthropic --model claude-sonnet-5
-```
-
-See [`resources/default_config.toml`](resources/default_config.toml) for every configuration field.
-
-## Output and exit status
-
-`peer review` always outputs JSON. Pipe that document to `peer render` to produce a human-readable format; terminal output is the renderer's default unless `--github` is supplied. `peer render` also accepts a single `KnowledgeQuestion`, `StructuralRecommendation`, or `RenderFinding` JSON object.
-
-```bash
-peer review main..HEAD
-peer review main..HEAD | peer render --format markdown
-peer review main..HEAD | peer render --format github --repo owner/repository
-```
-
-The GitHub format uses `--repo` or, when omitted, `github.repo` from
-`.peer/config.toml` to link feedback to repository files. The flag takes
-precedence, just as it does for `peer review --github`. Rendering with an
-explicit `--repo` does not read project configuration. The terminal and Markdown
-formats do not read configuration and reject `--repo`.
-
-Add `--github <PR_NUMBER>` to publish the review on that pull request. When
-`--format` is omitted, `--github` defaults it to `github`:
-
-```bash
-peer render --repo owner/repository --github 123 < review.json
-```
-
-Publication uses the same repository precedence. When `github.repo` is
-configured, the flag can be omitted:
-
-```bash
-peer render --github 123 < review.json
-```
-
-Publishing requires a `GITHUB_TOKEN` with pull request write permission.
-It does not require a local checkout, and an explicit `--repo` also removes the
-need for `.peer` configuration. Explicit `--format terminal` or `--format markdown`
-cannot be combined with `--github`.
-The command prints the number of posted comments and their URLs; warnings and
-errors go to stderr. Without `--github`, GitHub rendering continues to print Markdown
-without authentication.
-
-Findings and questions with a usable location are posted inline on the PR's current head. Added lines use the right side of the diff and deleted lines use the left; a location without a line targets the changed file. Questions require exactly one related commit matching their location. Recommendations, items without a usable location, and failed inline comments are collected into one conversation comment. Complete review documents also include their summary and stage details, with counts covering all findings even when some were posted inline.
-
-Published comments contain hidden, versioned fingerprints. Before posting, peer reads all pages of the PR's conversation and inline comments and skips previously published items. Fingerprints include the feedback kind, content, file, and line, but exclude commit SHAs, so rebasing alone does not repeat the same feedback. Summaries are tracked separately and ignore model, version, usage, cost, and iteration changes. Comments without peer fingerprints are not treated as duplicates.
-
-New conversation comments also include a hidden `<!-- peer-review:conversation:v1 -->` marker so subsequent `peer review --github` runs exclude them from review input. This includes standalone, combined, summary-only, and fallback conversation comments. File and line comments do not receive this marker.
-
-Publishing exits successfully when every new item has been posted inline or collected in the conversation comment. If a response is lost or uncertain, peer reads the comments again before deciding whether a fallback is needed. Failed PR/comment lookups, a PR that changes while loading positions, and unsuccessful final publication return a non-zero status. A later run skips items that were already published successfully. Existing comments are never edited or deleted; duplicate prevention covers sequential reruns, without a lock between simultaneous publishers.
-
-Questions, structural recommendations, and quality or security findings appear in separate `Review questions`, `Structural recommendations`, and `Review findings` sections. Each entry is tagged with its kind, such as `question/rationale`, `recommendation/split_commit`, or `finding/high`. Stage details report status, summary, token usage, and estimated model cost without repeating those results.
-
-JSON output stores the same result types in separate top-level `questions`, `recommendations`, and `findings` arrays.
-
-`peer review` exits with status `0` when every planned stage completes without an execution error, even when questions, structural recommendations, or bug findings are reported.
-It exits with a non-zero status when a stage needs clarification, fails, exhausts its allowed iterations, or the review cannot be completed or rendered.
-CI jobs should use this status to decide whether the review succeeded.
-
-The selected model receives the review metadata, commit messages, changed-file summaries, and diffs needed by these stages. During a stage it may also request repository content through the configured read-only tools. Avoid supplying secrets or other material that should not be sent to the model provider.
-
-## GitHub Actions
-
-The bundled composite action downloads a selected `peer` release, reviews a GitHub pull request, and publishes the results. It currently runs only on a Linux x86-64 runner.
-The action initializes the repository when necessary with `peer init --repo`, optionally restores the review cache, and exposes separate exit codes and output paths for review and publication.
-
-The following workflow uses `peer` 0.15.0 to load the pull request's commits, title, body, and discussions with `peer review --github`, then publish the review with `peer render --github`.
-
-```yaml
-name: Peer review
-
-on:
-  pull_request:
-
-permissions:
-  contents: read
-  pull-requests: write
-
-jobs:
-  review:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-
-      - id: peer
-        uses: sgkim126/peer/.github/actions/peer-review@main
-        with:
-          version: "0.15.0"
-          provider: mistral
-          pr-number: ${{ github.event.pull_request.number }}
-          repo: ${{ github.repository }}
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-          MISTRAL_API_KEY: ${{ secrets.MISTRAL_API_KEY }}
-
-      - name: Fail when review or publication is unsuccessful
-        if: always() && (steps.peer.outputs.review-exit-code != '0' || steps.peer.outputs.render-exit-code != '0')
-        run: exit 1
-```
-
-The action captures each command's status instead of failing on a non-zero command exit. It attempts publication whenever the review command produces an output path, including when review returns a non-zero status, so any partial review can be published before the job checks both results. Setup or input validation failures still fail the action and can leave outputs unset.
-The action exposes `review-exit-code`, `render-exit-code`, `review-json-path`, `review-stderr-path`, `render-stdout-path`, and `render-stderr-path`.
-Both commands require `GITHUB_TOKEN` with pull request write permission for publishing. The action also requires the selected provider's credentials and the pull request's commits and history in the local checkout.
-
-See [`.github/actions/peer-review/action.yml`](.github/actions/peer-review/action.yml) for the complete input and output reference.
-The manually dispatched workflow in [`.github/workflows/peer-review-dispatch.yml`](.github/workflows/peer-review-dispatch.yml) records status and publication results in the Actions job summary and publishes the review with `peer render --github`.
+| [Reviewing changes](https://github.com/sgkim126/peer/wiki/Reviewing-Changes) | Review stages, supported targets, review context, and answering questions. |
+| [Configuration](https://github.com/sgkim126/peer/wiki/Configuration) | Providers, authentication, defaults, and per-review overrides. |
+| [GitHub pull requests](https://github.com/sgkim126/peer/wiki/GitHub-Pull-Requests) | Load PR context and publish review comments. |
+| [Output and exit status](https://github.com/sgkim126/peer/wiki/Output-and-Exit-Status) | Render JSON results and interpret review exit codes. |
+| [GitHub Actions](https://github.com/sgkim126/peer/wiki/GitHub-Actions) | Automate reviews with the bundled action. |
+| [Privacy and cost](https://github.com/sgkim126/peer/wiki/Privacy-and-Cost) | Understand model inputs, usage records, and estimated costs. |
+| [Cache management](https://github.com/sgkim126/peer/wiki/Cache-Management) | Reuse results, resume stages, and prune cached data. |
+| [Development](https://github.com/sgkim126/peer/wiki/Development) | Build from source and run development checks. |
 
 ## Privacy and cost
 
 `peer` sends the reviewed code and any supplied review context to the selected model provider.
 Do not review material that the provider is not permitted to receive, and make sure commits submitted for review do not contain passwords, API tokens, or other secrets that must not be disclosed.
 
-Review JSON represents each stage's `usage` and the final result's `usage` as arrays,
-with one entry per provider and model. Each entry includes `provider`, `model`,
-`input_tokens`, `output_tokens`, `cache_read_tokens`, `cache_write_tokens`, and `cost_usd`.
-The final array combines stage and shared context usage by provider and model.
-Terminal, Markdown, and GitHub output show the same models and their usage.
-`peer render` accepts this array format; the previous object format is no longer supported.
-
-The reported cost comes from the usage information returned by Pi and remains an estimate.
-Actual billing may differ.
-Usage and cost describe the work recorded to produce the result, including completed
-results loaded from cache and earlier attempts in the same resumed Pi session.
-Each model's reported cost is preserved without recalculating prices.
-If Pi usage cannot be read, usage remains zero or unavailable.
-Review feedback is nondeterministic and can be incomplete, so it does not replace human judgment or dedicated verification tools.
-
-## Cache management
-
-Review results are stored under `.peer/cache`.
-The cache avoids repeating model work when the relevant inputs have not changed.
-Completed results retain their original provider/model usage and cost, even when
-the currently configured model differs.
-Cached results with an incompatible format are regenerated.
-If a stage exhausts its iteration budget or stops because of a transient provider error, `peer`
-stores the completed conversation and resumes it the next time the same stage runs.
-Resumed usage includes all attempts and models recorded in that session. Starting a
-new session does not include the cost of discarded sessions.
-Pass `--no-resume` to `peer review` to ignore resumable checkpoints for that run.
-
-`peer prune` removes cache data belonging to older `peer` versions while preserving data for the current version.
-`peer prune --all` removes every cache entry, including entries for the current version.
-
-## Development
-
-Development requires Cargo 1.96.0 or later and Node.js 22.19.0 or later.
-
-Run the test suite, lints, and formatting check before submitting a change.
-
-```bash
-cargo test
-cargo clippy --all-targets
-cargo fmt --check
-```
+See [Privacy and cost](https://github.com/sgkim126/peer/wiki/Privacy-and-Cost) for details about model inputs, usage, and estimated costs.
 
 ## License
 
