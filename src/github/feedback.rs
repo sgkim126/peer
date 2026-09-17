@@ -2,7 +2,7 @@ use std::collections::{BTreeSet, HashSet};
 
 use serde_json::{Value, json};
 
-use crate::render::{RenderFinding, RenderInput, github};
+use crate::render::{RenderDocument, RenderFinding, github};
 use crate::stage::{FileLocation, KnowledgeQuestion, StructuralRecommendation};
 
 use super::Repository;
@@ -28,8 +28,7 @@ pub struct PreparedReview {
 }
 
 impl PreparedReview {
-    pub fn new(input: &RenderInput, repository: &Repository) -> Self {
-        let RenderInput::Document(document) = input;
+    pub fn new(document: &RenderDocument, repository: &Repository) -> Self {
         let parts = github::DocumentParts::new(document, &repository.to_string());
         let items: Vec<_> = document
             .questions
@@ -54,8 +53,8 @@ impl PreparedReview {
             )
             .collect();
         let parts = Some(parts);
-        let summary_fingerprint = match (input, &parts) {
-            (RenderInput::Document(document), Some(parts))
+        let summary_fingerprint = match &parts {
+            Some(parts)
                 if !parts.summary.is_empty()
                     || !parts.context.is_empty()
                     || !parts.stages.is_empty() =>

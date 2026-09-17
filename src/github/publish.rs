@@ -6,7 +6,7 @@ use log::warn;
 use serde::Deserialize;
 use serde_json::json;
 
-use crate::render::RenderInput;
+use crate::render::RenderDocument;
 
 use super::feedback::{PreparedReview, fingerprints, marker};
 use super::position::{ChangedFile, comment_position};
@@ -69,7 +69,7 @@ impl GitHubClient {
         &self,
         repository: &Repository,
         number: NonZeroU64,
-        input: &RenderInput,
+        input: &RenderDocument,
     ) -> Result<PublishReport, GitHubError> {
         let pull = self.pull_request(repository, number).await?;
         let mut seen = self

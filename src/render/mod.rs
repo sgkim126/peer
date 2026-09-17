@@ -110,25 +110,6 @@ pub struct RenderFinding {
     pub security: Option<RenderSecurityContext>,
 }
 
-/// A JSON value accepted by the `render` command.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(untagged)]
-pub enum RenderInput {
-    Document(RenderDocument),
-}
-
-impl From<RenderDocument> for RenderInput {
-    fn from(document: RenderDocument) -> Self {
-        Self::Document(document)
-    }
-}
-
-impl From<PipelineReviewResult> for RenderInput {
-    fn from(review: PipelineReviewResult) -> Self {
-        Self::Document(review.into())
-    }
-}
-
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RenderSecurityContext {
@@ -754,7 +735,7 @@ impl RenderOptions {
     }
 }
 
-pub fn render(input: RenderInput, options: RenderOptions) -> Result<String, RenderError> {
+pub fn render(input: RenderDocument, options: RenderOptions) -> Result<String, RenderError> {
     match options.format {
         RenderFormat::Terminal => Ok(terminal::render(&input)),
         RenderFormat::Markdown => Ok(markdown::render(&input)),
@@ -1173,7 +1154,7 @@ mod tests {
                 if message == "Split the migration from the retry change."
         );
         let output = render(
-            document.into(),
+            document,
             RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap(),
         )
         .unwrap();
@@ -1319,7 +1300,7 @@ mod tests {
             (OutputFormat::Github, Some("owner/repo".to_string())),
         ] {
             let output = render(
-                document.clone().into(),
+                document.clone(),
                 RenderOptions::from_cli(format, repo).unwrap(),
             )
             .unwrap();
@@ -1467,7 +1448,7 @@ mod tests {
     #[test]
     fn render_orders_findings_by_commit_order() {
         let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
-        let output = render(RenderDocument::from(result()).into(), options).unwrap();
+        let output = render(RenderDocument::from(result()), options).unwrap();
 
         assert!(
             output.find(r"High\-risk finding\.").unwrap()
@@ -1533,7 +1514,7 @@ mod tests {
             let review = review_document(vec![result(), second], Some(review_context_usage()));
             let options = RenderOptions::from_cli(format, repo).unwrap();
 
-            let output = render(review.into(), options).unwrap();
+            let output = render(review, options).unwrap();
 
             assert_eq!(output.matches(expected_context_usage).count(), 1);
             assert!(output.contains(expected_total_usage));
@@ -1579,7 +1560,7 @@ mod tests {
             let review = review_document(vec![result(), second.clone()], None);
             let options = RenderOptions::from_cli(format, repo).unwrap();
 
-            let output = render(review.into(), options).unwrap();
+            let output = render(review, options).unwrap();
 
             assert!(output.contains("security"));
             assert!(output.contains("quality"));
@@ -1673,7 +1654,7 @@ mod tests {
             "cost_usd": 0.001,
         });
 
-        assert_matches!(serde_json::from_value::<RenderInput>(input), Err(_));
+        assert_matches!(serde_json::from_value::<RenderDocument>(input), Err(_));
     }
 
     #[test]
@@ -1686,7 +1667,7 @@ mod tests {
             "cost_usd": 0.001,
         });
 
-        assert_matches!(serde_json::from_value::<RenderInput>(input), Err(_));
+        assert_matches!(serde_json::from_value::<RenderDocument>(input), Err(_));
     }
 
     #[test]
@@ -1694,9 +1675,9 @@ mod tests {
         let document = RenderDocument::from(result());
         let document_json = serde_json::to_string(&document).unwrap();
 
-        let input = serde_json::from_str::<RenderInput>(&document_json).unwrap();
+        let input = serde_json::from_str::<RenderDocument>(&document_json).unwrap();
 
-        assert_eq!(input, RenderInput::Document(document));
+        assert_eq!(input, document);
     }
 
     #[test]
@@ -1706,7 +1687,7 @@ mod tests {
             r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#,
             r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#,
         ] {
-            assert_matches!(serde_json::from_str::<RenderInput>(input), Err(_));
+            assert_matches!(serde_json::from_str::<RenderDocument>(input), Err(_));
         }
     }
 
@@ -1808,11 +1789,7 @@ mod tests {
         ] {
             let document = review_document(vec![result()], None);
 
-            let output = render(
-                document.into(),
-                RenderOptions::from_cli(format, repo).unwrap(),
-            )
-            .unwrap();
+            let output = render(document, RenderOptions::from_cli(format, repo).unwrap()).unwrap();
 
             for line in expected {
                 assert!(output.contains(line));
