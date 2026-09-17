@@ -38,7 +38,7 @@ permissions:
   pull-requests: write
 
 env:
-  PEER_VERSION: "0.15.0"
+  PEER_VERSION: "0.15.1"
 
 jobs:
   review:
