@@ -13,7 +13,7 @@ fn known_comment(body: &str) -> Reply {
     }]))
 }
 
-fn inline_findings(messages: &[&str]) -> RenderInput {
+fn inline_findings(messages: &[&str]) -> RenderDocument {
     let findings = messages
         .iter()
         .map(|message| {
@@ -44,13 +44,18 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
         "Successful inline",
         "Confirmed inline without URL",
     ]);
-    let RenderInput::Document(document) = &mut input else {
-        unreachable!();
+    input.findings[3].location = None;
+    let review = crate::github::feedback::PreparedReview::new(&input, &repository());
+    let inline_body = |index: usize| {
+        let item = &review.items[index];
+        format!(
+            "{}\n\n{}",
+            item.body,
+            crate::github::feedback::marker(&item.fingerprint)
+        )
     };
-    document.findings[3].location = None;
-    let body = published_body(&RenderInput::Finding(document.findings[0].clone())).await;
-    let body_without_url =
-        published_body(&RenderInput::Finding(document.findings[5].clone())).await;
+    let body = inline_body(0);
+    let body_without_url = inline_body(5);
     let mut replies = before_inline();
     replies.extend([
         failed(500),

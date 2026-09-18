@@ -300,7 +300,7 @@ async fn main() -> ExitCode {
                 return ExitCode::FAILURE;
             }
 
-            let input = match serde_json::from_str::<render::RenderInput>(&input) {
+            let input = match serde_json::from_str::<render::RenderDocument>(&input) {
                 Ok(input) => input,
                 Err(error) => {
                     eprintln!("failed to parse render input: {error}");

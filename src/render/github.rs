@@ -10,23 +10,12 @@ use crate::stage::{
 use crate::stage::{Finding, StageResult};
 
 use super::{
-    RenderDocument, RenderFinding, RenderInput, RenderStage, RenderStageErrorRef, ReviewCounts,
+    RenderDocument, RenderFinding, RenderStage, RenderStageErrorRef, ReviewCounts,
     clarification_message, escape_html, escape_markdown, join_review_sections, review_counts,
     usage_by_model,
 };
 
-pub fn render(input: &RenderInput, repo: &str) -> String {
-    match input {
-        RenderInput::Document(document) => render_document(document, repo),
-        RenderInput::KnowledgeQuestion(question) => render_question(question, repo),
-        RenderInput::StructuralRecommendation(recommendation) => {
-            render_recommendation(recommendation, repo)
-        }
-        RenderInput::Finding(finding) => render_finding(finding, repo),
-    }
-}
-
-fn render_document(document: &RenderDocument, repo: &str) -> String {
+pub fn render(document: &RenderDocument, repo: &str) -> String {
     DocumentParts::new(document, repo).render()
 }
 

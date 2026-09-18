@@ -17,7 +17,11 @@ fn render(arguments: &[&str], input: &str) -> Output {
     child.wait_with_output().unwrap()
 }
 
-const FINDING: &str = r#"{"commit":"abc1234","severity":"high","message":"Check this."}"#;
+const FINDING: &str = r#"{
+    "ordered_commits": ["abc1234"],
+    "findings": [{"commit":"abc1234","severity":"high","message":"Check this."}],
+    "stages": []
+}"#;
 
 #[test]
 fn github_output_without_publishing_does_not_require_authentication_or_a_checkout() {
