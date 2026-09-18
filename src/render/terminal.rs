@@ -261,16 +261,16 @@ fn render_questions(questions: &[KnowledgeQuestion], use_color: bool) -> String 
         return String::new();
     }
     let mut output = String::new();
-    writeln!(output, "{}", label("Review questions:", use_color)).unwrap();
+    writeln!(output, "{}\n", label("Review questions:", use_color)).unwrap();
     for question in questions {
-        writeln!(output, "{}", render_question(question, use_color)).unwrap();
+        writeln!(output, "{}\n", render_question(question, use_color)).unwrap();
     }
     output.trim_end().to_string()
 }
 
 fn render_question(question: &KnowledgeQuestion, use_color: bool) -> String {
     format!(
-        "- [{}] {} Evidence: {} Why it matters: {} ({})",
+        "- [{}] {}\n\n  Evidence: {}\n  Why it matters: {}\n  References: {}",
         bold(
             &format!("question/{}", question.category.as_str()),
             use_color,
@@ -296,14 +296,14 @@ fn render_recommendations(recommendations: &[StructuralRecommendation], use_colo
     let mut output = String::new();
     writeln!(
         output,
-        "{}",
+        "{}\n",
         label("Structural recommendations:", use_color)
     )
     .unwrap();
     for recommendation in recommendations {
         writeln!(
             output,
-            "{}",
+            "{}\n",
             render_recommendation(recommendation, use_color)
         )
         .unwrap();
@@ -313,7 +313,7 @@ fn render_recommendations(recommendations: &[StructuralRecommendation], use_colo
 
 fn render_recommendation(recommendation: &StructuralRecommendation, use_color: bool) -> String {
     format!(
-        "- [{}] {} Rationale: {} ({})",
+        "- [{}] {}\n\n  Rationale: {}\n  References: {}",
         bold(
             &format!("recommendation/{}", recommendation.kind.as_str()),
             use_color,
@@ -333,16 +333,16 @@ fn render_findings(findings: &[RenderFinding], use_color: bool) -> String {
         return String::new();
     }
     let mut output = String::new();
-    writeln!(output, "{}", label("Review findings:", use_color)).unwrap();
+    writeln!(output, "{}\n", label("Review findings:", use_color)).unwrap();
     for finding in findings {
-        writeln!(output, "{}", render_finding(finding, use_color)).unwrap();
+        writeln!(output, "{}\n", render_finding(finding, use_color)).unwrap();
     }
     output.trim_end().to_string()
 }
 
 fn render_finding(finding: &RenderFinding, use_color: bool) -> String {
     let mut output = String::new();
-    write!(
+    writeln!(
         output,
         "- [finding/{}] {}",
         styled(
@@ -356,7 +356,7 @@ fn render_finding(finding: &RenderFinding, use_color: bool) -> String {
     if let Some(security) = &finding.security {
         write!(
             output,
-            " Attacker control: {} Sensitive operation: {} Impact: {}",
+            "\n  Attacker control: {}\n  Sensitive operation: {}\n  Impact: {}",
             escape_terminal(&security.attacker_control),
             escape_terminal(&security.sensitive_operation),
             escape_terminal(&security.impact),
@@ -365,7 +365,7 @@ fn render_finding(finding: &RenderFinding, use_color: bool) -> String {
     }
     write!(
         output,
-        " ({})",
+        "\n  References: {}",
         styled(
             escape_terminal(&finding_context(&finding.commit, finding.location.as_ref(),)),
             Style::new().dimmed(),
