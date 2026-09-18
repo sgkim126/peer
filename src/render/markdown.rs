@@ -182,14 +182,14 @@ fn render_questions(questions: &[KnowledgeQuestion]) -> String {
     }
     let mut output = "## Review questions\n".to_string();
     for question in questions {
-        writeln!(output, "{}", render_question(question)).unwrap();
+        writeln!(output, "\n{}", render_question(question)).unwrap();
     }
     output.trim_end().to_string()
 }
 
 fn render_question(question: &KnowledgeQuestion) -> String {
     format!(
-        "- **question/{}** — {} Evidence: {} Why it matters: {} ({})",
+        "- **question/{}** — {}\n\n  **Evidence:** {}\n\n  **Why it matters:** {}\n\n  **References:** {}",
         question.category.as_str(),
         escape_markdown(&question.question),
         escape_markdown(&question.evidence),
@@ -207,14 +207,14 @@ fn render_recommendations(recommendations: &[StructuralRecommendation]) -> Strin
     }
     let mut output = "## Structural recommendations\n".to_string();
     for recommendation in recommendations {
-        writeln!(output, "{}", render_recommendation(recommendation)).unwrap();
+        writeln!(output, "\n{}", render_recommendation(recommendation)).unwrap();
     }
     output.trim_end().to_string()
 }
 
 fn render_recommendation(recommendation: &StructuralRecommendation) -> String {
     format!(
-        "- **recommendation/{}** — {} Rationale: {} ({})",
+        "- **recommendation/{}** — {}\n\n  **Rationale:** {}\n\n  **References:** {}",
         recommendation.kind.as_str(),
         escape_markdown(&recommendation.message),
         escape_markdown(&recommendation.rationale),
@@ -228,7 +228,7 @@ fn render_findings(findings: &[RenderFinding]) -> String {
     }
     let mut output = "## Review findings\n".to_string();
     for finding in findings {
-        writeln!(output, "{}", render_finding(finding)).unwrap();
+        writeln!(output, "\n{}", render_finding(finding)).unwrap();
     }
     output.trim_end().to_string()
 }
@@ -242,7 +242,7 @@ fn render_finding(finding: &RenderFinding) -> String {
     if let Some(security) = &finding.security {
         write!(
             output,
-            " Attacker control: {} Sensitive operation: {} Impact: {}",
+            "\n\n  **Attacker control:** {}\n\n  **Sensitive operation:** {}\n\n  **Impact:** {}",
             escape_markdown(&security.attacker_control),
             escape_markdown(&security.sensitive_operation),
             escape_markdown(&security.impact),
@@ -251,7 +251,7 @@ fn render_finding(finding: &RenderFinding) -> String {
     }
     write!(
         output,
-        " ({})",
+        "\n\n  **References:** {}",
         escape_markdown(&finding_context(&finding.commit, finding.location.as_ref(),))
     )
     .unwrap();
@@ -598,7 +598,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_findings_as_a_tight_list() {
+    fn renders_findings_with_detail_paragraphs() {
         let findings = vec![
             Finding {
                 commit: CommitHash::new("abc1234").unwrap(),
@@ -620,7 +620,9 @@ mod tests {
             .collect::<Vec<_>>();
         let output = render_findings(&findings);
 
-        assert!(output.starts_with("## Review findings\n- "));
-        assert!(!output.contains("\n\n- "));
+        assert_eq!(
+            output,
+            "## Review findings\n\n- **finding/high** — First\\.\n\n  **References:** abc1234\n\n- **finding/low** — Second\\.\n\n  **References:** def5678"
+        );
     }
 }

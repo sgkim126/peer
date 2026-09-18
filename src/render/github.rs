@@ -204,28 +204,59 @@ fn render_items(heading: &str, items: &[String]) -> String {
     if items.is_empty() {
         return String::new();
     }
-    format!("## {heading}\n{}", items.join("\n"))
+    format!("## {heading}\n\n{}", items.join("\n\n"))
+}
+
+fn write_detail(output: &mut String, label: &str, markdown: &str) {
+    let markdown = markdown.trim_start();
+    write!(
+        output,
+        "\n\n  <details>\n  <summary><strong>{label}:</strong></summary>\n\n  {markdown}\n\n  </details>"
+    )
+    .unwrap();
 }
 
 fn render_question(question: &KnowledgeQuestion, repo: &str) -> String {
-    format!(
-        "- **question/{}** — {} Evidence: {} Why it matters: {} ({})",
+    let mut output = format!(
+        "- **question/{}** — {}",
         question.category.as_str(),
         escape_github_markdown(&question.question),
-        escape_github_markdown(&question.evidence),
-        escape_github_markdown(&question.why_it_matters),
-        related_context(&question.related_commits, question.location.as_ref(), repo,),
-    )
+    );
+    write_detail(
+        &mut output,
+        "Evidence",
+        &escape_github_markdown(&question.evidence),
+    );
+    write_detail(
+        &mut output,
+        "Why it matters",
+        &escape_github_markdown(&question.why_it_matters),
+    );
+    write_detail(
+        &mut output,
+        "References",
+        &related_context(&question.related_commits, question.location.as_ref(), repo),
+    );
+    output
 }
 
 fn render_recommendation(recommendation: &StructuralRecommendation, repo: &str) -> String {
-    format!(
-        "- **recommendation/{}** — {} Rationale: {} ({})",
+    let mut output = format!(
+        "- **recommendation/{}** — {}",
         recommendation.kind.as_str(),
         escape_github_markdown(&recommendation.message),
-        escape_github_markdown(&recommendation.rationale),
-        related_context(&recommendation.related_commits, None, repo),
-    )
+    );
+    write_detail(
+        &mut output,
+        "Rationale",
+        &escape_github_markdown(&recommendation.rationale),
+    );
+    write_detail(
+        &mut output,
+        "References",
+        &related_context(&recommendation.related_commits, None, repo),
+    );
+    output
 }
 
 #[cfg(test)]
@@ -246,21 +277,19 @@ fn render_finding(finding: &RenderFinding, repo: &str) -> String {
         escape_github_markdown(&finding.message),
     );
     if let Some(security) = &finding.security {
-        write!(
-            output,
-            " Attacker control: {} Sensitive operation: {} Impact: {}",
-            escape_github_markdown(&security.attacker_control),
-            escape_github_markdown(&security.sensitive_operation),
-            escape_github_markdown(&security.impact),
-        )
-        .unwrap();
+        for (label, value) in [
+            ("Attacker control", &security.attacker_control),
+            ("Sensitive operation", &security.sensitive_operation),
+            ("Impact", &security.impact),
+        ] {
+            write_detail(&mut output, label, &escape_github_markdown(value));
+        }
     }
-    write!(
-        output,
-        " ({})",
-        finding_context(&finding.commit, finding.location.as_ref(), repo)
-    )
-    .unwrap();
+    write_detail(
+        &mut output,
+        "References",
+        &finding_context(&finding.commit, finding.location.as_ref(), repo),
+    );
     output
 }
 
@@ -552,7 +581,7 @@ mod tests {
     }
 
     #[test]
-    fn renders_findings_as_a_tight_list() {
+    fn separates_findings_with_collapsed_references() {
         let findings = vec![
             Finding {
                 commit: CommitHash::new("abc1234").unwrap(),
@@ -574,8 +603,14 @@ mod tests {
             .collect::<Vec<_>>();
         let output = render_findings(&findings, "owner/repo");
 
-        assert!(output.starts_with("## Review findings\n- "));
-        assert!(!output.contains("\n\n- "));
+        assert!(output.starts_with("## Review findings\n\n- "));
+        assert_eq!(
+            output
+                .matches("<summary><strong>References:</strong></summary>")
+                .count(),
+            2
+        );
+        assert!(output.contains("  </details>\n\n- **finding/low**"));
     }
 
     #[test]
