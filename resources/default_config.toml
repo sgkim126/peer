@@ -6,6 +6,9 @@ max_commits = 10
 [github]
 # repo = "owner/repository" # Set it to use --github.
 
+[gitlab]
+# repo = "group/subgroup/project" # Set it to use --gitlab on GitLab.com.
+
 [llm]
 default_provider = "mistral"
 default_model = "mistral-medium-3.5"
