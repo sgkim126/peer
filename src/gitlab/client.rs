@@ -3,6 +3,8 @@ use std::time::Duration;
 use log::trace;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use reqwest::{Client, Method, Url};
+#[cfg(test)]
+use serde::Deserialize;
 use serde::de::DeserializeOwned;
 
 use super::GitLabError;
@@ -44,6 +46,18 @@ impl GitLabClient {
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, GitLabError> {
         let url = self.base.join(path).expect("valid GitLab API path");
         self.request(url, Method::GET, None)
+            .await
+            .map(|(value, _)| value)
+    }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub async fn post<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &serde_json::Value,
+    ) -> Result<T, GitLabError> {
+        let url = self.base.join(path).expect("valid GitLab API path");
+        self.request(url, Method::POST, Some(body))
             .await
             .map(|(value, _)| value)
     }

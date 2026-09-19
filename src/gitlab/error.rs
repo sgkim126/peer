@@ -24,6 +24,22 @@ pub enum GitLabError {
     InvalidPagination,
 }
 
+impl GitLabError {
+    /// The server may have accepted a POST even though its response was lost.
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn may_have_published(&self) -> bool {
+        matches!(
+            self,
+            Self::Request { .. }
+                | Self::Decode { .. }
+                | Self::Api {
+                    status: 408 | 500..=599,
+                    ..
+                }
+        )
+    }
+}
+
 impl fmt::Display for GitLabError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

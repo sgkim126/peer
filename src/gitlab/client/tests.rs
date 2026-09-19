@@ -367,3 +367,80 @@ fn debug_output_does_not_expose_private_tokens() {
 
     assert!(!format!("{token:?}").contains("glpat-secret-value"));
 }
+
+#[tokio::test]
+async fn sends_post_requests_with_json_bodies() {
+    let server = Server::start(vec![Reply::json(json!({"id": 123})).status(201)]).await;
+    server
+        .client()
+        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap();
+    let requests = server.requests();
+    assert!(requests[0].starts_with("POST /api/v4/projects/5/notes "));
+    assert!(requests[0].ends_with("{\"body\":\"A note\"}"));
+}
+
+#[tokio::test]
+async fn decodes_created_post_responses() {
+    let server = Server::start(vec![Reply::json(json!({"id": 123})).status(201)]).await;
+    let reply: Value = server
+        .client()
+        .post("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap();
+    assert_eq!(reply["id"], 123);
+}
+
+#[tokio::test]
+async fn bad_request_responses_do_not_imply_publication() {
+    let server = Server::start(vec![Reply::json(json!({})).status(400)]).await;
+    let error = server
+        .client()
+        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap_err();
+    assert_matches!(error, GitLabError::Api { status: 400, .. });
+    assert!(!error.may_have_published());
+}
+
+#[tokio::test]
+async fn request_timeout_responses_may_have_published() {
+    let server = Server::start(vec![Reply::json(json!({})).status(408)]).await;
+    let error = server
+        .client()
+        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap_err();
+    assert_matches!(error, GitLabError::Api { status: 408, .. });
+    assert!(error.may_have_published());
+}
+
+#[tokio::test]
+async fn server_error_responses_may_have_published() {
+    let server = Server::start(vec![Reply::json(json!({})).status(500)]).await;
+    let error = server
+        .client()
+        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap_err();
+    assert_matches!(error, GitLabError::Api { status: 500, .. });
+    assert!(error.may_have_published());
+}
+
+#[tokio::test]
+async fn undecodable_created_responses_may_have_published() {
+    let server = Server::start(vec![Reply::json(json!({})).status(201)]).await;
+    #[derive(Debug, Deserialize)]
+    struct Posted {
+        #[serde(rename = "id")]
+        _id: u64,
+    }
+    let error = server
+        .client()
+        .post::<Posted>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap_err();
+    assert_matches!(error, GitLabError::Decode { .. });
+    assert!(error.may_have_published());
+}
