@@ -24,6 +24,8 @@ pub enum GitLabError {
     InvalidPagination,
     InvalidMergeRequest,
     MergeRequestNotReady,
+    IncompleteCommits,
+    MergeRequestChanged,
 }
 
 impl GitLabError {
@@ -93,6 +95,14 @@ impl fmt::Display for GitLabError {
                 f,
                 "GitLab merge request diff references are not ready; retry after the MR finishes updating"
             ),
+            Self::IncompleteCommits => write!(
+                f,
+                "GitLab merge request commit list is incomplete or inconsistent; retry with a stable MR"
+            ),
+            Self::MergeRequestChanged => write!(
+                f,
+                "GitLab merge request changed while loading; retry with a stable MR"
+            ),
         }
     }
 }
@@ -111,6 +121,8 @@ impl std::error::Error for GitLabError {
             Self::InvalidPagination => None,
             Self::InvalidMergeRequest => None,
             Self::MergeRequestNotReady => None,
+            Self::IncompleteCommits => None,
+            Self::MergeRequestChanged => None,
         }
     }
 }

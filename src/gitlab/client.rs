@@ -2,14 +2,15 @@ use std::collections::HashSet;
 use std::num::{NonZeroU32, NonZeroU64};
 use std::time::Duration;
 
-use log::trace;
+use log::{debug, trace};
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, LINK};
 use reqwest::{Client, Method, Url};
 use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 
+use crate::context::ReviewContext;
 use crate::git::CommitHash;
 
-use super::GitLabError;
+use super::{GitLabError, Repository, mapping};
 
 const API_URL: &str = "https://gitlab.com/api/v4/";
 
@@ -45,6 +46,66 @@ impl GitLabClient {
     }
 
     #[cfg_attr(not(test), expect(dead_code))]
+    pub async fn review_input(
+        &self,
+        repository: &Repository,
+        number: NonZeroU64,
+    ) -> Result<GitLabReviewInput, GitLabError> {
+        debug!("loading GitLab review input: repository={repository} merge_request={number}");
+        let merge_request = self.merge_request(repository, number).await?;
+        let source = merge_request.source(number)?;
+        let prefix = format!("{}/merge_requests/{number}", repository.api_path());
+        let commits: Vec<_> = self
+            .list::<CommitRef>(&format!("{prefix}/commits"))
+            .await?
+            .into_iter()
+            .map(|commit| commit.id)
+            .collect();
+        let unique: HashSet<_> = commits.iter().map(CommitHash::as_ref).collect();
+        if commits.is_empty()
+            || unique.len() != commits.len()
+            || !commits.contains(&source.diff_refs.head_sha)
+        {
+            return Err(GitLabError::IncompleteCommits);
+        }
+        let discussions = self
+            .list::<Discussion>(&format!("{prefix}/discussions"))
+            .await?;
+        let current = self.merge_request(repository, number).await?;
+        if current.source(number)? != source
+            || current.source_branch != merge_request.source_branch
+            || current.target_branch != merge_request.target_branch
+        {
+            return Err(GitLabError::MergeRequestChanged);
+        }
+        // GitLab's commit list order is not part of the API contract. The local
+        // target resolver validates membership and orders this set using Git.
+        let context = mapping::review_context(merge_request, discussions);
+        debug!(
+            "loaded GitLab review input: repository={repository} merge_request={number} commits={} threads={}",
+            commits.len(),
+            context.comments.len()
+        );
+        Ok(GitLabReviewInput {
+            context,
+            commits,
+            source,
+        })
+    }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub async fn merge_request(
+        &self,
+        repository: &Repository,
+        number: NonZeroU64,
+    ) -> Result<MergeRequest, GitLabError> {
+        self.get(&format!(
+            "{}/merge_requests/{number}",
+            repository.api_path()
+        ))
+        .await
+    }
+
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, GitLabError> {
         let url = self.base.join(path).expect("valid GitLab API path");
         self.request(url, Method::GET, None)
@@ -237,8 +298,15 @@ impl<'de> Deserialize<'de> for GitLabReviewSource {
     }
 }
 
+#[derive(Debug)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct GitLabReviewInput {
+    pub context: ReviewContext,
+    pub commits: Vec<CommitHash>,
+    pub source: GitLabReviewSource,
+}
+
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
 pub struct MergeRequest {
     pub title: String,
     pub description: Option<String>,
@@ -284,7 +352,6 @@ impl MergeRequest {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn deserialize_diff_refs<'de, D>(deserializer: D) -> Result<Option<DiffRefs>, D::Error>
 where
     D: Deserializer<'de>,
@@ -306,7 +373,11 @@ where
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
+struct CommitRef {
+    id: CommitHash,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct Discussion {
     pub id: String,
     pub notes: Vec<Note>,
