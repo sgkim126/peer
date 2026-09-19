@@ -194,7 +194,6 @@ struct ExistingFeedback {
 }
 
 impl GitLabClient {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn publish(
         &self,
         repository: &Repository,

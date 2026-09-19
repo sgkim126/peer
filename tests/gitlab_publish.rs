@@ -7,7 +7,7 @@ fn render(arguments: &[&str], input: &str) -> Output {
         .arg("render")
         .args(arguments)
         .current_dir(directory.path())
-        .env_remove("GITHUB_TOKEN")
+        .env_remove("GITLAB_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -24,8 +24,8 @@ const FINDING: &str = r#"{
 }"#;
 
 #[test]
-fn github_output_without_publishing_does_not_require_authentication_or_a_checkout() {
-    let output = render(&["--format", "github", "--repo", "owner/repo"], FINDING);
+fn gitlab_output_without_publishing_does_not_require_authentication_or_a_checkout() {
+    let output = render(&["--format", "gitlab", "--repo", "owner/repo"], FINDING);
     assert!(output.status.success());
     assert!(String::from_utf8_lossy(&output.stdout).contains("**finding/high**"));
 }
@@ -35,10 +35,10 @@ fn publishing_requires_a_token_without_discovering_project_configuration() {
     let output = render(
         &[
             "--format",
-            "github",
+            "gitlab",
             "--repo",
             "owner/repo",
-            "--github",
+            "--gitlab",
             "123",
         ],
         FINDING,
@@ -47,7 +47,7 @@ fn publishing_requires_a_token_without_discovering_project_configuration() {
     assert!(output.stdout.is_empty());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("GitHub access requires a non-empty GITHUB_TOKEN")
+            .contains("GitLab access requires a non-empty GITLAB_TOKEN")
     );
 }
 
@@ -59,7 +59,7 @@ fn publishing_rejects_markdown_before_reading_input() {
             "markdown",
             "--repo",
             "owner/repo",
-            "--github",
+            "--gitlab",
             "123",
         ],
         "invalid",
@@ -79,7 +79,7 @@ fn publishing_rejects_terminal_before_reading_input() {
             "terminal",
             "--repo",
             "owner/repo",
-            "--github",
+            "--gitlab",
             "123",
         ],
         "invalid",
@@ -93,31 +93,58 @@ fn publishing_rejects_terminal_before_reading_input() {
 
 #[test]
 fn publishing_without_repo_rejects_markdown_before_reading_input() {
-    let output = render(&["--format", "markdown", "--github", "123"], "invalid");
+    let output = render(&["--format", "markdown", "--gitlab", "123"], "invalid");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--github can only be used with --format github")
+            .contains("--gitlab can only be used with --format gitlab")
     );
 }
 
 #[test]
 fn publishing_without_repo_rejects_terminal_before_reading_input() {
-    let output = render(&["--format", "terminal", "--github", "123"], "invalid");
+    let output = render(&["--format", "terminal", "--gitlab", "123"], "invalid");
     assert_eq!(output.status.code(), Some(1));
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--github can only be used with --format github")
+            .contains("--gitlab can only be used with --format gitlab")
     );
 }
 
 #[test]
 fn publishing_with_default_format_requires_a_token() {
-    let output = render(&["--github", "123", "--repo", "owner/repo"], FINDING);
+    let output = render(&["--gitlab", "123", "--repo", "owner/repo"], FINDING);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("GitHub access requires a non-empty GITHUB_TOKEN")
+            .contains("GitLab access requires a non-empty GITLAB_TOKEN")
     );
+}
+
+#[test]
+fn gitlab_rejects_github_format_before_parsing_input() {
+    let output = render(
+        &[
+            "--gitlab",
+            "123",
+            "--format",
+            "github",
+            "--repo",
+            "group/project",
+        ],
+        "invalid",
+    );
+    assert_eq!(output.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("--gitlab can only be used with --format gitlab")
+    );
+}
+
+#[test]
+fn publishing_services_are_mutually_exclusive_before_configuration() {
+    let output = render(&["--gitlab", "123", "--github", "456"], "invalid");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
 }
