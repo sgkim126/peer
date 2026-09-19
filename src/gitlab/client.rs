@@ -1,7 +1,8 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use log::trace;
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
+use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, LINK};
 use reqwest::{Client, Method, Url};
 #[cfg(test)]
 use serde::Deserialize;
@@ -48,6 +49,25 @@ impl GitLabClient {
         self.request(url, Method::GET, None)
             .await
             .map(|(value, _)| value)
+    }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitLabError> {
+        let mut url = self.base.join(path).expect("valid GitLab API path");
+        url.query_pairs_mut().append_pair("per_page", "100");
+        let collection_path = url.path().to_string();
+        let mut next = Some(url);
+        let mut seen = HashSet::new();
+        let mut items = Vec::new();
+        while let Some(url) = next {
+            if url.path() != collection_path || !seen.insert(url.clone()) {
+                return Err(GitLabError::InvalidPagination);
+            }
+            let (page, headers) = self.request::<Vec<T>>(url, Method::GET, None).await?;
+            items.extend(page);
+            next = next_page(&headers)?;
+        }
+        Ok(items)
     }
 
     #[cfg_attr(not(test), expect(dead_code))]
@@ -132,6 +152,41 @@ fn private_token(token: &str) -> Result<HeaderValue, GitLabError> {
     let mut value = HeaderValue::from_str(token).map_err(|_| GitLabError::InvalidToken)?;
     value.set_sensitive(true);
     Ok(value)
+}
+
+fn next_page(headers: &HeaderMap) -> Result<Option<Url>, GitLabError> {
+    let mut next = None;
+    for header in headers.get_all(LINK) {
+        for link in header
+            .to_str()
+            .map_err(|_| GitLabError::InvalidPagination)?
+            .split(',')
+        {
+            let mut parts = link.split(';');
+            let target = parts.next().unwrap_or_default().trim();
+            let is_next = parts.any(|part| {
+                part.trim().split_once('=').is_some_and(|(key, value)| {
+                    key.trim() == "rel"
+                        && value
+                            .trim()
+                            .trim_matches('"')
+                            .split_ascii_whitespace()
+                            .any(|rel| rel == "next")
+                })
+            });
+            if is_next {
+                let url = target
+                    .strip_prefix('<')
+                    .and_then(|value| value.strip_suffix('>'))
+                    .and_then(|value| Url::parse(value).ok())
+                    .ok_or(GitLabError::InvalidPagination)?;
+                if next.replace(url).is_some() {
+                    return Err(GitLabError::InvalidPagination);
+                }
+            }
+        }
+    }
+    Ok(next)
 }
 
 #[cfg(test)]
