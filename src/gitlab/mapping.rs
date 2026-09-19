@@ -7,7 +7,6 @@ use crate::context::{
 use super::CONVERSATION_MARKER;
 use super::client::{Discussion, MergeRequest, Note};
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn review_context(merge_request: MergeRequest, discussions: Vec<Discussion>) -> ReviewContext {
     // Merge repeated discussion entries before sorting and filtering. A reply
     // must survive even when its root note has been removed or is our summary.

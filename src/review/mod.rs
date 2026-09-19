@@ -146,7 +146,6 @@ pub async fn validate_target(
 }
 
 /// Resolve GitLab's unordered API list against the actual MR graph locally.
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn resolve_merge_request_target(
     commits: Vec<CommitHash>,
     refs: &crate::gitlab::DiffRefs,

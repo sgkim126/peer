@@ -14,14 +14,12 @@ use super::{GitLabError, Repository, mapping};
 
 const API_URL: &str = "https://gitlab.com/api/v4/";
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct GitLabClient {
     http: Client,
     base: Url,
 }
 
 impl GitLabClient {
-    #[expect(dead_code)]
     pub fn from_env() -> Result<Self, GitLabError> {
         Self::new(
             &std::env::var("GITLAB_TOKEN")?,
@@ -45,7 +43,6 @@ impl GitLabClient {
         Ok(Self { http, base })
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn review_input(
         &self,
         repository: &Repository,
@@ -93,7 +90,6 @@ impl GitLabClient {
         })
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn merge_request(
         &self,
         repository: &Repository,
@@ -113,7 +109,6 @@ impl GitLabClient {
             .map(|(value, _)| value)
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitLabError> {
         let mut url = self.base.join(path).expect("valid GitLab API path");
         url.query_pairs_mut().append_pair("per_page", "100");
@@ -299,7 +294,6 @@ impl<'de> Deserialize<'de> for GitLabReviewSource {
 }
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct GitLabReviewInput {
     pub context: ReviewContext,
     pub commits: Vec<CommitHash>,
@@ -322,7 +316,6 @@ pub struct MergeRequest {
 }
 
 impl MergeRequest {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn source(&self, number: NonZeroU64) -> Result<GitLabReviewSource, GitLabError> {
         if self.project_id == 0 {
             return Err(GitLabError::InvalidMergeRequest);
@@ -384,7 +377,6 @@ pub struct Discussion {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Note {
     pub id: u64,
     pub body: String,
@@ -400,13 +392,11 @@ pub struct Note {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct User {
     pub username: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Position {
     pub position_type: String,
     pub head_sha: Option<CommitHash>,

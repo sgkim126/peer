@@ -89,6 +89,7 @@ async fn main() -> ExitCode {
             body_file,
             comments_file,
             github,
+            gitlab,
             repo,
             no_resume,
         } => {
@@ -109,9 +110,13 @@ async fn main() -> ExitCode {
                 }
             };
             if let Some(repo) = repo {
-                config.github.repo = Some(repo);
+                if gitlab.is_some() {
+                    config.gitlab.repo = Some(repo);
+                } else {
+                    config.github.repo = Some(repo);
+                }
             }
-            let (github_commits, review_context) = if let Some(number) = github {
+            let (remote_commits, review_context, source) = if let Some(number) = github {
                 let result = async {
                     let repository = config
                         .github
@@ -126,7 +131,29 @@ async fn main() -> ExitCode {
                 }
                 .await;
                 match result {
-                    Ok(input) => (Some(input.commits), input.context),
+                    Ok(input) => (Some(input.commits), input.context, None),
+                    Err(error) => {
+                        eprintln!("error: {error}");
+                        debug!("{error:?}");
+                        return ExitCode::FAILURE;
+                    }
+                }
+            } else if let Some(number) = gitlab {
+                let result = async {
+                    let repository = config
+                        .gitlab
+                        .repo
+                        .as_deref()
+                        .filter(|value| !value.trim().is_empty())
+                        .ok_or(gitlab::GitLabError::MissingRepository)?;
+                    let repository = gitlab::Repository::parse(repository)?;
+                    gitlab::GitLabClient::from_env()?
+                        .review_input(&repository, number)
+                        .await
+                }
+                .await;
+                match result {
+                    Ok(input) => (Some(input.commits), input.context, Some(input.source)),
                     Err(error) => {
                         eprintln!("error: {error}");
                         debug!("{error:?}");
@@ -139,7 +166,7 @@ async fn main() -> ExitCode {
                     body_file.as_deref(),
                     comments_file.as_deref(),
                 ) {
-                    Ok(context) => (None, context),
+                    Ok(context) => (None, context, None),
                     Err(error) => {
                         eprintln!("error: {error}");
                         debug!("{error:?}");
@@ -152,7 +179,15 @@ async fn main() -> ExitCode {
                 debug!("{error:?}");
                 return ExitCode::FAILURE;
             }
-            let target = if let Some(commits) = github_commits {
+            let target = if let Some(source) = &source {
+                review::resolve_merge_request_target(
+                    remote_commits.expect("GitLab input contains commits"),
+                    &source.diff_refs,
+                    config.review.max_commits.get(),
+                    &project_root,
+                )
+                .await
+            } else if let Some(commits) = remote_commits {
                 review::resolve_pull_request_target(
                     commits,
                     config.review.max_commits.get(),
@@ -163,7 +198,7 @@ async fn main() -> ExitCode {
                 review::resolve_target(
                     target
                         .as_deref()
-                        .expect("clap requires target without --github"),
+                        .expect("clap requires target without a remote review"),
                     config.review.max_commits.get(),
                     &project_root,
                 )
@@ -240,7 +275,7 @@ async fn main() -> ExitCode {
             }
             let is_success = result.is_success();
 
-            match render::render_pipeline_json(result, None) {
+            match render::render_pipeline_json(result, source) {
                 Ok(output) => {
                     println!("{output}");
                     if is_success {

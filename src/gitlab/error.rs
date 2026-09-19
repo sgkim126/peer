@@ -1,7 +1,6 @@
 use std::{env::VarError, fmt};
 
 #[derive(Debug)]
-#[expect(dead_code)]
 pub enum GitLabError {
     MissingRepository,
     InvalidRepository,
