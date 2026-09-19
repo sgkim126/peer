@@ -145,6 +145,60 @@ pub async fn validate_target(
     Ok(())
 }
 
+/// Resolve GitLab's unordered API list against the actual MR graph locally.
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn resolve_merge_request_target(
+    commits: Vec<CommitHash>,
+    refs: &crate::gitlab::DiffRefs,
+    max_commits: u32,
+    project_root: &Path,
+) -> Result<ReviewTarget, ReviewTargetError> {
+    if commits.len() > max_commits as usize {
+        return Err(ReviewTargetError::TooManyCommits {
+            actual: commits.len(),
+            maximum: max_commits,
+        });
+    }
+    let base = CommitHash::resolve(refs.base_sha.as_ref(), project_root)
+        .await
+        .map_err(ReviewTargetError::MissingMergeRequestCommit)?;
+    let head = CommitHash::resolve(refs.head_sha.as_ref(), project_root)
+        .await
+        .map_err(ReviewTargetError::MissingMergeRequestCommit)?;
+    let merge_base = run_git(&["merge-base", base.as_ref(), head.as_ref()], project_root).await?;
+    if merge_base.trim() != base.as_ref() {
+        return Err(ReviewTargetError::IncompleteMergeRequest);
+    }
+    let mut remote = std::collections::HashSet::new();
+    for commit in &commits {
+        let commit = CommitHash::resolve(commit.as_ref(), project_root)
+            .await
+            .map_err(ReviewTargetError::MissingMergeRequestCommit)?;
+        if !remote.insert(commit.to_string()) {
+            return Err(ReviewTargetError::IncompleteMergeRequest);
+        }
+    }
+    let target = resolve_target(&format!("{base}..{head}"), max_commits, project_root).await?;
+    let ReviewTarget::Range {
+        commits: ordered, ..
+    } = &target
+    else {
+        unreachable!("two-dot target")
+    };
+    if ordered.len() != remote.len()
+        || ordered
+            .iter()
+            .any(|commit| !remote.contains(commit.as_ref()))
+    {
+        return Err(ReviewTargetError::IncompleteMergeRequest);
+    }
+    if ordered.len() == 1 {
+        Ok(ReviewTarget::Commit(ordered[0].clone()))
+    } else {
+        Ok(target)
+    }
+}
+
 #[derive(Debug)]
 pub enum ReviewTargetError {
     Git(GitError),
@@ -152,6 +206,8 @@ pub enum ReviewTargetError {
     EmptyRange(String),
     TooManyCommits { actual: usize, maximum: u32 },
     MergeCommit(CommitHash),
+    IncompleteMergeRequest,
+    MissingMergeRequestCommit(GitError),
 }
 
 impl fmt::Display for ReviewTargetError {
@@ -167,6 +223,14 @@ impl fmt::Display for ReviewTargetError {
                 )
             }
             Self::MergeCommit(commit) => write!(f, "review target contains merge commit {commit}"),
+            Self::IncompleteMergeRequest => write!(
+                f,
+                "GitLab merge request commits do not match its diff; fetch the MR and retry"
+            ),
+            Self::MissingMergeRequestCommit(error) => write!(
+                f,
+                "GitLab merge request commits are unavailable locally; fetch the MR before reviewing: {error}"
+            ),
         }
     }
 }
@@ -174,11 +238,12 @@ impl fmt::Display for ReviewTargetError {
 impl std::error::Error for ReviewTargetError {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Self::Git(error) => Some(error),
+            Self::Git(error) | Self::MissingMergeRequestCommit(error) => Some(error),
             Self::InvalidRange(_) => None,
             Self::EmptyRange(_) => None,
             Self::TooManyCommits { .. } => None,
             Self::MergeCommit(_) => None,
+            Self::IncompleteMergeRequest => None,
         }
     }
 }
@@ -225,6 +290,71 @@ mod tests {
                 .unwrap();
             CommitHash::resolve("HEAD", &self.path).await.unwrap()
         }
+    }
+
+    #[tokio::test]
+    async fn gitlab_orders_the_graph_and_rejects_incomplete_or_duplicate_commits() {
+        let repo = Repo::new().await;
+        let base = repo.commit("base.txt", "base").await;
+        let first = repo.commit("one.txt", "first").await;
+        let head = repo.commit("two.txt", "second").await;
+        run_git(
+            &["checkout", "-b", "advanced-target", base.as_ref()],
+            &repo.path,
+        )
+        .await
+        .unwrap();
+        let target_head = repo.commit("target.txt", "unrelated target change").await;
+        let refs = crate::gitlab::DiffRefs {
+            base_sha: base.clone(),
+            start_sha: target_head,
+            head_sha: head.clone(),
+        };
+        let target =
+            resolve_merge_request_target(vec![head.clone(), first.clone()], &refs, 10, &repo.path)
+                .await
+                .unwrap();
+        assert_eq!(
+            target,
+            ReviewTarget::Range {
+                from: base,
+                to: head.clone(),
+                commits: vec![first.clone(), head.clone()]
+            }
+        );
+        for commits in [vec![head.clone()], vec![first.clone(), head.clone(), first]] {
+            assert_matches!(
+                resolve_merge_request_target(commits, &refs, 10, &repo.path).await,
+                Err(ReviewTargetError::IncompleteMergeRequest)
+            );
+        }
+        assert_matches!(
+            resolve_merge_request_target(vec![head.clone(), head], &refs, 1, &repo.path).await,
+            Err(ReviewTargetError::TooManyCommits { .. })
+        );
+    }
+
+    #[tokio::test]
+    async fn gitlab_requires_local_objects_and_preserves_single_commit_reviews() {
+        let repo = Repo::new().await;
+        let base = repo.commit("base.txt", "base").await;
+        let head = repo.commit("mr.txt", "change").await;
+        let mut refs = crate::gitlab::DiffRefs {
+            base_sha: base.clone(),
+            start_sha: base,
+            head_sha: head.clone(),
+        };
+        assert_eq!(
+            resolve_merge_request_target(vec![head.clone()], &refs, 10, &repo.path)
+                .await
+                .unwrap(),
+            ReviewTarget::Commit(head.clone())
+        );
+        refs.head_sha = CommitHash::new(&"a".repeat(40)).unwrap();
+        let error = resolve_merge_request_target(vec![head], &refs, 10, &repo.path)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("fetch the MR"));
     }
 
     #[tokio::test]
