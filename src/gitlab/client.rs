@@ -306,14 +306,14 @@ where
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct Discussion {
     pub id: String,
     pub notes: Vec<Note>,
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct Note {
     pub id: u64,
     pub body: String,
@@ -329,13 +329,13 @@ pub struct Note {
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct User {
     pub username: String,
 }
 
 #[derive(Debug, Deserialize)]
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct Position {
     pub position_type: String,
     pub head_sha: Option<CommitHash>,
