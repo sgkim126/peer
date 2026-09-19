@@ -240,7 +240,7 @@ async fn main() -> ExitCode {
             }
             let is_success = result.is_success();
 
-            match render::render_pipeline_json(result) {
+            match render::render_pipeline_json(result, None) {
                 Ok(output) => {
                     println!("{output}");
                     if is_success {

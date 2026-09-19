@@ -3,7 +3,7 @@ mod error;
 mod mapping;
 mod repository;
 
-pub use self::client::DiffRefs;
+pub use self::client::{DiffRefs, GitLabReviewSource};
 pub use self::error::GitLabError;
 pub use self::repository::Repository;
 

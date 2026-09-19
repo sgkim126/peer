@@ -481,6 +481,7 @@ mod tests {
     fn omitting_items_preserves_full_review_statistics_and_stage_details() {
         let rendered = crate::render::RenderStageParts::from(result());
         let document = RenderDocument {
+            source: None,
             summary: Some(ReviewSummary {
                 peer_version: "test".into(),
             }),
