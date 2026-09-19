@@ -126,6 +126,19 @@ impl Drop for Server {
     }
 }
 
+fn number() -> NonZeroU64 {
+    NonZeroU64::new(123).unwrap()
+}
+
+fn merge_request() -> Value {
+    json!({
+        "id": 9876, "iid": 123, "project_id": 5, "target_project_id": 5,
+        "source_project_id": 9, "source_branch": "feature", "target_branch": "main",
+        "title": "Title", "description": "Description", "sha": "abc1234",
+        "diff_refs": {"base_sha": "0123456", "head_sha": "abc1234", "start_sha": "9876543"}
+    })
+}
+
 #[tokio::test]
 async fn rejects_pagination_links_to_another_origin() {
     let server = Server::start(vec![Reply::json(json!([])).header(
@@ -661,6 +674,35 @@ fn debug_output_does_not_expose_private_tokens() {
     let token = private_token("glpat-secret-value").unwrap();
 
     assert!(!format!("{token:?}").contains("glpat-secret-value"));
+}
+
+#[test]
+fn source_snapshot_round_trips_with_its_provider_tag() {
+    let merge_request: MergeRequest = serde_json::from_value(merge_request()).unwrap();
+    let source = merge_request.source(number()).unwrap();
+    let value = serde_json::to_value(&source).unwrap();
+    assert_eq!(value["provider"], "gitlab");
+    assert_eq!(
+        serde_json::from_value::<GitLabReviewSource>(value).unwrap(),
+        source
+    );
+}
+
+#[test]
+fn source_snapshot_requires_the_gitlab_provider_and_known_fields() {
+    let merge_request: MergeRequest = serde_json::from_value(merge_request()).unwrap();
+    let source = merge_request.source(number()).unwrap();
+    for provider in [json!("github"), Value::Null] {
+        let mut value = serde_json::to_value(&source).unwrap();
+        value["provider"] = provider;
+        assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
+    }
+    let mut value = serde_json::to_value(&source).unwrap();
+    value.as_object_mut().unwrap().remove("provider");
+    assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
+    let mut value = serde_json::to_value(&source).unwrap();
+    value["unknown"] = json!(true);
+    assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
 }
 
 #[tokio::test]

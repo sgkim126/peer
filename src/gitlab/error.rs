@@ -22,6 +22,8 @@ pub enum GitLabError {
         source: reqwest::Error,
     },
     InvalidPagination,
+    InvalidMergeRequest,
+    MergeRequestNotReady,
 }
 
 impl GitLabError {
@@ -84,6 +86,13 @@ impl fmt::Display for GitLabError {
             }
             Self::Decode { endpoint, .. } => write!(f, "invalid GitLab response: {endpoint}"),
             Self::InvalidPagination => write!(f, "invalid GitLab pagination link"),
+            Self::InvalidMergeRequest => {
+                write!(f, "GitLab returned an inconsistent merge request identity")
+            }
+            Self::MergeRequestNotReady => write!(
+                f,
+                "GitLab merge request diff references are not ready; retry after the MR finishes updating"
+            ),
         }
     }
 }
@@ -100,6 +109,8 @@ impl std::error::Error for GitLabError {
             Self::Api { .. } => None,
             Self::Decode { source, .. } => Some(source),
             Self::InvalidPagination => None,
+            Self::InvalidMergeRequest => None,
+            Self::MergeRequestNotReady => None,
         }
     }
 }

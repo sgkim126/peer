@@ -1,12 +1,13 @@
 use std::collections::HashSet;
+use std::num::NonZeroU64;
 use std::time::Duration;
 
 use log::trace;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, LINK};
 use reqwest::{Client, Method, Url};
-#[cfg(test)]
-use serde::Deserialize;
-use serde::de::DeserializeOwned;
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+
+use crate::git::CommitHash;
 
 use super::GitLabError;
 
@@ -187,6 +188,121 @@ fn next_page(headers: &HeaderMap) -> Result<Option<Url>, GitLabError> {
         }
     }
     Ok(next)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DiffRefs {
+    pub base_sha: CommitHash,
+    pub head_sha: CommitHash,
+    pub start_sha: CommitHash,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "provider", rename = "gitlab")]
+pub struct GitLabReviewSource {
+    pub project_id: u64,
+    pub iid: u64,
+    pub source_project_id: Option<u64>,
+    pub diff_refs: DiffRefs,
+}
+
+impl<'de> Deserialize<'de> for GitLabReviewSource {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(tag = "provider", rename_all = "lowercase", deny_unknown_fields)]
+        enum Source {
+            Gitlab {
+                project_id: u64,
+                iid: u64,
+                source_project_id: Option<u64>,
+                diff_refs: DiffRefs,
+            },
+        }
+        let Source::Gitlab {
+            project_id,
+            iid,
+            source_project_id,
+            diff_refs,
+        } = Source::deserialize(deserializer)?;
+        Ok(Self {
+            project_id,
+            iid,
+            source_project_id,
+            diff_refs,
+        })
+    }
+}
+
+#[derive(Debug, Deserialize)]
+#[expect(dead_code)]
+pub struct MergeRequest {
+    pub title: String,
+    pub description: Option<String>,
+    pub project_id: u64,
+    pub iid: u64,
+    pub source_project_id: Option<u64>,
+    pub target_project_id: u64,
+    pub source_branch: String,
+    pub target_branch: String,
+    pub sha: Option<CommitHash>,
+    #[serde(default, deserialize_with = "deserialize_diff_refs")]
+    pub diff_refs: Option<DiffRefs>,
+}
+
+impl MergeRequest {
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn source(&self, number: NonZeroU64) -> Result<GitLabReviewSource, GitLabError> {
+        if self.project_id == 0 {
+            return Err(GitLabError::InvalidMergeRequest);
+        }
+        if self.project_id != self.target_project_id {
+            return Err(GitLabError::InvalidMergeRequest);
+        }
+        if self.iid != number.get() {
+            return Err(GitLabError::InvalidMergeRequest);
+        }
+        if self.source_project_id == Some(0) {
+            return Err(GitLabError::InvalidMergeRequest);
+        }
+        let diff_refs = self
+            .diff_refs
+            .as_ref()
+            .ok_or(GitLabError::MergeRequestNotReady)?;
+        if self.sha.as_ref() != Some(&diff_refs.head_sha) {
+            return Err(GitLabError::MergeRequestNotReady);
+        }
+        Ok(GitLabReviewSource {
+            project_id: self.project_id,
+            iid: self.iid,
+            source_project_id: self.source_project_id,
+            diff_refs: diff_refs.clone(),
+        })
+    }
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+fn deserialize_diff_refs<'de, D>(deserializer: D) -> Result<Option<DiffRefs>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    struct OptionalDiffRefs {
+        base_sha: Option<CommitHash>,
+        head_sha: Option<CommitHash>,
+        start_sha: Option<CommitHash>,
+    }
+    let refs = Option::<OptionalDiffRefs>::deserialize(deserializer)?;
+    Ok(refs.and_then(|refs| {
+        Some(DiffRefs {
+            base_sha: refs.base_sha?,
+            head_sha: refs.head_sha?,
+            start_sha: refs.start_sha?,
+        })
+    }))
 }
 
 #[cfg(test)]
