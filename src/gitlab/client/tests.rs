@@ -1042,6 +1042,493 @@ async fn undecodable_created_responses_may_have_published() {
     assert!(error.may_have_published());
 }
 
+#[test]
+fn recognizes_position_field_validation_errors() {
+    let message = json!({
+        "position": ["is invalid"]
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_dotted_position_validation_errors() {
+    let message = json!({
+        "position.head_sha": ["is invalid"]
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_errors_with_multiple_position_fields() {
+    let message = json!({
+        "position": ["is invalid"],
+        "line_code": ["can't be blank"]
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_bracketed_position_validation_errors() {
+    let message = json!({
+        "position[head_sha]": "is invalid"
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_nested_position_validation_errors() {
+    let message = json!({
+        "position": {
+            "new_line": ["is invalid"]
+        }
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_line_code_validation_errors() {
+    let message = json!({
+        "line_code": ["can't be blank"]
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_multiple_validation_messages_for_a_position_field() {
+    let message = json!({
+        "position": ["is invalid", "is incomplete"]
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_commit_id_errors_that_mention_diff_refs() {
+    let message = json!({
+        "commit_id": ["does not match the diff refs"]
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_line_code_errors_in_stringified_ruby_hashes() {
+    let message = json!("400 Bad request - Note {:line_code=>[\"can't be blank\"]}");
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_position_errors_in_quoted_ruby_hashes() {
+    let message = json!("400 (Bad request) \"Note {:position=>[\"is incomplete\"]}\" not given");
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn recognizes_commit_diff_refs_errors_in_quoted_ruby_hashes() {
+    let message = json!(
+        "400 (Bad request) \"Note {:commit_id=>[\"does not match the diff refs\"]}\" not given"
+    );
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn rejects_null_position_error_messages() {
+    assert!(!position_error(&Value::Null));
+}
+
+#[test]
+fn rejects_empty_position_error_objects() {
+    let message = json!({});
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_position_fields_with_empty_validation_arrays() {
+    let message = json!({
+        "position": []
+    });
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_position_fields_with_null_validation_details() {
+    let message = json!({
+        "position": null
+    });
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_mixed_position_and_body_validation_errors() {
+    let message = json!({
+        "position": ["is invalid"],
+        "body": ["can't be blank"]
+    });
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_body_errors_that_only_mention_position() {
+    let message = json!({
+        "body": ["contains the word position"]
+    });
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_field_names_that_only_start_with_position() {
+    let message = json!({
+        "positioning": ["is invalid"]
+    });
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_commit_id_errors_without_diff_refs() {
+    let message = json!({
+        "commit_id": ["is invalid"]
+    });
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_position_error_messages_in_arrays() {
+    let message = json!(["position is invalid"]);
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_plain_text_position_validation_errors() {
+    let message = json!("position is invalid");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_plain_text_bracketed_position_errors() {
+    let message = json!("position[new_line] is missing");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_bad_request_text_without_a_ruby_hash() {
+    let message = json!("400 Bad request - position is incomplete");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_plain_text_body_errors_that_mention_position() {
+    let message = json!("body contains an invalid position");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_plain_text_mixed_position_and_body_errors() {
+    let message = json!("position is invalid and body can't be blank");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_bare_bad_request_error_strings() {
+    let message = json!("400 Bad request");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_mixed_position_and_body_errors_in_ruby_hashes() {
+    let message =
+        json!("400 Bad request - Note {:position=>[\"is invalid\"], :body=>[\"can't be blank\"]}");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_non_diff_refs_commit_errors_in_ruby_hashes() {
+    let message = json!(
+        "400 Bad request - Note {:line_code=>[\"is invalid\"], :commit_id=>[\"is invalid\"]}"
+    );
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_empty_stringified_ruby_hashes() {
+    let message = json!("400 Bad request - Note {}");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_stringified_ruby_hashes_without_a_closing_brace() {
+    let message = json!("400 Bad request - Note {:position=>[\"is incomplete\"]");
+
+    assert!(!position_error(&message));
+}
+
+#[tokio::test]
+async fn bad_request_responses_can_report_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            position_invalid: true,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn unprocessable_entity_responses_can_report_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(422),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            position_invalid: true,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn unauthorized_responses_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(401),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            position_invalid: false,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn forbidden_responses_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(403),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            position_invalid: false,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn too_many_requests_responses_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(429),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            position_invalid: false,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn internal_server_error_responses_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(500),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            position_invalid: false,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn malformed_error_json_is_not_a_position_failure() {
+    let mut reply = Reply::json(json!({})).status(400);
+    reply.body = "invalid-json".into();
+    let server = Server::start(vec![reply]).await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            position_invalid: false,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn body_validation_errors_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "body": ["can't be blank"]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            position_invalid: false,
+            ..
+        }
+    );
+}
+
 #[tokio::test]
 async fn api_error_debug_omits_malformed_response_bodies() {
     let secret = "private-response-message";
