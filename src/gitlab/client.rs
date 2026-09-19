@@ -1,13 +1,15 @@
 use std::time::Duration;
 
+use log::trace;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
-use reqwest::{Client, Url};
+use reqwest::{Client, Method, Url};
+use serde::de::DeserializeOwned;
 
 use super::GitLabError;
 
 const API_URL: &str = "https://gitlab.com/api/v4/";
 
-#[expect(dead_code)]
+#[cfg_attr(not(test), expect(dead_code))]
 pub struct GitLabClient {
     http: Client,
     base: Url,
@@ -36,6 +38,73 @@ impl GitLabClient {
             .retry(reqwest::retry::never())
             .build()?;
         Ok(Self { http, base })
+    }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, GitLabError> {
+        let url = self.base.join(path).expect("valid GitLab API path");
+        self.request(url, Method::GET, None)
+            .await
+            .map(|(value, _)| value)
+    }
+
+    async fn request<T: DeserializeOwned>(
+        &self,
+        url: Url,
+        method: Method,
+        body: Option<&serde_json::Value>,
+    ) -> Result<(T, HeaderMap), GitLabError> {
+        if url.origin() != self.base.origin()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || !url.path().starts_with(self.base.path())
+            || url.fragment().is_some()
+        {
+            return Err(GitLabError::InvalidPagination);
+        }
+        let endpoint = url.path().to_string();
+        trace!("sending GitLab request: method={method} endpoint={endpoint}");
+        let mut request = self.http.request(method, url);
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|source| GitLabError::Request {
+                endpoint: endpoint.clone(),
+                source,
+            })?;
+        let status = response.status();
+        if !status.is_success() {
+            let rate_limited = status.as_u16() == 429
+                || (status.as_u16() == 403
+                    && (response
+                        .headers()
+                        .get("ratelimit-remaining")
+                        .is_some_and(|value| value == "0")
+                        || response.headers().contains_key("retry-after")));
+            return Err(GitLabError::Api {
+                endpoint,
+                status: status.as_u16(),
+                rate_limited,
+            });
+        }
+        let headers = response.headers().clone();
+        let value = response.json().await.map_err(|source| {
+            if source.is_decode() {
+                GitLabError::Decode {
+                    endpoint: endpoint.clone(),
+                    source,
+                }
+            } else {
+                GitLabError::Request {
+                    endpoint: endpoint.clone(),
+                    source,
+                }
+            }
+        })?;
+        Ok((value, headers))
     }
 }
 
