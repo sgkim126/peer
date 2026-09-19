@@ -1,4 +1,5 @@
 pub mod github;
+mod hosted;
 mod markdown;
 mod terminal;
 
