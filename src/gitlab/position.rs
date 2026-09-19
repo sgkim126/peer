@@ -22,7 +22,6 @@ pub struct ChangedFile {
 ///
 /// The caller must verify that `refs` identify the reviewed diff. `FileLocation`
 /// has no side, so deleted lines and old paths cannot identify head line numbers.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn comment_position(
     files: &[ChangedFile],
     location: &FileLocation,

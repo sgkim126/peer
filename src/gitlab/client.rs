@@ -127,7 +127,6 @@ impl GitLabClient {
         Ok(items)
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn post<T: DeserializeOwned>(
         &self,
         path: &str,

@@ -15,7 +15,6 @@ pub enum GitLabError {
         endpoint: String,
         status: u16,
         rate_limited: bool,
-        #[cfg_attr(not(test), expect(dead_code))]
         position_invalid: bool,
     },
     Decode {
@@ -31,7 +30,6 @@ pub enum GitLabError {
 
 impl GitLabError {
     /// The server may have accepted a POST even though its response was lost.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn may_have_published(&self) -> bool {
         matches!(
             self,

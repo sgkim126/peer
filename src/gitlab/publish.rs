@@ -3,19 +3,20 @@ use std::fmt;
 use std::num::NonZeroU64;
 
 use serde::Deserialize;
+use serde_json::json;
 
-use crate::feedback::{Feedback, PreparedReview, marker};
+use crate::feedback::{Feedback, PreparedReview, fingerprints, marker};
 use crate::git::CommitHash;
 use crate::render::RenderDocument;
 use crate::stage::StageTarget;
 
 use super::client::MergeRequest;
+use super::position::{ChangedFile, comment_position};
 use super::{CONVERSATION_MARKER, GitLabClient, GitLabError, GitLabReviewSource, Repository};
 
 const MAX_NOTE_CHARACTERS: usize = 1_000_000;
 
 #[derive(Clone, Debug, Default)]
-#[expect(dead_code)]
 pub struct PublishReport {
     pub urls: Vec<String>,
     pub published: usize,
@@ -25,7 +26,6 @@ pub struct PublishReport {
 }
 
 impl PublishReport {
-    #[expect(dead_code)]
     fn record(&mut self, url: String, inline: bool, recovered: bool) {
         self.urls.push(url);
         self.published += 1;
@@ -59,7 +59,6 @@ impl fmt::Display for PublishReport {
 }
 
 #[derive(Debug)]
-#[expect(dead_code)]
 pub struct PublishError {
     pub report: PublishReport,
     reason: Box<PublishFailure>,
@@ -87,7 +86,6 @@ impl From<GitLabError> for PublishError {
 }
 
 #[derive(Debug)]
-#[expect(dead_code)]
 enum PublishFailure {
     Api(GitLabError),
     SnapshotMismatch,
@@ -158,31 +156,26 @@ impl From<GitLabError> for PublishFailure {
 }
 
 #[derive(Deserialize)]
-#[expect(dead_code)]
 struct CommitRef {
     id: CommitHash,
 }
 
 #[derive(Deserialize)]
-#[expect(dead_code)]
 struct PublishedNote {
     id: NonZeroU64,
 }
 
 #[derive(Deserialize)]
-#[expect(dead_code)]
 struct PublishedDiscussion {
     notes: Vec<PublishedNote>,
 }
 
 #[derive(Deserialize)]
-#[expect(dead_code)]
 struct ExistingDiscussion {
     notes: Vec<ExistingNote>,
 }
 
 #[derive(Deserialize)]
-#[expect(dead_code)]
 struct ExistingNote {
     id: NonZeroU64,
     body: String,
@@ -195,14 +188,162 @@ struct ExistingNote {
 }
 
 #[derive(Default)]
-#[expect(dead_code)]
 struct ExistingFeedback {
     fingerprints: HashSet<String>,
     notes: Vec<(HashSet<String>, String)>,
 }
 
 impl GitLabClient {
-    #[expect(dead_code)]
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub async fn publish(
+        &self,
+        repository: &Repository,
+        number: NonZeroU64,
+        input: &RenderDocument,
+    ) -> Result<PublishReport, PublishError> {
+        let mut report = PublishReport::default();
+        self.publish_review(repository, number, input, &mut report)
+            .await
+            .map_err(|reason| PublishError {
+                report: report.clone(),
+                reason: Box::new(reason),
+            })?;
+        Ok(report)
+    }
+
+    async fn publish_review(
+        &self,
+        repository: &Repository,
+        number: NonZeroU64,
+        input: &RenderDocument,
+        report: &mut PublishReport,
+    ) -> Result<(), PublishFailure> {
+        let review = PreparedReview::for_gitlab(input, repository);
+        if review.items.is_empty() && review.summary_fingerprint.is_none() {
+            return Ok(());
+        }
+        let merge_request = self.merge_request(repository, number).await?;
+        let source = merge_request.source(number)?;
+        if input
+            .source
+            .as_ref()
+            .is_some_and(|expected| expected != &source)
+        {
+            return Err(PublishFailure::SnapshotMismatch);
+        }
+        let prefix = format!("{}/merge_requests/{number}", repository.api_path());
+        let commits = self.list::<CommitRef>(&format!("{prefix}/commits")).await?;
+        validate_commits(input, &commits, &source)?;
+
+        let mut seen = self
+            .existing_feedback(repository, number)
+            .await?
+            .fingerprints;
+        let remaining: Vec<_> = review
+            .items
+            .iter()
+            .filter(|item| {
+                let is_new = seen.insert(item.fingerprint.clone());
+                report.skipped += usize::from(!is_new);
+                is_new
+            })
+            .collect();
+        let include_summary = review
+            .summary_fingerprint
+            .as_ref()
+            .is_some_and(|fingerprint| {
+                let is_new = seen.insert(fingerprint.clone());
+                report.skipped += usize::from(!is_new);
+                is_new
+            });
+        if remaining.is_empty() && !include_summary {
+            return Ok(());
+        }
+        // Validate the largest possible fallback before making any writes.
+        check_body(&conversation_body(&review, &remaining, include_summary))?;
+        for item in &remaining {
+            check_body(&inline_body(item))?;
+        }
+        let has_head_location = remaining.iter().any(|item| head_location(item, &source));
+        let files = if has_head_location {
+            self.list::<ChangedFile>(&format!("{prefix}/diffs"))
+                .await
+                .or_else(|err| match err {
+                    GitLabError::Api { status: 413, .. } => Ok(vec![]),
+                    _ => Err(err),
+                })?
+        } else {
+            Vec::new()
+        };
+        self.assert_current(repository, number, &merge_request)
+            .await?;
+
+        let mut fallback = Vec::new();
+        for item in remaining {
+            let position = head_location(item, &source)
+                .then_some(item.location.as_ref())
+                .flatten()
+                .and_then(|location| comment_position(&files, location, &source.diff_refs));
+            let Some(position) = position else {
+                fallback.push(item);
+                continue;
+            };
+            self.assert_current(repository, number, &merge_request)
+                .await?;
+            let body = inline_body(item);
+            let result = self
+                .post::<PublishedDiscussion>(
+                    &format!("{prefix}/discussions"),
+                    &json!({ "body": body, "position": position }),
+                )
+                .await;
+            match result {
+                Ok(discussion) => match discussion.notes.first() {
+                    Some(note) => report.record(note_url(repository, number, note.id), true, false),
+                    None => {
+                        let url = self
+                            .confirm_publication(repository, number, &body, None)
+                            .await?;
+                        report.record(url, true, true);
+                    }
+                },
+                Err(error) if error.may_have_published() => {
+                    let url = self
+                        .confirm_publication(repository, number, &body, Some(error))
+                        .await?;
+                    report.record(url, true, true);
+                }
+                Err(GitLabError::Api {
+                    status: 400 | 422,
+                    position_invalid: true,
+                    ..
+                }) => {
+                    fallback.push(item);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        let body = conversation_body(&review, &fallback, include_summary);
+        if !body.is_empty() {
+            self.assert_current(repository, number, &merge_request)
+                .await?;
+            match self
+                .post::<PublishedNote>(&format!("{prefix}/notes"), &json!({ "body": body }))
+                .await
+            {
+                Ok(note) => report.record(note_url(repository, number, note.id), false, false),
+                Err(error) if error.may_have_published() => {
+                    let url = self
+                        .confirm_publication(repository, number, &body, Some(error))
+                        .await?;
+                    report.record(url, false, true);
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+        Ok(())
+    }
+
     async fn assert_current(
         &self,
         repository: &Repository,
@@ -221,9 +362,73 @@ impl GitLabClient {
         }
         Ok(())
     }
+
+    async fn existing_feedback(
+        &self,
+        repository: &Repository,
+        number: NonZeroU64,
+    ) -> Result<ExistingFeedback, GitLabError> {
+        let mut result = ExistingFeedback::default();
+        let path = format!(
+            "{}/merge_requests/{number}/discussions",
+            repository.api_path()
+        );
+        let discussions = self.list::<ExistingDiscussion>(&path).await?;
+        for note in discussions
+            .into_iter()
+            .flat_map(|discussion| discussion.notes)
+        {
+            if note.system {
+                continue;
+            }
+            if note.internal {
+                continue;
+            }
+            if note.confidential {
+                continue;
+            }
+            let markers = fingerprints(&note.body);
+            if !markers.is_empty() {
+                result.fingerprints.extend(markers.iter().cloned());
+                result
+                    .notes
+                    .push((markers, note_url(repository, number, note.id)));
+            }
+        }
+        Ok(result)
+    }
+
+    async fn confirm_publication(
+        &self,
+        repository: &Repository,
+        number: NonZeroU64,
+        body: &str,
+        request: Option<GitLabError>,
+    ) -> Result<String, PublishFailure> {
+        let expected = fingerprints(body);
+        match self.existing_feedback(repository, number).await {
+            Ok(existing) => {
+                if !expected.is_empty()
+                    && let Some((_, url)) = existing
+                        .notes
+                        .into_iter()
+                        .find(|(markers, _)| expected.is_subset(markers))
+                {
+                    return Ok(url);
+                }
+                Err(PublishFailure::Unconfirmed {
+                    request,
+                    verification: None,
+                })
+            }
+            Err(error) => Err(PublishFailure::Unconfirmed {
+                request,
+                verification: Some(error),
+            }),
+        }
+    }
 }
 
-#[expect(dead_code)]
 fn validate_commits(
     input: &RenderDocument,
     commits: &[CommitRef],
@@ -300,7 +505,6 @@ fn validate_commits(
     Ok(())
 }
 
-#[expect(dead_code)]
 fn head_location(item: &Feedback, source: &GitLabReviewSource) -> bool {
     item.location.is_some()
         && item
@@ -309,12 +513,10 @@ fn head_location(item: &Feedback, source: &GitLabReviewSource) -> bool {
             .is_some_and(|commit| commit.matches(&source.diff_refs.head_sha))
 }
 
-#[expect(dead_code)]
 fn inline_body(item: &Feedback) -> String {
     format!("{}\n\n{}", item.body, marker(&item.fingerprint))
 }
 
-#[expect(dead_code)]
 fn conversation_body(
     review: &PreparedReview,
     items: &[&Feedback],
@@ -328,7 +530,6 @@ fn conversation_body(
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 fn check_body(body: &str) -> Result<(), PublishFailure> {
     if body.chars().take(MAX_NOTE_CHARACTERS + 1).count() > MAX_NOTE_CHARACTERS {
         Err(PublishFailure::NoteTooLong)
@@ -337,7 +538,6 @@ fn check_body(body: &str) -> Result<(), PublishFailure> {
     }
 }
 
-#[expect(dead_code)]
 fn note_url(repository: &Repository, number: NonZeroU64, id: NonZeroU64) -> String {
     format!("https://gitlab.com/{repository}/-/merge_requests/{number}#note_{id}")
 }

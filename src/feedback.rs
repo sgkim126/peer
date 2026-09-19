@@ -35,7 +35,6 @@ impl PreparedReview {
         Self::with_parts(document, parts)
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn for_gitlab(document: &RenderDocument, repository: &crate::gitlab::Repository) -> Self {
         let parts = gitlab::DocumentParts::for_gitlab(document, &repository.to_string());
         Self::with_parts(document, parts)
