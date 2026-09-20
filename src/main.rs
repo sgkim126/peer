@@ -296,7 +296,15 @@ async fn main() -> ExitCode {
             repo,
             github,
         } => {
-            let repo = if format == OutputFormat::Github && repo.is_none() {
+            if github.is_some() && format != OutputFormat::Github {
+                eprintln!(
+                    "failed to configure render: --github can only be used with --format github"
+                );
+                return ExitCode::FAILURE;
+            }
+            let repo = if matches!(format, OutputFormat::Github | OutputFormat::Gitlab)
+                && repo.is_none()
+            {
                 let cwd = match std::env::current_dir() {
                     Ok(cwd) => cwd,
                     Err(error) => {
@@ -306,7 +314,12 @@ async fn main() -> ExitCode {
                     }
                 };
                 match discover(&cwd) {
-                    Ok((config, _)) => config.github.repo.filter(|value| !value.trim().is_empty()),
+                    Ok((config, _)) => match format {
+                        OutputFormat::Github => config.github.repo,
+                        OutputFormat::Gitlab => config.gitlab.repo,
+                        _ => unreachable!("hosted output"),
+                    }
+                    .filter(|value| !value.trim().is_empty()),
                     Err(error) => {
                         eprintln!("failed to configure render: {error}");
                         debug!("{error:?}");
@@ -323,12 +336,6 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
-            if github.is_some() && format != OutputFormat::Github {
-                eprintln!(
-                    "failed to configure render: --github can only be used with --format github"
-                );
-                return ExitCode::FAILURE;
-            }
             let mut input = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut input) {
                 eprintln!("failed to read render input: {error}");

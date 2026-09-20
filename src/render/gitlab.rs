@@ -2,7 +2,6 @@ use super::RenderDocument;
 
 pub use super::hosted::DocumentParts;
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn render(document: &RenderDocument, repo: &str) -> String {
     DocumentParts::for_gitlab(document, repo).render()
 }

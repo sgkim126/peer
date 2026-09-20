@@ -340,7 +340,7 @@ fn markdown_rejects_a_repository_flag_before_parsing_input() {
             &["--format", "markdown", "--repo", "owner/repository"],
             "invalid",
         ),
-        "--repo can only be used with --format github",
+        "--repo can only be used with --format github or --format gitlab",
     );
 }
 
@@ -353,6 +353,6 @@ fn terminal_rejects_a_repository_flag_before_parsing_input() {
             &["--format", "terminal", "--repo", "owner/repository"],
             "invalid",
         ),
-        "--repo can only be used with --format github",
+        "--repo can only be used with --format github or --format gitlab",
     );
 }
