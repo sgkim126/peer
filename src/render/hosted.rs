@@ -40,10 +40,14 @@ pub fn summary_identity(document: &RenderDocument) -> serde_json::Value {
 
 impl DocumentParts {
     pub fn new(document: &RenderDocument, repo: &str) -> Self {
+        Self::with_format(document, &Format::github(repo))
+    }
+
+    fn with_format(document: &RenderDocument, format: &Format<'_>) -> Self {
         let stages = document
             .stages
             .iter()
-            .map(|stage| render_stage(stage, repo))
+            .map(|stage| render_stage(stage, format))
             .collect::<Vec<_>>()
             .join("\n\n");
         let summary = document.summary.as_ref().map(|summary| {
@@ -52,6 +56,7 @@ impl DocumentParts {
                 document.context_usage.as_ref(),
                 &usage_by_model(document),
                 &review_counts(document),
+                format,
             )
         });
         let context = document
@@ -59,23 +64,23 @@ impl DocumentParts {
             .is_none()
             .then_some(document.context_usage.as_ref())
             .flatten()
-            .map(render_context_usage);
+            .map(|usage| render_context_usage(usage, format));
         Self {
             summary: summary.unwrap_or_default(),
             questions: document
                 .questions
                 .iter()
-                .map(|item| render_question(item, repo))
+                .map(|item| render_question(item, format))
                 .collect(),
             recommendations: document
                 .recommendations
                 .iter()
-                .map(|item| render_recommendation(item, repo))
+                .map(|item| render_recommendation(item, format))
                 .collect(),
             findings: document
                 .findings
                 .iter()
-                .map(|item| render_finding(item, repo))
+                .map(|item| render_finding(item, format))
                 .collect(),
             context: context.unwrap_or_default(),
             stages,
@@ -94,21 +99,21 @@ impl DocumentParts {
     }
 }
 
-fn render_stage(result: &RenderStage, repo: &str) -> String {
+fn render_stage(result: &RenderStage, format: &Format<'_>) -> String {
     let mut body = String::new();
-    writeln!(body, "## Stage: {}", escape_github_markdown(&result.stage)).unwrap();
+    writeln!(body, "## Stage: {}", format.markdown(&result.stage)).unwrap();
     writeln!(body).unwrap();
-    writeln!(body, "- **Target:** {}", target(&result.target, repo)).unwrap();
+    writeln!(body, "- **Target:** {}", target(&result.target, format)).unwrap();
     writeln!(body, "- **Status:** {}", result.status()).unwrap();
     writeln!(body).unwrap();
     if let Some(summary) = result.summary() {
-        writeln!(body, "{}", escape_github_markdown(summary)).unwrap();
+        writeln!(body, "{}", format.markdown(summary)).unwrap();
         writeln!(body).unwrap();
     }
     if let Some(error) = result.error() {
         writeln!(body).unwrap();
         writeln!(body, "> [!WARNING]").unwrap();
-        writeln!(body, "> {}", escape_github_markdown(&display_error(error))).unwrap();
+        writeln!(body, "> {}", format.markdown(&display_error(error))).unwrap();
     }
     let iterations = result.iterations();
     let usage = result.usage();
@@ -120,22 +125,22 @@ fn render_stage(result: &RenderStage, repo: &str) -> String {
             writeln!(body, "- **Iterations:** {iterations}").unwrap();
         }
         if let Some(usage) = usage {
-            write_usage_markdown(&mut body, "Stage usage", usage);
+            write_usage_markdown(&mut body, "Stage usage", usage, format);
         }
     }
 
     format!(
         "<details>\n<summary>Stage: {} - Status: {} - Target: {}</summary>\n\n{}\n</details>",
-        escape_github_html(&result.stage),
+        format.html(&result.stage),
         result.status(),
-        escape_github_html(&display_target(&result.target)),
+        format.html(&display_target(&result.target)),
         body.trim_end()
     )
 }
 
-fn render_context_usage(usage: &LlmUsage) -> String {
+fn render_context_usage(usage: &LlmUsage, format: &Format<'_>) -> String {
     let mut output = String::new();
-    write_usage_markdown(&mut output, "Context usage", usage);
+    write_usage_markdown(&mut output, "Context usage", usage, format);
     output.trim().to_string()
 }
 
@@ -144,6 +149,7 @@ fn render_review_summary(
     context_usage: Option<&LlmUsage>,
     usage_by_model: &LlmUsage,
     counts: &ReviewCounts,
+    format: &Format<'_>,
 ) -> String {
     let mut output = format!(
         "## Review summary\n\n- **Peer version:** {}",
@@ -167,12 +173,12 @@ fn render_review_summary(
         }
         for model in usage.iter() {
             output.push_str("\n- **Context usage:** ");
-            write_model_usage_summary(&mut output, model);
+            write_model_usage_summary(&mut output, model, format);
             write!(
                 output,
                 " ({}/{})",
-                escape_github_markdown(&model.provider),
-                escape_github_markdown(&model.model),
+                format.markdown(&model.provider),
+                format.markdown(&model.model),
             )
             .unwrap();
         }
@@ -185,11 +191,11 @@ fn render_review_summary(
             write!(
                 output,
                 "- **{}/{}:** ",
-                escape_github_markdown(&usage.provider),
-                escape_github_markdown(&usage.model),
+                format.markdown(&usage.provider),
+                format.markdown(&usage.model),
             )
             .unwrap();
-            write_model_usage_summary(&mut output, usage);
+            write_model_usage_summary(&mut output, usage, format);
             writeln!(output).unwrap();
         }
     }
@@ -212,65 +218,69 @@ fn write_detail(output: &mut String, label: &str, markdown: &str) {
     .unwrap();
 }
 
-fn render_question(question: &KnowledgeQuestion, repo: &str) -> String {
+fn render_question(question: &KnowledgeQuestion, format: &Format<'_>) -> String {
     let mut output = format!(
         "- **question/{}** — {}",
         question.category.as_str(),
-        escape_github_markdown(&question.question),
+        format.markdown(&question.question),
     );
     write_detail(
         &mut output,
         "Evidence",
-        &escape_github_markdown(&question.evidence),
+        &format.markdown(&question.evidence),
     );
     write_detail(
         &mut output,
         "Why it matters",
-        &escape_github_markdown(&question.why_it_matters),
+        &format.markdown(&question.why_it_matters),
     );
     write_detail(
         &mut output,
         "References",
-        &related_context(&question.related_commits, question.location.as_ref(), repo),
+        &related_context(
+            &question.related_commits,
+            question.location.as_ref(),
+            format,
+        ),
     );
     output
 }
 
-fn render_recommendation(recommendation: &StructuralRecommendation, repo: &str) -> String {
+fn render_recommendation(recommendation: &StructuralRecommendation, format: &Format<'_>) -> String {
     let mut output = format!(
         "- **recommendation/{}** — {}",
         recommendation.kind.as_str(),
-        escape_github_markdown(&recommendation.message),
+        format.markdown(&recommendation.message),
     );
     write_detail(
         &mut output,
         "Rationale",
-        &escape_github_markdown(&recommendation.rationale),
+        &format.markdown(&recommendation.rationale),
     );
     write_detail(
         &mut output,
         "References",
-        &related_context(&recommendation.related_commits, None, repo),
+        &related_context(&recommendation.related_commits, None, format),
     );
     output
 }
 
 #[cfg(test)]
-fn render_findings(findings: &[RenderFinding], repo: &str) -> String {
+fn render_findings(findings: &[RenderFinding], format: &Format<'_>) -> String {
     render_items(
         "Review findings",
         &findings
             .iter()
-            .map(|item| render_finding(item, repo))
+            .map(|item| render_finding(item, format))
             .collect::<Vec<_>>(),
     )
 }
 
-fn render_finding(finding: &RenderFinding, repo: &str) -> String {
+fn render_finding(finding: &RenderFinding, format: &Format<'_>) -> String {
     let mut output = format!(
         "- **finding/{}** — {}",
         severity_name(finding.severity),
-        escape_github_markdown(&finding.message),
+        format.markdown(&finding.message),
     );
     if let Some(security) = &finding.security {
         for (label, value) in [
@@ -278,13 +288,13 @@ fn render_finding(finding: &RenderFinding, repo: &str) -> String {
             ("Sensitive operation", &security.sensitive_operation),
             ("Impact", &security.impact),
         ] {
-            write_detail(&mut output, label, &escape_github_markdown(value));
+            write_detail(&mut output, label, &format.markdown(value));
         }
     }
     write_detail(
         &mut output,
         "References",
-        &finding_context(&finding.commit, finding.location.as_ref(), repo),
+        &finding_context(&finding.commit, finding.location.as_ref(), format),
     );
     output
 }
@@ -292,7 +302,7 @@ fn render_finding(finding: &RenderFinding, repo: &str) -> String {
 fn related_context(
     commits: &[CommitHash],
     location: Option<&crate::stage::KnowledgeLocation>,
-    repo: &str,
+    format: &Format<'_>,
 ) -> String {
     commits
         .iter()
@@ -300,22 +310,26 @@ fn related_context(
             let file = location
                 .filter(|location| location.commit.matches(commit))
                 .map(|location| &location.file);
-            finding_context(commit, file, repo)
+            finding_context(commit, file, format)
         })
         .collect::<Vec<_>>()
         .join(", ")
 }
 
-fn finding_context(commit: &CommitHash, location: Option<&FileLocation>, repo: &str) -> String {
+fn finding_context(
+    commit: &CommitHash,
+    location: Option<&FileLocation>,
+    format: &Format<'_>,
+) -> String {
     let commit = commit.as_ref();
-    let mut context = format!("[`{commit}`]({})", commit_url(repo, commit));
+    let mut context = format!("[`{commit}`]({})", commit_url(format, commit));
     if let Some(location) = location {
         let label = location_label(location.file.as_str(), location.line);
         write!(
             context,
             " · [{}]({})",
-            escape_github_markdown(&label),
-            file_url(repo, commit, &location.file, location.line)
+            format.markdown(&label),
+            file_url(format, commit, &location.file, location.line)
         )
         .unwrap();
     }
@@ -358,7 +372,12 @@ fn location_label(file: &str, line: Option<u32>) -> String {
     }
 }
 
-fn write_usage_markdown(output: &mut String, heading: &str, models: &LlmUsage) {
+fn write_usage_markdown(
+    output: &mut String,
+    heading: &str,
+    models: &LlmUsage,
+    format: &Format<'_>,
+) {
     writeln!(output).unwrap();
     writeln!(output, "### {heading}").unwrap();
     writeln!(output).unwrap();
@@ -382,19 +401,19 @@ fn write_usage_markdown(output: &mut String, heading: &str, models: &LlmUsage) {
             )
             .unwrap();
         }
-        writeln!(output, "- **Cost:** ${:.6}", usage.cost_usd).unwrap();
+        writeln!(output, "- **Cost:** {}", format.currency(usage.cost_usd)).unwrap();
         writeln!(
             output,
             "- **Model:** {}/{}",
-            escape_github_markdown(&usage.provider),
-            escape_github_markdown(&usage.model),
+            format.markdown(&usage.provider),
+            format.markdown(&usage.model),
         )
         .unwrap();
         writeln!(output).unwrap();
     }
 }
 
-fn write_model_usage_summary(output: &mut String, usage: &LlmModelUsage) {
+fn write_model_usage_summary(output: &mut String, usage: &LlmModelUsage, format: &Format<'_>) {
     write!(
         output,
         "{} input tokens, {} output tokens",
@@ -409,28 +428,25 @@ fn write_model_usage_summary(output: &mut String, usage: &LlmModelUsage) {
         )
         .unwrap();
     }
-    write!(output, ", ${:.6}", usage.cost_usd).unwrap();
+    write!(output, ", {}", format.currency(usage.cost_usd)).unwrap();
 }
 
-fn target(target: &StageTarget, repo: &str) -> String {
+fn target(target: &StageTarget, format: &Format<'_>) -> String {
     match target {
         StageTarget::Commit(commit) => {
             let commit = commit.as_ref();
-            format!("[`{commit}`]({})", commit_url(repo, commit))
+            format!("[`{commit}`]({})", commit_url(format, commit))
         }
-        StageTarget::Range { from, to } => escape_github_markdown(&format!("{from}..{to}")),
+        StageTarget::Range { from, to } => format.markdown(&format!("{from}..{to}")),
     }
 }
 
-fn commit_url(repo: &str, commit: &str) -> String {
-    format!("https://github.com/{repo}/commit/{commit}")
+fn commit_url(format: &Format<'_>, commit: &str) -> String {
+    format!("{}/commit/{commit}", format.code_url())
 }
 
-fn file_url(repo: &str, commit: &str, file: &str, line: Option<u32>) -> String {
-    let mut url = format!(
-        "https://github.com/{repo}/blob/{commit}/{}",
-        encode_path(file)
-    );
+fn file_url(format: &Format<'_>, commit: &str, file: &str, line: Option<u32>) -> String {
+    let mut url = format!("{}/blob/{commit}/{}", format.code_url(), encode_path(file));
     if let Some(line) = line {
         write!(url, "#L{line}").unwrap();
     }
@@ -454,16 +470,30 @@ fn encode_path(path: &str) -> String {
         .join("/")
 }
 
-fn escape_github_markdown(value: &str) -> String {
-    neutralize_mentions(&escape_markdown(value))
+struct Format<'a> {
+    repository: &'a str,
 }
 
-fn escape_github_html(value: &str) -> String {
-    neutralize_mentions(&escape_html(value))
-}
+impl<'a> Format<'a> {
+    fn github(repository: &'a str) -> Self {
+        Self { repository }
+    }
 
-fn neutralize_mentions(value: &str) -> String {
-    value.replace('@', "`@`")
+    fn code_url(&self) -> String {
+        format!("https://github.com/{}", self.repository)
+    }
+
+    fn currency(&self, amount: f64) -> String {
+        format!("${amount:.6}")
+    }
+
+    fn markdown(&self, value: &str) -> String {
+        escape_markdown(value).replace('@', "`@`")
+    }
+
+    fn html(&self, value: &str) -> String {
+        escape_html(value).replace('@', "`@`")
+    }
 }
 
 #[cfg(test)]
@@ -472,6 +502,35 @@ mod tests {
 
     use crate::git::CommitHash;
     use crate::stage::FileLocation;
+
+    // Keep the original GitHub rendering expectations unchanged while exercising
+    // the shared implementation.
+    fn render_stage(stage: &RenderStage, repo: &str) -> String {
+        super::render_stage(stage, &Format::github(repo))
+    }
+
+    fn render_findings(findings: &[RenderFinding], repo: &str) -> String {
+        super::render_findings(findings, &Format::github(repo))
+    }
+
+    fn render_context_usage(usage: &LlmUsage) -> String {
+        super::render_context_usage(usage, &Format::github("owner/repo"))
+    }
+
+    fn render_review_summary(
+        summary: &ReviewSummary,
+        context: Option<&LlmUsage>,
+        usage: &LlmUsage,
+        counts: &ReviewCounts,
+    ) -> String {
+        super::render_review_summary(
+            summary,
+            context,
+            usage,
+            counts,
+            &Format::github("owner/repo"),
+        )
+    }
 
     #[test]
     fn omitting_items_preserves_full_review_statistics_and_stage_details() {
