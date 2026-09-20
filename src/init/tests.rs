@@ -1,6 +1,21 @@
 use super::render_config;
 
 #[test]
+fn repository_override_only_sets_github_and_preserves_gitlab_guidance() {
+    let rendered = render_config(
+        crate::config::DEFAULT_CONFIG_TOML,
+        None,
+        None,
+        Some("owner/repo"),
+    )
+    .unwrap();
+    let config: crate::config::Config = toml::from_str(&rendered).unwrap();
+    assert_eq!(config.github.repo.as_deref(), Some("owner/repo"));
+    assert_eq!(config.gitlab.repo, None);
+    assert!(rendered.contains("# repo = \"group/subgroup/project\""));
+}
+
+#[test]
 fn overrides_follow_toml_keys_and_preserve_surrounding_formatting() {
     let template = r#"version = 2 # keep version comment
 

@@ -18,11 +18,19 @@ pub struct Config {
     pub stages: StagesConfig,
     #[serde(default)]
     pub github: GitHubConfig,
+    #[serde(default)]
+    pub gitlab: GitLabConfig,
 }
 
 #[derive(Debug, Default, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GitHubConfig {
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, Default, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GitLabConfig {
     pub repo: Option<String>,
 }
 
@@ -316,6 +324,37 @@ mod tests {
         let config: Config = value.try_into().unwrap();
         assert_eq!(config.version, 2);
         assert_eq!(config.github, GitHubConfig::default());
+    }
+
+    #[test]
+    fn gitlab_configuration_is_optional_and_unset_by_default() {
+        let mut value: toml::Value = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        let config: Config = value.clone().try_into().unwrap();
+        assert_eq!(config.gitlab, GitLabConfig::default());
+        value.as_table_mut().unwrap().remove("gitlab");
+        let config: Config = value.try_into().unwrap();
+        assert_eq!(config.version, 2);
+        assert_eq!(config.gitlab, GitLabConfig::default());
+    }
+
+    #[test]
+    fn gitlab_configuration_preserves_subgroups_and_rejects_unknown_fields() {
+        let mut value: toml::Value = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
+        value["gitlab"]
+            .as_table_mut()
+            .unwrap()
+            .insert("repo".into(), "group/subgroup/project".into());
+        let config: Config = value.clone().try_into().unwrap();
+        assert_eq!(
+            config.gitlab.repo.as_deref(),
+            Some("group/subgroup/project")
+        );
+        assert_eq!(config.github.repo, None);
+        value["gitlab"]
+            .as_table_mut()
+            .unwrap()
+            .insert("token".into(), "unsupported".into());
+        assert_matches!(value.try_into::<Config>(), Err(_));
     }
 
     #[test]
