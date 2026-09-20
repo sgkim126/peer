@@ -1,0 +1,741 @@
+use super::*;
+
+use std::assert_matches;
+use std::sync::{Arc, Mutex};
+
+use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpListener;
+use tokio::task::JoinHandle;
+
+struct Reply {
+    status: u16,
+    body: String,
+    headers: Vec<String>,
+    delay: Duration,
+}
+
+impl Reply {
+    fn json(value: Value) -> Self {
+        Self {
+            status: 200,
+            body: value.to_string(),
+            headers: Vec::new(),
+            delay: Duration::ZERO,
+        }
+    }
+
+    fn header(mut self, value: &str) -> Self {
+        self.headers.push(value.to_string());
+        self
+    }
+
+    fn status(mut self, status: u16) -> Self {
+        self.status = status;
+        self
+    }
+}
+
+struct Server {
+    base: Url,
+    requests: Arc<Mutex<Vec<String>>>,
+    task: JoinHandle<()>,
+}
+
+impl Server {
+    async fn start(replies: Vec<Reply>) -> Self {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = Url::parse(&format!(
+            "http://{}/api/v4/",
+            listener.local_addr().unwrap()
+        ))
+        .unwrap();
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let received = requests.clone();
+        let address = base.to_string();
+        let task = tokio::spawn(async move {
+            for reply in replies {
+                let (mut stream, _) = listener.accept().await.unwrap();
+                let mut request = Vec::new();
+                let mut buffer = [0; 1024];
+                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
+                    let count = stream.read(&mut buffer).await.unwrap();
+                    assert_ne!(count, 0, "request headers ended early");
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                let header_end = request
+                    .windows(4)
+                    .position(|bytes| bytes == b"\r\n\r\n")
+                    .unwrap()
+                    + 4;
+                let content_length = String::from_utf8_lossy(&request[..header_end])
+                    .lines()
+                    .filter_map(|line| line.split_once(':'))
+                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                    .map(|(_, value)| value.trim().parse::<usize>().unwrap())
+                    .unwrap_or(0);
+                while request.len() < header_end + content_length {
+                    let count = stream.read(&mut buffer).await.unwrap();
+                    assert_ne!(count, 0, "request body ended early");
+                    request.extend_from_slice(&buffer[..count]);
+                }
+                received
+                    .lock()
+                    .unwrap()
+                    .push(String::from_utf8(request).unwrap());
+                tokio::time::sleep(reply.delay).await;
+                let extra = reply
+                    .headers
+                    .iter()
+                    .map(|header| format!("{}\r\n", header.replace("{base}", &address)))
+                    .collect::<String>();
+                let response = format!(
+                    "HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}",
+                    reply.status,
+                    reply.body.len(),
+                    extra,
+                    reply.body
+                );
+                let _ = stream.write_all(response.as_bytes()).await;
+            }
+        });
+        Self {
+            base,
+            requests,
+            task,
+        }
+    }
+
+    fn client(&self) -> GitLabClient {
+        GitLabClient::new(
+            "test-private-token",
+            self.base.clone(),
+            Duration::from_secs(2),
+        )
+        .unwrap()
+    }
+
+    fn requests(&self) -> Vec<String> {
+        self.requests.lock().unwrap().clone()
+    }
+}
+
+impl Drop for Server {
+    fn drop(&mut self) {
+        self.task.abort();
+    }
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_to_another_origin() {
+    let server = Server::start(vec![Reply::json(json!([])).header(
+        "Link: <https://example.com/api/v4/projects/5/notes?page=2>; rel=\"next\"",
+    )])
+    .await;
+
+    assert_matches!(
+        server.client().list::<Value>("projects/5/notes").await,
+        Err(GitLabError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_to_another_collection() {
+    let server =
+        Server::start(vec![Reply::json(json!([])).header(
+            "Link: <{base}projects/another-project/notes?page=2>; rel=\"next\"",
+        )])
+        .await;
+
+    assert_matches!(
+        server.client().list::<Value>("projects/5/notes").await,
+        Err(GitLabError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_to_another_origin_with_credentials() {
+    let server = Server::start(vec![Reply::json(json!([])).header(
+        "Link: <http://user:password@localhost/api/v4/projects/5/notes?page=2>; rel=\"next\"",
+    )])
+    .await;
+
+    assert_matches!(
+        server.client().list::<Value>("projects/5/notes").await,
+        Err(GitLabError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_with_fragments() {
+    let server =
+        Server::start(vec![Reply::json(json!([])).header(
+            "Link: <{base}projects/5/notes?page=2#fragment>; rel=\"next\"",
+        )])
+        .await;
+
+    assert_matches!(
+        server.client().list::<Value>("projects/5/notes").await,
+        Err(GitLabError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_back_to_an_already_visited_page() {
+    let server = Server::start(vec![
+        Reply::json(json!([])).header("Link: <{base}projects/5/notes?per_page=100>; rel=\"next\""),
+        Reply::json(json!([])),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().list::<Value>("projects/5/notes").await,
+        Err(GitLabError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_repeated_next_page_links() {
+    let server = Server::start(vec![
+        Reply::json(json!([])).header("Link: <{base}projects/5/notes?page=2>; rel=\"next\""),
+        Reply::json(json!([])).header("Link: <{base}projects/5/notes?page=2>; rel=\"next\""),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().list::<Value>("projects/5/notes").await,
+        Err(GitLabError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[test]
+fn rejects_next_links_without_an_angle_bracketed_url() {
+    let mut headers = HeaderMap::new();
+    headers.insert(LINK, HeaderValue::from_static("not-a-url; rel=next"));
+
+    assert_matches!(next_page(&headers), Err(GitLabError::InvalidPagination));
+}
+
+#[test]
+fn rejects_relative_next_page_links() {
+    let mut headers = HeaderMap::new();
+    headers.insert(LINK, HeaderValue::from_static("<relative-path>; rel=next"));
+
+    assert_matches!(next_page(&headers), Err(GitLabError::InvalidPagination));
+}
+
+#[test]
+fn rejects_multiple_next_page_links() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        LINK,
+        HeaderValue::from_static(
+            "<https://gitlab.com/one>; rel=next, <https://gitlab.com/two>; rel=next",
+        ),
+    );
+
+    assert_matches!(next_page(&headers), Err(GitLabError::InvalidPagination));
+}
+
+#[tokio::test]
+async fn collects_items_from_all_linked_pages() {
+    let server = Server::start(vec![
+        Reply::json(json!([1, 2])).header("Link: <{base}projects/5/notes?page=2>; rel=\"next\""),
+        Reply::json(json!([3])).header("Link: <{base}projects/5/notes?page=3>; rel=\"next\""),
+        Reply::json(json!([4])),
+    ])
+    .await;
+
+    let items = server
+        .client()
+        .list::<Value>("projects/5/notes")
+        .await
+        .unwrap();
+
+    assert_eq!(items, vec![json!(1), json!(2), json!(3), json!(4)]);
+    assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn preserves_initial_query_parameters() {
+    let server = Server::start(vec![Reply::json(json!([]))]).await;
+
+    server
+        .client()
+        .list::<Value>("projects/5/notes?sort=asc")
+        .await
+        .unwrap();
+
+    assert!(
+        server.requests()[0].starts_with("GET /api/v4/projects/5/notes?sort=asc&per_page=100 ")
+    );
+}
+
+#[tokio::test]
+async fn preserves_server_provided_next_urls() {
+    let server = Server::start(vec![
+        Reply::json(json!([1])).header(concat!(
+            "Link: <{base}projects/5/notes?",
+            "pagination=keyset&cursor=opaque%2Bvalue%2Fpart%3D&per_page=2&sort=desc>; rel=\"next\"",
+        )),
+        Reply::json(json!([2])),
+    ])
+    .await;
+
+    server
+        .client()
+        .list::<Value>("projects/5/notes?sort=asc")
+        .await
+        .unwrap();
+
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[1].starts_with(concat!(
+        "GET /api/v4/projects/5/notes?",
+        "pagination=keyset&cursor=opaque%2Bvalue%2Fpart%3D&per_page=2&sort=desc ",
+    )));
+}
+
+#[tokio::test]
+async fn stops_when_link_header_is_missing() {
+    let server = Server::start(vec![Reply::json(json!([1])), Reply::json(json!([2]))]).await;
+
+    let items = server
+        .client()
+        .list::<Value>("projects/5/notes")
+        .await
+        .unwrap();
+
+    assert_eq!(items, vec![json!(1)]);
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[test]
+fn ignores_empty_x_next_page() {
+    let next = "https://gitlab.com/api/v4/projects/5/notes?page=2";
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        LINK,
+        HeaderValue::from_str(&format!("<{next}>; rel=next")).unwrap(),
+    );
+    headers.insert("x-next-page", HeaderValue::from_static(""));
+
+    assert_eq!(
+        next_page(&headers).unwrap(),
+        Some(Url::parse(next).unwrap())
+    );
+}
+
+#[test]
+fn ignores_whitespace_only_x_next_page() {
+    let next = "https://gitlab.com/api/v4/projects/5/notes?page=2";
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        LINK,
+        HeaderValue::from_str(&format!("<{next}>; rel=next")).unwrap(),
+    );
+    headers.insert("x-next-page", HeaderValue::from_static(" \t "));
+
+    assert_eq!(
+        next_page(&headers).unwrap(),
+        Some(Url::parse(next).unwrap())
+    );
+}
+
+#[test]
+fn ignores_conflicting_x_next_page() {
+    let next = "https://gitlab.com/api/v4/projects/5/notes?page=2";
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        LINK,
+        HeaderValue::from_str(&format!("<{next}>; rel=next")).unwrap(),
+    );
+    headers.insert("x-next-page", HeaderValue::from_static("3"));
+
+    assert_eq!(
+        next_page(&headers).unwrap(),
+        Some(Url::parse(next).unwrap())
+    );
+}
+
+#[test]
+fn ignores_non_numeric_x_next_page() {
+    let next = "https://gitlab.com/api/v4/projects/5/notes?page=2";
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        LINK,
+        HeaderValue::from_str(&format!("<{next}>; rel=next")).unwrap(),
+    );
+    headers.insert("x-next-page", HeaderValue::from_static("invalid"));
+
+    assert_eq!(
+        next_page(&headers).unwrap(),
+        Some(Url::parse(next).unwrap())
+    );
+}
+
+#[test]
+fn ignores_x_next_page_without_link() {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-next-page", HeaderValue::from_static("2"));
+
+    assert_eq!(next_page(&headers).unwrap(), None);
+}
+
+#[test]
+fn ignores_previous_page_links() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        LINK,
+        HeaderValue::from_static("<https://gitlab.com/api/v4/projects/5/notes?page=1>; rel=prev"),
+    );
+
+    assert_eq!(next_page(&headers).unwrap(), None);
+}
+
+#[test]
+fn ignores_first_page_links() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        LINK,
+        HeaderValue::from_static("<https://gitlab.com/api/v4/projects/5/notes?page=1>; rel=first"),
+    );
+
+    assert_eq!(next_page(&headers).unwrap(), None);
+}
+
+#[test]
+fn ignores_last_page_links() {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        LINK,
+        HeaderValue::from_static("<https://gitlab.com/api/v4/projects/5/notes?page=3>; rel=last"),
+    );
+
+    assert_eq!(next_page(&headers).unwrap(), None);
+}
+
+#[tokio::test]
+async fn rejects_credentials_on_the_api_origin_before_sending_a_request() {
+    let server = Server::start(Vec::new()).await;
+    let mut url = server.base.join("projects/5/notes").unwrap();
+    url.set_username("user").unwrap();
+    url.set_password(Some("password")).unwrap();
+    assert_matches!(
+        server.client().get::<Value>(url.as_str()).await,
+        Err(GitLabError::InvalidPagination)
+    );
+    assert_eq!(server.requests(), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn does_not_follow_redirect_responses() {
+    let server = Server::start(vec![
+        Reply::json(json!({}))
+            .status(302)
+            .header("Location: {base}redirect"),
+        Reply::json(json!({})),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api { status: 302, .. })
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn does_not_retry_authentication_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({})).status(401),
+        Reply::json(json!({})),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api { status: 401, .. })
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn does_not_retry_access_denied_responses() {
+    let server = Server::start(vec![
+        Reply::json(json!({})).status(403),
+        Reply::json(json!({})),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api { status: 403, .. })
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn does_not_retry_not_found_responses() {
+    let server = Server::start(vec![
+        Reply::json(json!({})).status(404),
+        Reply::json(json!({})),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api { status: 404, .. })
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn does_not_retry_rate_limit_responses() {
+    let server = Server::start(vec![
+        Reply::json(json!({})).status(429),
+        Reply::json(json!({})),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api { status: 429, .. })
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn does_not_retry_server_errors() {
+    let server = Server::start(vec![
+        Reply::json(json!({})).status(500),
+        Reply::json(json!({})),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api { status: 500, .. })
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn reports_too_many_requests_as_rate_limited() {
+    let server = Server::start(vec![
+        Reply::json(json!({})).status(429).header("Retry-After: 1"),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api {
+            status: 429,
+            rate_limited: true,
+            ..
+        })
+    );
+}
+
+#[tokio::test]
+async fn reports_forbidden_with_exhausted_quota_as_rate_limited() {
+    let server = Server::start(vec![
+        Reply::json(json!({}))
+            .status(403)
+            .header("RateLimit-Remaining: 0"),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api {
+            status: 403,
+            rate_limited: true,
+            ..
+        })
+    );
+}
+
+#[tokio::test]
+async fn reports_forbidden_with_remaining_quota_as_access_denied() {
+    let server = Server::start(vec![
+        Reply::json(json!({}))
+            .status(403)
+            .header("RateLimit-Remaining: 10"),
+    ])
+    .await;
+
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Api {
+            status: 403,
+            rate_limited: false,
+            ..
+        })
+    );
+}
+
+#[tokio::test]
+async fn reports_invalid_json_as_a_decode_error() {
+    let mut reply = Reply::json(json!({}));
+    reply.body = "invalid-json".into();
+    let server = Server::start(vec![reply]).await;
+    assert_matches!(
+        server.client().get::<Value>("projects/5").await,
+        Err(GitLabError::Decode { .. })
+    );
+}
+
+#[tokio::test]
+async fn reports_a_slow_response_as_a_request_timeout() {
+    let mut reply = Reply::json(json!({}));
+    reply.delay = Duration::from_millis(100);
+    let server = Server::start(vec![reply]).await;
+    let client = GitLabClient::new(
+        "test-private-token",
+        server.base.clone(),
+        Duration::from_millis(10),
+    )
+    .unwrap();
+    assert_matches!(client.get::<Value>("projects/5").await, Err(GitLabError::Request { source, .. }) if source.is_timeout());
+}
+
+#[test]
+fn treats_an_empty_token_as_missing() {
+    assert_matches!(private_token(""), Err(GitLabError::MissingToken));
+}
+
+#[test]
+fn treats_a_space_only_token_as_missing() {
+    assert_matches!(private_token(" "), Err(GitLabError::MissingToken));
+}
+
+#[test]
+fn treats_control_whitespace_only_tokens_as_missing() {
+    assert_matches!(private_token("\t\r\n"), Err(GitLabError::MissingToken));
+}
+
+#[test]
+fn rejects_tokens_with_leading_spaces() {
+    assert_matches!(private_token(" leading"), Err(GitLabError::InvalidToken));
+}
+
+#[test]
+fn rejects_tokens_with_trailing_spaces() {
+    assert_matches!(private_token("trailing "), Err(GitLabError::InvalidToken));
+}
+
+#[test]
+fn rejects_tokens_with_embedded_spaces() {
+    assert_matches!(private_token("with space"), Err(GitLabError::InvalidToken));
+}
+
+#[test]
+fn rejects_tokens_with_embedded_newlines() {
+    assert_matches!(
+        private_token("secret\nheader"),
+        Err(GitLabError::InvalidToken)
+    );
+}
+
+#[test]
+fn rejects_tokens_with_null_bytes() {
+    assert_matches!(private_token("secret\0"), Err(GitLabError::InvalidToken));
+}
+
+#[test]
+fn private_token_headers_are_sensitive() {
+    let token = private_token("glpat-secret-value").unwrap();
+
+    assert!(token.is_sensitive());
+}
+
+#[test]
+fn debug_output_does_not_expose_private_tokens() {
+    let token = private_token("glpat-secret-value").unwrap();
+
+    assert!(!format!("{token:?}").contains("glpat-secret-value"));
+}
+
+#[tokio::test]
+async fn sends_post_requests_with_json_bodies() {
+    let server = Server::start(vec![Reply::json(json!({"id": 123})).status(201)]).await;
+    server
+        .client()
+        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap();
+    let requests = server.requests();
+    assert!(requests[0].starts_with("POST /api/v4/projects/5/notes "));
+    assert!(requests[0].ends_with("{\"body\":\"A note\"}"));
+}
+
+#[tokio::test]
+async fn decodes_created_post_responses() {
+    let server = Server::start(vec![Reply::json(json!({"id": 123})).status(201)]).await;
+    let reply: Value = server
+        .client()
+        .post("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap();
+    assert_eq!(reply["id"], 123);
+}
+
+#[tokio::test]
+async fn bad_request_responses_do_not_imply_publication() {
+    let server = Server::start(vec![Reply::json(json!({})).status(400)]).await;
+    let error = server
+        .client()
+        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap_err();
+    assert_matches!(error, GitLabError::Api { status: 400, .. });
+    assert!(!error.may_have_published());
+}
+
+#[tokio::test]
+async fn request_timeout_responses_may_have_published() {
+    let server = Server::start(vec![Reply::json(json!({})).status(408)]).await;
+    let error = server
+        .client()
+        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap_err();
+    assert_matches!(error, GitLabError::Api { status: 408, .. });
+    assert!(error.may_have_published());
+}
+
+#[tokio::test]
+async fn server_error_responses_may_have_published() {
+    let server = Server::start(vec![Reply::json(json!({})).status(500)]).await;
+    let error = server
+        .client()
+        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap_err();
+    assert_matches!(error, GitLabError::Api { status: 500, .. });
+    assert!(error.may_have_published());
+}
+
+#[tokio::test]
+async fn undecodable_created_responses_may_have_published() {
+    let server = Server::start(vec![Reply::json(json!({})).status(201)]).await;
+    #[derive(Debug, Deserialize)]
+    struct Posted {
+        #[serde(rename = "id")]
+        _id: u64,
+    }
+    let error = server
+        .client()
+        .post::<Posted>("projects/5/notes", &json!({"body": "A note"}))
+        .await
+        .unwrap_err();
+    assert_matches!(error, GitLabError::Decode { .. });
+    assert!(error.may_have_published());
+}
