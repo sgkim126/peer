@@ -106,14 +106,6 @@ impl PreparedReview {
 }
 
 fn prepare_question(question: &KnowledgeQuestion, body: String) -> Feedback {
-    let location = match question.related_commits.as_slice() {
-        [commit] => question
-            .location
-            .as_ref()
-            .filter(|location| location.commit.matches(commit))
-            .map(|location| location.file.clone()),
-        _ => None,
-    };
     Feedback {
         fingerprint: fingerprint(
             "question",
@@ -126,7 +118,10 @@ fn prepare_question(question: &KnowledgeQuestion, body: String) -> Feedback {
             }),
         ),
         body,
-        location,
+        location: question
+            .location
+            .as_ref()
+            .map(|location| location.file.clone()),
         kind: FeedbackKind::Question,
     }
 }
