@@ -43,6 +43,10 @@ impl DocumentParts {
         Self::with_format(document, &Format::github(repo))
     }
 
+    pub fn for_gitlab(document: &RenderDocument, repo: &str) -> Self {
+        Self::with_format(document, &Format::gitlab(repo))
+    }
+
     fn with_format(document: &RenderDocument, format: &Format<'_>) -> Self {
         let stages = document
             .stages
@@ -153,7 +157,10 @@ fn render_review_summary(
 ) -> String {
     let mut output = format!(
         "## Review summary\n\n- **Peer version:** {}",
-        summary.peer_version,
+        match format.platform {
+            Platform::Github => summary.peer_version.clone(),
+            Platform::Gitlab => format.markdown(&summary.peer_version),
+        },
     );
     write!(
         output,
@@ -470,30 +477,78 @@ fn encode_path(path: &str) -> String {
         .join("/")
 }
 
+#[derive(Clone, Copy)]
+enum Platform {
+    Github,
+    Gitlab,
+}
+
 struct Format<'a> {
+    platform: Platform,
     repository: &'a str,
 }
 
 impl<'a> Format<'a> {
     fn github(repository: &'a str) -> Self {
-        Self { repository }
+        Self {
+            platform: Platform::Github,
+            repository,
+        }
+    }
+
+    fn gitlab(repository: &'a str) -> Self {
+        Self {
+            platform: Platform::Gitlab,
+            repository,
+        }
     }
 
     fn code_url(&self) -> String {
-        format!("https://github.com/{}", self.repository)
+        match self.platform {
+            Platform::Github => format!("https://github.com/{}", self.repository),
+            Platform::Gitlab => format!("https://gitlab.com/{}/-", self.repository),
+        }
     }
 
     fn currency(&self, amount: f64) -> String {
-        format!("${amount:.6}")
+        let prefix = match self.platform {
+            Platform::Github => "$",
+            Platform::Gitlab => "$\u{200b}",
+        };
+        format!("{prefix}{amount:.6}")
     }
 
     fn markdown(&self, value: &str) -> String {
-        escape_markdown(value).replace('@', "`@`")
+        match self.platform {
+            Platform::Github => escape_markdown(value).replace('@', "`@`"),
+            Platform::Gitlab => escape_markdown(&neutralize_gitlab(value)),
+        }
     }
 
     fn html(&self, value: &str) -> String {
-        escape_html(value).replace('@', "`@`")
+        match self.platform {
+            Platform::Github => escape_html(value).replace('@', "`@`"),
+            Platform::Gitlab => escape_html(&neutralize_gitlab(value)),
+        }
     }
+}
+
+// Break GitLab's mention/reference syntax in both Markdown and HTML text. The
+// invisible separator preserves the displayed text without creating notifications
+// or references. A leading slash must also never become a note quick action.
+fn neutralize_gitlab(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut beginning = true;
+    for character in value.chars() {
+        output.push(character);
+        if matches!(character, '@' | '#' | '!' | '$' | '%' | '&' | '~')
+            || (beginning && character == '/')
+        {
+            output.push('\u{200b}');
+        }
+        beginning &= character.is_whitespace();
+    }
+    output
 }
 
 #[cfg(test)]
