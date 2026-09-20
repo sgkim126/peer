@@ -221,81 +221,120 @@ async fn question_with_one_matching_related_commit_is_published_inline() {
 }
 
 #[tokio::test]
-async fn question_with_multiple_related_commits_is_published_as_a_conversation_comment() {
-    let input = file_question(&["abc1234", "def5678"], "abc1234");
-    let server = Server::start(vec![
-        pull(),
-        Reply::json(json!([])),
-        Reply::json(json!([])),
-        created(),
-    ])
-    .await;
+async fn question_with_multiple_related_commits_is_published_inline() {
+    let mut input = file_question(&["abc1234", "def5678"], "abc1234");
+    input.questions[0].location.as_mut().unwrap().file.line = Some(5);
+    let mut replies = before_inline();
+    replies.push(created());
+    let server = Server::start(replies).await;
     let report = server
         .client()
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert!(
-        server
-            .requests()
-            .last()
-            .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
-    );
-    assert_eq!(report.inline, 0);
+    let requests = server.requests();
+    let request = requests.last().unwrap();
+    assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    let params = request_body(request);
+    assert_eq!(params["commit_id"], "abc1234");
+    assert_eq!(params["path"], "src/main.rs");
+    assert_eq!(params["line"], 5);
+    assert_eq!(params["side"], "RIGHT");
+    assert!(params.get("subject_type").is_none());
+    let body = params["body"].as_str().unwrap();
+    assert!(body.contains("**question/rationale**"));
+    assert!(!body.contains(CONVERSATION_MARKER));
+    assert_eq!(crate::github::feedback::fingerprints(body).len(), 1);
+    assert_eq!(report.inline, 1);
+    assert_eq!(report.published, 1);
     assert_eq!(report.urls.len(), 1);
 }
 
 #[tokio::test]
-async fn question_with_a_mismatched_location_commit_is_published_as_a_conversation_comment() {
-    let input = file_question(&["abc1234"], "def5678");
-    let server = Server::start(vec![
-        pull(),
-        Reply::json(json!([])),
-        Reply::json(json!([])),
-        created(),
-    ])
-    .await;
+async fn question_with_a_mismatched_location_commit_is_published_inline() {
+    let mut input = file_question(&["def5678"], "abc1234");
+    input.questions[0].location.as_mut().unwrap().file.line = Some(5);
+    let mut replies = before_inline();
+    replies.push(created());
+    let server = Server::start(replies).await;
     let report = server
         .client()
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert!(
-        server
-            .requests()
-            .last()
-            .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
-    );
-    assert_eq!(report.inline, 0);
+    let requests = server.requests();
+    let request = requests.last().unwrap();
+    assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    let params = request_body(request);
+    assert_eq!(params["commit_id"], "abc1234");
+    assert_eq!(params["path"], "src/main.rs");
+    assert_eq!(params["line"], 5);
+    assert_eq!(params["side"], "RIGHT");
+    assert!(params.get("subject_type").is_none());
+    let body = params["body"].as_str().unwrap();
+    assert!(body.contains("**question/rationale**"));
+    assert!(!body.contains(CONVERSATION_MARKER));
+    assert_eq!(crate::github::feedback::fingerprints(body).len(), 1);
+    assert_eq!(report.inline, 1);
+    assert_eq!(report.published, 1);
     assert_eq!(report.urls.len(), 1);
 }
 
 #[tokio::test]
-async fn question_without_related_commits_is_published_as_a_conversation_comment() {
-    let input = file_question(&[], "abc1234");
-    let server = Server::start(vec![
-        pull(),
-        Reply::json(json!([])),
-        Reply::json(json!([])),
-        created(),
-    ])
-    .await;
+async fn question_without_related_commits_is_published_inline() {
+    let mut input = file_question(&[], "abc1234");
+    input.questions[0].location.as_mut().unwrap().file.line = Some(5);
+    let mut replies = before_inline();
+    replies.push(created());
+    let server = Server::start(replies).await;
     let report = server
         .client()
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert!(
-        server
-            .requests()
-            .last()
-            .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
-    );
-    assert_eq!(report.inline, 0);
+    let requests = server.requests();
+    let request = requests.last().unwrap();
+    assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    let params = request_body(request);
+    assert_eq!(params["commit_id"], "abc1234");
+    assert_eq!(params["path"], "src/main.rs");
+    assert_eq!(params["line"], 5);
+    assert_eq!(params["side"], "RIGHT");
+    assert!(params.get("subject_type").is_none());
+    let body = params["body"].as_str().unwrap();
+    assert!(body.contains("**question/rationale**"));
+    assert!(!body.contains(CONVERSATION_MARKER));
+    assert_eq!(crate::github::feedback::fingerprints(body).len(), 1);
+    assert_eq!(report.inline, 1);
+    assert_eq!(report.published, 1);
     assert_eq!(report.urls.len(), 1);
+}
+
+#[tokio::test]
+async fn questions_on_unpositionable_lines_fall_back_to_a_conversation_comment() {
+    for line in [4, 99] {
+        let mut input = file_question(&["abc1234", "def5678"], "abc1234");
+        input.questions[0].location.as_mut().unwrap().file.line = Some(line);
+        let mut replies = before_inline();
+        replies.push(created());
+        let server = Server::start(replies).await;
+        let report = server
+            .client()
+            .publish(&repository(), number(), &input)
+            .await
+            .unwrap();
+        let requests = server.requests();
+        let request = requests.last().unwrap();
+        assert!(request.starts_with("POST /repos/owner/repo/issues/123/comments "));
+        let params = request_body(request);
+        let body = params["body"].as_str().unwrap();
+        assert!(body.contains("**question/rationale**"));
+        assert!(body.contains(CONVERSATION_MARKER));
+        assert_eq!(report.inline, 0);
+        assert_eq!(report.published, 1);
+        assert_eq!(report.urls.len(), 1);
+        assert_eq!(requests.len(), 6);
+    }
 }
 
 #[tokio::test]
@@ -330,15 +369,18 @@ async fn unlocated_questions_and_recommendations_share_one_comment() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    let body = request_body(server.requests().last().unwrap())["body"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let requests = server.requests();
+    let request = requests.last().unwrap();
+    assert!(request.starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let body = request_body(request)["body"].as_str().unwrap().to_string();
     assert!(body.contains("## Review questions"));
     assert!(body.contains("## Structural recommendations"));
     assert_eq!(body.matches(CONVERSATION_MARKER).count(), 1);
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 2);
+    assert_eq!(report.inline, 0);
+    assert_eq!(report.published, 1);
     assert_eq!(report.urls.len(), 1);
+    assert_eq!(requests.len(), 4);
 }
 
 #[tokio::test]
