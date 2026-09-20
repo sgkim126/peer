@@ -520,7 +520,7 @@ mod tests {
             errors: vec![],
         };
 
-        let json = crate::render::render_pipeline_json(review).unwrap();
+        let json = crate::render::render_pipeline_json(review, None).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         let expected = LlmUsage::from(vec![
             model_usage("provider-a", "alpha", 4),

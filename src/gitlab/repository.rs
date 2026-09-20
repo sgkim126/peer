@@ -3,11 +3,9 @@ use std::fmt;
 use super::GitLabError;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Repository(String);
 
 impl Repository {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn parse(value: &str) -> Result<Self, GitLabError> {
         let mut parts = value.split('/');
         // These paths identify existing repositories. GitLab's stricter rules
@@ -32,7 +30,6 @@ impl Repository {
         Ok(Self(value.to_string()))
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn api_path(&self) -> String {
         // The entire namespace/project path is one GitLab API parameter. All
         // accepted characters except '/' are already safe path characters.

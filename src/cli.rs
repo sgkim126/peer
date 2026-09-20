@@ -33,8 +33,9 @@ pub enum Command {
         all: bool,
     },
 
+    #[command(group(clap::ArgGroup::new("remote_review").args(["github", "gitlab"])))]
     Review {
-        #[arg(required_unless_present = "github")]
+        #[arg(required_unless_present_any = ["github", "gitlab"])]
         target: Option<String>,
 
         #[arg(long)]
@@ -53,14 +54,18 @@ pub enum Command {
         comments_file: Option<PathBuf>,
 
         /// Review the commits and context from a GitHub pull request.
-        #[arg(long, value_name = "PR_NUMBER", conflicts_with_all = ["target", "title", "body_file", "comments_file"])]
+        #[arg(long, value_name = "PR_NUMBER", conflicts_with_all = ["gitlab", "target", "title", "body_file", "comments_file"])]
         github: Option<NonZeroU64>,
 
-        /// Override github.repo for this GitHub pull request review.
+        /// Review the commits and context from a GitLab.com merge request.
+        #[arg(long, value_name = "MR_IID", conflicts_with_all = ["github", "target", "title", "body_file", "comments_file"])]
+        gitlab: Option<NonZeroU64>,
+
+        /// Override the selected service's repository for this review.
         #[arg(
             long,
-            value_name = "OWNER/NAME",
-            requires = "github",
+            value_name = "NAMESPACE/PROJECT",
+            requires = "remote_review",
             conflicts_with = "target"
         )]
         repo: Option<String>,
@@ -182,6 +187,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 github: None,
+                gitlab: None,
                 repo: None,
                 no_resume: false,
             }
@@ -219,6 +225,7 @@ mod tests {
                 body_file: Some("body.md".into()),
                 comments_file: Some("comments.json".into()),
                 github: None,
+                gitlab: None,
                 repo: None,
                 no_resume: false,
             }
@@ -247,6 +254,7 @@ mod tests {
                 body_file: None,
                 comments_file: None,
                 github: None,
+                gitlab: None,
                 repo: None,
                 no_resume: false,
             }
@@ -283,6 +291,112 @@ mod tests {
     fn review_accepts_a_github_pull_request_number() {
         let cli = parse(&["peer", "review", "--github", "123"]);
         assert_matches!(cli.command, Command::Review { target: None, github: Some(number), .. } if number.get() == 123);
+    }
+
+    #[test]
+    fn review_accepts_gitlab_and_a_subgroup_repository() {
+        let cli = parse(&[
+            "peer",
+            "review",
+            "--gitlab",
+            "123",
+            "--repo",
+            "group/subgroup/project",
+        ]);
+        assert_matches!(cli.command, Command::Review { target: None, github: None, gitlab: Some(number), repo: Some(repo), .. } if number.get() == 123 && repo == "group/subgroup/project");
+    }
+
+    #[test]
+    fn gitlab_review_conflicts_with_a_target() {
+        let error = Cli::try_parse_from(["peer", "review", "--gitlab", "123", "HEAD"]).unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn gitlab_review_conflicts_with_github() {
+        let error = Cli::try_parse_from(["peer", "review", "--gitlab", "123", "--github", "1"])
+            .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn gitlab_review_conflicts_with_title() {
+        let error = Cli::try_parse_from(["peer", "review", "--gitlab", "123", "--title", "title"])
+            .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn gitlab_review_conflicts_with_body_file() {
+        let error = Cli::try_parse_from([
+            "peer",
+            "review",
+            "--gitlab",
+            "123",
+            "--body-file",
+            "body.md",
+        ])
+        .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn gitlab_review_conflicts_with_comments_file() {
+        let error = Cli::try_parse_from([
+            "peer",
+            "review",
+            "--gitlab",
+            "123",
+            "--comments-file",
+            "comments.json",
+        ])
+        .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn gitlab_review_rejects_zero_merge_request_iid() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--gitlab", "0"]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn gitlab_review_rejects_negative_merge_request_iid() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--gitlab", "-1"]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn gitlab_review_rejects_nonnumeric_merge_request_iid() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--gitlab", "abc"]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn gitlab_review_rejects_fractional_merge_request_iid() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--gitlab", "1.5"]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn gitlab_review_requires_a_merge_request_iid() {
+        assert_matches!(Cli::try_parse_from(["peer", "review", "--gitlab"]), Err(_));
+    }
+
+    #[test]
+    fn review_repository_override_requires_a_remote_review() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--repo", "group/project"]),
+            Err(_)
+        );
     }
 
     #[test]

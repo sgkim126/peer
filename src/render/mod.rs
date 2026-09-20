@@ -20,6 +20,7 @@ use crate::stage::{
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(from = "RenderDocumentWire", into = "RenderDocumentWire")]
 pub struct RenderDocument {
+    pub source: Option<crate::gitlab::GitLabReviewSource>,
     pub summary: Option<ReviewSummary>,
     pub context_usage: Option<LlmUsage>,
     pub ordered_commits: Vec<CommitHash>,
@@ -32,6 +33,8 @@ pub struct RenderDocument {
 #[derive(Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 struct RenderDocumentWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    source: Option<crate::gitlab::GitLabReviewSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     summary: Option<ReviewSummary>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -52,6 +55,7 @@ impl From<RenderDocument> for RenderDocumentWire {
     fn from(document: RenderDocument) -> Self {
         let usage = usage_by_model(&document);
         let RenderDocument {
+            source,
             summary,
             context_usage,
             ordered_commits,
@@ -61,6 +65,7 @@ impl From<RenderDocument> for RenderDocumentWire {
             stages,
         } = document;
         Self {
+            source,
             summary,
             context_usage,
             usage,
@@ -77,6 +82,7 @@ impl From<RenderDocumentWire> for RenderDocument {
     fn from(document: RenderDocumentWire) -> Self {
         // Totals are derived from stage and context entries so supplied totals cannot go stale.
         let RenderDocumentWire {
+            source,
             summary,
             context_usage,
             usage: _,
@@ -87,6 +93,7 @@ impl From<RenderDocumentWire> for RenderDocument {
             stages,
         } = document;
         Self {
+            source,
             summary,
             context_usage,
             ordered_commits,
@@ -262,6 +269,7 @@ impl From<StageResult> for RenderDocument {
             findings,
         } = result.into();
         Self {
+            source: None,
             summary: None,
             context_usage,
             ordered_commits,
@@ -289,6 +297,7 @@ impl From<PipelineReviewResult> for RenderDocument {
         let (stages, questions, recommendations, findings) =
             aggregate(stage_parts, &ordered_commits);
         Self {
+            source: None,
             summary: Some(summary),
             context_usage: None,
             ordered_commits,
@@ -743,8 +752,13 @@ pub fn render(input: RenderDocument, options: RenderOptions) -> Result<String, R
     }
 }
 
-pub fn render_pipeline_json(review: PipelineReviewResult) -> Result<String, RenderError> {
-    render_json(review.into())
+pub fn render_pipeline_json(
+    review: PipelineReviewResult,
+    source: Option<crate::gitlab::GitLabReviewSource>,
+) -> Result<String, RenderError> {
+    let mut document: RenderDocument = review.into();
+    document.source = source;
+    render_json(document)
 }
 
 fn render_json(document: RenderDocument) -> Result<String, RenderError> {
@@ -986,6 +1000,7 @@ mod tests {
         let (stages, questions, recommendations, findings) =
             aggregate(stage_parts, &ordered_commits);
         RenderDocument {
+            source: None,
             summary: Some(review_summary()),
             context_usage,
             ordered_commits,
@@ -994,6 +1009,31 @@ mod tests {
             findings,
             stages,
         }
+    }
+
+    #[test]
+    fn gitlab_source_round_trips_without_changing_legacy_documents() {
+        let legacy = serde_json::json!({"ordered_commits": [], "stages": []});
+        let document: RenderDocument = serde_json::from_value(legacy.clone()).unwrap();
+        assert!(document.source.is_none());
+        assert!(
+            serde_json::to_value(document)
+                .unwrap()
+                .get("source")
+                .is_none()
+        );
+        let mut input = legacy;
+        input["source"] = serde_json::json!({
+            "provider": "gitlab", "project_id": 12, "iid": 34, "source_project_id": 56,
+            "diff_refs": {"base_sha": "aaaaaaa", "start_sha": "bbbbbbb", "head_sha": "ccccccc"}
+        });
+        let document: RenderDocument = serde_json::from_value(input.clone()).unwrap();
+        assert_eq!(
+            serde_json::to_value(document).unwrap()["source"],
+            input["source"]
+        );
+        input["source"]["provider"] = serde_json::json!("other");
+        assert_matches!(serde_json::from_value::<RenderDocument>(input), Err(_));
     }
 
     fn model_usage(provider: &str, model: &str, units: u64) -> LlmModelUsage {
@@ -1863,6 +1903,7 @@ mod tests {
         });
         stages.sort_by_key(|stage| render_stage_order(stage, &ordered_commits));
         let document = RenderDocument {
+            source: None,
             summary: Some(review_summary()),
             context_usage: None,
             ordered_commits,
@@ -1952,7 +1993,7 @@ mod tests {
             errors: Vec::new(),
         };
 
-        let output = render_pipeline_json(review).unwrap();
+        let output = render_pipeline_json(review, None).unwrap();
         let value: serde_json::Value = serde_json::from_str(&output).unwrap();
         let stages = value["stages"].as_array().unwrap();
 

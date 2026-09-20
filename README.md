@@ -97,6 +97,18 @@ Pipe it to `peer render` for terminal output:
 peer review main..HEAD | peer render
 ```
 
+To review a GitLab.com merge request, set `[gitlab].repo` to its target
+project, such as `group/subgroup/project`, and provide `GITLAB_TOKEN` with
+the `read_api` scope:
+
+```bash
+peer review --gitlab 123 > review.json
+```
+
+`--repo group/subgroup/project` overrides that setting for a review.
+The MR's commits and base must already be available in the local Git
+repository. `peer init --repo` continues to configure GitHub only.
+
 ## Documentation
 
 See the [wiki home](https://github.com/sgkim126/peer/wiki) for the full documentation.

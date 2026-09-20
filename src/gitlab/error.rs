@@ -1,7 +1,6 @@
 use std::{env::VarError, fmt};
 
 #[derive(Debug)]
-#[expect(dead_code)]
 pub enum GitLabError {
     MissingRepository,
     InvalidRepository,
@@ -22,6 +21,10 @@ pub enum GitLabError {
         source: reqwest::Error,
     },
     InvalidPagination,
+    InvalidMergeRequest,
+    MergeRequestNotReady,
+    IncompleteCommits,
+    MergeRequestChanged,
 }
 
 impl GitLabError {
@@ -84,6 +87,21 @@ impl fmt::Display for GitLabError {
             }
             Self::Decode { endpoint, .. } => write!(f, "invalid GitLab response: {endpoint}"),
             Self::InvalidPagination => write!(f, "invalid GitLab pagination link"),
+            Self::InvalidMergeRequest => {
+                write!(f, "GitLab returned an inconsistent merge request identity")
+            }
+            Self::MergeRequestNotReady => write!(
+                f,
+                "GitLab merge request diff references are not ready; retry after the MR finishes updating"
+            ),
+            Self::IncompleteCommits => write!(
+                f,
+                "GitLab merge request commit list is incomplete or inconsistent; retry with a stable MR"
+            ),
+            Self::MergeRequestChanged => write!(
+                f,
+                "GitLab merge request changed while loading; retry with a stable MR"
+            ),
         }
     }
 }
@@ -100,6 +118,10 @@ impl std::error::Error for GitLabError {
             Self::Api { .. } => None,
             Self::Decode { source, .. } => Some(source),
             Self::InvalidPagination => None,
+            Self::InvalidMergeRequest => None,
+            Self::MergeRequestNotReady => None,
+            Self::IncompleteCommits => None,
+            Self::MergeRequestChanged => None,
         }
     }
 }
