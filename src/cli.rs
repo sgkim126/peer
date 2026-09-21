@@ -84,8 +84,8 @@ pub enum Command {
         )]
         format: OutputFormat,
 
-        /// Override github.repo for GitHub-formatted output.
-        #[arg(long, value_name = "OWNER/NAME")]
+        /// Override the repository for GitHub- or GitLab-formatted output.
+        #[arg(long, value_name = "NAMESPACE/PROJECT")]
         repo: Option<String>,
 
         /// Publish the review to this GitHub pull request (defaults --format to github).
@@ -99,6 +99,7 @@ pub enum OutputFormat {
     Terminal,
     Markdown,
     Github,
+    Gitlab,
 }
 
 #[cfg(test)]

@@ -67,7 +67,7 @@ fn publishing_rejects_markdown_before_reading_input() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--repo can only be used with --format github")
+            .contains("--github can only be used with --format github")
     );
 }
 
@@ -87,7 +87,7 @@ fn publishing_rejects_terminal_before_reading_input() {
     assert!(!output.status.success());
     assert!(
         String::from_utf8_lossy(&output.stderr)
-            .contains("--repo can only be used with --format github")
+            .contains("--github can only be used with --format github")
     );
 }
 

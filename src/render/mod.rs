@@ -1,4 +1,6 @@
 pub mod github;
+pub mod gitlab;
+mod hosted;
 mod markdown;
 mod terminal;
 
@@ -716,6 +718,7 @@ enum RenderFormat {
     Terminal,
     Markdown,
     Github { repo: String },
+    Gitlab { repo: String },
 }
 
 impl RenderOptions {
@@ -739,7 +742,16 @@ impl RenderOptions {
                 })
             }
             (OutputFormat::Github, None) => Err(RenderOptionsError::GithubRepoRequired),
-            (_, Some(_)) => Err(RenderOptionsError::RepoRequiresGithubFormat),
+            (OutputFormat::Gitlab, Some(repo)) => {
+                let repo = crate::gitlab::Repository::parse(&repo)
+                    .map_err(|_| RenderOptionsError::MalformedGitlabRepo)?
+                    .to_string();
+                Ok(Self {
+                    format: RenderFormat::Gitlab { repo },
+                })
+            }
+            (OutputFormat::Gitlab, None) => Err(RenderOptionsError::GitlabRepoRequired),
+            (_, Some(_)) => Err(RenderOptionsError::RepoRequiresHostedFormat),
         }
     }
 }
@@ -749,6 +761,7 @@ pub fn render(input: RenderDocument, options: RenderOptions) -> Result<String, R
         RenderFormat::Terminal => Ok(terminal::render(&input)),
         RenderFormat::Markdown => Ok(markdown::render(&input)),
         RenderFormat::Github { repo } => Ok(github::render(&input, &repo)),
+        RenderFormat::Gitlab { repo } => Ok(gitlab::render(&input, &repo)),
     }
 }
 
@@ -837,7 +850,9 @@ impl std::error::Error for RenderError {
 #[derive(Debug, PartialEq, Eq)]
 pub enum RenderOptionsError {
     GithubRepoRequired,
-    RepoRequiresGithubFormat,
+    RepoRequiresHostedFormat,
+    GitlabRepoRequired,
+    MalformedGitlabRepo,
     MalformedRepo,
 }
 
@@ -848,10 +863,21 @@ impl fmt::Display for RenderOptionsError {
                 f,
                 "--format github requires --repo <owner/name> or [github].repo in .peer/config.toml"
             ),
-            Self::RepoRequiresGithubFormat => {
-                write!(f, "--repo can only be used with --format github")
+            Self::RepoRequiresHostedFormat => {
+                write!(
+                    f,
+                    "--repo can only be used with --format github or --format gitlab"
+                )
             }
             Self::MalformedRepo => write!(f, "GitHub repository must use the form owner/name"),
+            Self::GitlabRepoRequired => write!(
+                f,
+                "--format gitlab requires --repo <namespace/project> or [gitlab].repo in .peer/config.toml"
+            ),
+            Self::MalformedGitlabRepo => write!(
+                f,
+                "GitLab repository must use the form namespace/project (subgroups are supported)"
+            ),
         }
     }
 }

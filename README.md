@@ -41,7 +41,7 @@ Every review uses four stages:
 
 `peer` uses the models and providers supported by Pi.
 A review can incorporate its title, body, and existing comment threads so that feedback is grounded in the discussion surrounding the change.
-Results can be rendered for a terminal, as JSON or Markdown, or with GitHub links.
+Results can be rendered for a terminal, as JSON or Markdown, or with GitHub or GitLab links.
 The rendered result also reports stage status, token usage, and estimated model cost.
 
 See [Reviewing changes](https://github.com/sgkim126/peer/wiki/Reviewing-Changes) for the review stages and their completion rules.
@@ -103,11 +103,13 @@ the `read_api` scope:
 
 ```bash
 peer review --gitlab 123 > review.json
+peer render --format gitlab < review.json
 ```
 
 `--repo group/subgroup/project` overrides that setting for a review.
 The MR's commits and base must already be available in the local Git
 repository. `peer init --repo` continues to configure GitHub only.
+GitLab rendering also accepts `--repo` and works without a token or network access.
 
 ## Documentation
 
