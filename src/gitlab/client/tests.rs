@@ -1041,3 +1041,147 @@ async fn undecodable_created_responses_may_have_published() {
     assert_matches!(error, GitLabError::Decode { .. });
     assert!(error.may_have_published());
 }
+
+#[tokio::test]
+async fn api_error_debug_omits_malformed_response_bodies() {
+    let secret = "private-response-message";
+    let mut reply = Reply::json(json!({})).status(400);
+    reply.body = format!("invalid-json {secret}");
+    let server = Server::start(vec![reply]).await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(!format!("{error:?}").contains(secret));
+}
+
+#[tokio::test]
+async fn api_error_display_omits_malformed_response_bodies() {
+    let secret = "private-response-message";
+    let mut reply = Reply::json(json!({})).status(400);
+    reply.body = format!("invalid-json {secret}");
+    let server = Server::start(vec![reply]).await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(!error.to_string().contains(secret));
+}
+
+#[tokio::test]
+async fn api_error_debug_omits_body_validation_messages() {
+    let secret = "private-response-message";
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "body": [secret]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(!format!("{error:?}").contains(secret));
+}
+
+#[tokio::test]
+async fn api_error_display_omits_body_validation_messages() {
+    let secret = "private-response-message";
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "body": [secret]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(!error.to_string().contains(secret));
+}
+
+#[tokio::test]
+async fn api_error_debug_omits_position_validation_messages() {
+    let secret = "private-response-message";
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": [secret]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(!format!("{error:?}").contains(secret));
+}
+
+#[tokio::test]
+async fn api_error_display_omits_position_validation_messages() {
+    let secret = "private-response-message";
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": [secret]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/notes",
+            &json!({
+                "body": "A note"
+            }),
+        )
+        .await
+        .unwrap_err();
+
+    assert!(!error.to_string().contains(secret));
+}
