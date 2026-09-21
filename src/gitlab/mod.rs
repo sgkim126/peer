@@ -1,6 +1,7 @@
 mod client;
 mod error;
 mod mapping;
+mod position;
 mod repository;
 
 pub use self::client::{DiffRefs, GitLabClient, GitLabReviewSource};

@@ -15,6 +15,8 @@ pub enum GitLabError {
         endpoint: String,
         status: u16,
         rate_limited: bool,
+        #[cfg_attr(not(test), expect(dead_code))]
+        position_invalid: bool,
     },
     Decode {
         endpoint: String,
@@ -72,6 +74,7 @@ impl fmt::Display for GitLabError {
                 endpoint,
                 status,
                 rate_limited,
+                ..
             } => {
                 let reason = if *rate_limited {
                     "API rate limit exceeded"
