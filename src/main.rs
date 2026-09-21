@@ -296,13 +296,8 @@ async fn main() -> ExitCode {
             format,
             repo,
             github,
+            gitlab,
         } => {
-            if github.is_some() && format != OutputFormat::Github {
-                eprintln!(
-                    "failed to configure render: --github can only be used with --format github"
-                );
-                return ExitCode::FAILURE;
-            }
             let repo = if matches!(format, OutputFormat::Github | OutputFormat::Gitlab)
                 && repo.is_none()
             {
@@ -337,6 +332,18 @@ async fn main() -> ExitCode {
                     return ExitCode::FAILURE;
                 }
             };
+            if github.is_some() && format != OutputFormat::Github {
+                eprintln!(
+                    "failed to configure render: --github can only be used with --format github"
+                );
+                return ExitCode::FAILURE;
+            }
+            if gitlab.is_some() && format != OutputFormat::Gitlab {
+                eprintln!(
+                    "failed to configure render: --gitlab can only be used with --format gitlab"
+                );
+                return ExitCode::FAILURE;
+            }
             let mut input = String::new();
             if let Err(error) = std::io::stdin().read_to_string(&mut input) {
                 eprintln!("failed to read render input: {error}");
@@ -361,6 +368,28 @@ async fn main() -> ExitCode {
                     github::GitHubClient::from_env()?
                         .publish(&repository, number, &input)
                         .await
+                }
+                .await;
+                return match result {
+                    Ok(report) => {
+                        println!("{report}");
+                        ExitCode::SUCCESS
+                    }
+                    Err(error) => {
+                        eprintln!("failed to publish review: {error}");
+                        debug!("{error:?}");
+                        ExitCode::FAILURE
+                    }
+                };
+            }
+            if let Some(number) = gitlab {
+                let result: Result<_, gitlab::PublishError> = async {
+                    let repository = gitlab::Repository::parse(
+                        repo.as_deref()
+                            .expect("GitLab rendering requires a repository"),
+                    )?;
+                    let client = gitlab::GitLabClient::from_env()?;
+                    client.publish(&repository, number, &input).await
                 }
                 .await;
                 return match result {

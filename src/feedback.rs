@@ -2,7 +2,8 @@ use std::collections::{BTreeSet, HashSet};
 
 use serde_json::{Value, json};
 
-use crate::render::{RenderDocument, RenderFinding, github};
+use crate::git::CommitHash;
+use crate::render::{RenderDocument, RenderFinding, github, gitlab};
 use crate::stage::{FileLocation, KnowledgeQuestion, StructuralRecommendation};
 
 use crate::github::Repository;
@@ -18,6 +19,7 @@ pub struct Feedback {
     pub fingerprint: String,
     pub body: String,
     pub location: Option<FileLocation>,
+    pub commit: Option<CommitHash>,
     kind: FeedbackKind,
 }
 
@@ -30,6 +32,15 @@ pub struct PreparedReview {
 impl PreparedReview {
     pub fn new(document: &RenderDocument, repository: &Repository) -> Self {
         let parts = github::DocumentParts::new(document, &repository.to_string());
+        Self::with_parts(document, parts)
+    }
+
+    pub fn for_gitlab(document: &RenderDocument, repository: &crate::gitlab::Repository) -> Self {
+        let parts = gitlab::DocumentParts::for_gitlab(document, &repository.to_string());
+        Self::with_parts(document, parts)
+    }
+
+    fn with_parts(document: &RenderDocument, parts: github::DocumentParts) -> Self {
         let items: Vec<_> = document
             .questions
             .iter()
@@ -122,6 +133,10 @@ fn prepare_question(question: &KnowledgeQuestion, body: String) -> Feedback {
             .location
             .as_ref()
             .map(|location| location.file.clone()),
+        commit: question
+            .location
+            .as_ref()
+            .map(|location| location.commit.clone()),
         kind: FeedbackKind::Question,
     }
 }
@@ -138,6 +153,7 @@ fn prepare_recommendation(recommendation: &StructuralRecommendation, body: Strin
         ),
         body,
         location: None,
+        commit: None,
         kind: FeedbackKind::Recommendation,
     }
 }
@@ -155,6 +171,7 @@ fn prepare_finding(finding: &RenderFinding, body: String) -> Feedback {
         ),
         body,
         location: finding.location.clone(),
+        commit: Some(finding.commit.clone()),
         kind: FeedbackKind::Finding,
     }
 }
@@ -239,6 +256,88 @@ mod tests {
         value["commit"] = json!("def5678");
 
         assert_eq!(identity("findings", value, "owner/repo"), original);
+    }
+
+    #[test]
+    fn provider_rendering_preserves_fingerprints_and_original_commit() {
+        let document = serde_json::from_value(json!({
+            "ordered_commits": ["abc1234"],
+            "stages": [],
+            "findings": [finding()],
+        }))
+        .unwrap();
+        let github = PreparedReview::new(&document, &Repository::parse("owner/repo").unwrap());
+        let gitlab = PreparedReview::for_gitlab(
+            &document,
+            &crate::gitlab::Repository::parse("group/subgroup/project").unwrap(),
+        );
+        assert_eq!(github.items[0].fingerprint, gitlab.items[0].fingerprint);
+        assert_eq!(gitlab.items[0].commit.as_ref().unwrap().as_ref(), "abc1234");
+        assert!(gitlab.items[0].body.contains("https://gitlab.com/"));
+        assert!(github.items[0].body.contains("https://github.com/"));
+    }
+
+    #[test]
+    fn questions_keep_location_and_commit_with_a_matching_related_commit() {
+        let question: KnowledgeQuestion = serde_json::from_value(question()).unwrap();
+
+        let feedback = prepare_question(&question, "Question".into());
+
+        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+        let location = feedback.location.unwrap();
+        assert_eq!(location.file, "src/main.rs");
+        assert_eq!(location.line, Some(5));
+    }
+
+    #[test]
+    fn questions_keep_location_and_commit_with_multiple_related_commits() {
+        let mut value = question();
+        value["related_commits"] = json!(["abc1234", "def5678"]);
+        let question: KnowledgeQuestion = serde_json::from_value(value).unwrap();
+
+        let feedback = prepare_question(&question, "Question".into());
+
+        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+        let location = feedback.location.unwrap();
+        assert_eq!(location.file, "src/main.rs");
+        assert_eq!(location.line, Some(5));
+    }
+
+    #[test]
+    fn questions_keep_location_and_commit_with_a_different_related_commit() {
+        let mut value = question();
+        value["related_commits"] = json!(["def5678"]);
+        let question: KnowledgeQuestion = serde_json::from_value(value).unwrap();
+
+        let feedback = prepare_question(&question, "Question".into());
+
+        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+        let location = feedback.location.unwrap();
+        assert_eq!(location.file, "src/main.rs");
+        assert_eq!(location.line, Some(5));
+    }
+
+    #[test]
+    fn questions_keep_location_and_commit_without_related_commits() {
+        let mut value = question();
+        value["related_commits"] = json!([]);
+        let question: KnowledgeQuestion = serde_json::from_value(value).unwrap();
+
+        let feedback = prepare_question(&question, "Question".into());
+
+        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+        let location = feedback.location.unwrap();
+        assert_eq!(location.file, "src/main.rs");
+        assert_eq!(location.line, Some(5));
+    }
+
+    #[test]
+    fn unlocated_questions_have_no_location_commit() {
+        let mut question: KnowledgeQuestion = serde_json::from_value(question()).unwrap();
+        question.location = None;
+        let feedback = prepare_question(&question, "Question".into());
+        assert!(feedback.commit.is_none());
+        assert!(feedback.location.is_none());
     }
 
     #[test]

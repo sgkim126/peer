@@ -76,11 +76,12 @@ pub enum Command {
     },
 
     Render {
-        /// Output format (defaults to github when --github is supplied).
+        /// Output format (defaults to the selected publishing service).
         #[arg(
             long,
             default_value = "terminal",
-            default_value_if("github", clap::builder::ArgPredicate::IsPresent, "github")
+            default_value_if("github", clap::builder::ArgPredicate::IsPresent, "github"),
+            default_value_if("gitlab", clap::builder::ArgPredicate::IsPresent, "gitlab")
         )]
         format: OutputFormat,
 
@@ -89,8 +90,12 @@ pub enum Command {
         repo: Option<String>,
 
         /// Publish the review to this GitHub pull request (defaults --format to github).
-        #[arg(long, value_name = "PR_NUMBER")]
+        #[arg(long, value_name = "PR_NUMBER", conflicts_with = "gitlab")]
         github: Option<NonZeroU64>,
+
+        /// Publish the review to this GitLab.com merge request (defaults --format to gitlab).
+        #[arg(long, value_name = "MR_IID", conflicts_with = "github")]
+        gitlab: Option<NonZeroU64>,
     },
 }
 
@@ -490,6 +495,7 @@ mod tests {
                 format: OutputFormat::Terminal,
                 repo: None,
                 github: None,
+                gitlab: None,
             }
         );
     }
@@ -518,6 +524,7 @@ mod tests {
                 format: OutputFormat::Github,
                 repo: Some("owner/repository".into()),
                 github: None,
+                gitlab: None,
             }
         );
     }
@@ -549,6 +556,22 @@ mod tests {
             "123",
         ]);
         assert_matches!(cli.command, Command::Render { github: Some(number), .. } if number.get() == 123);
+    }
+
+    #[test]
+    fn render_gitlab_defaults_its_format_and_rejects_other_publishers() {
+        let cli = parse(&["peer", "render", "--gitlab", "123"]);
+        assert_matches!(cli.command, Command::Render { format: OutputFormat::Gitlab, github: None, gitlab: Some(number), .. } if number.get() == 123);
+        let error = Cli::try_parse_from(["peer", "render", "--gitlab", "123", "--github", "456"])
+            .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+        for value in ["0", "-1", "abc", "1.5"] {
+            assert_matches!(
+                Cli::try_parse_from(["peer", "render", "--gitlab", value]),
+                Err(_)
+            );
+        }
+        assert_matches!(Cli::try_parse_from(["peer", "render", "--gitlab"]), Err(_));
     }
 
     #[test]
@@ -620,6 +643,7 @@ mod tests {
                 format: OutputFormat::Github,
                 repo: None,
                 github: Some(number),
+                gitlab: None,
             } if number.get() == 123
         );
     }
