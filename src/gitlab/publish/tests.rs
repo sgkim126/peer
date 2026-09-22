@@ -209,6 +209,8 @@ fn before_inline() -> Vec<Reply> {
         merge_request(),
         commits(),
         empty_discussions(),
+        empty_discussions(),
+        empty_discussions(),
         diffs(),
         merge_request(),
     ]
@@ -284,12 +286,14 @@ async fn publishes_head_questions_regardless_of_related_commits() {
 }
 
 #[tokio::test]
-async fn unlocated_questions_fall_back_to_independent_discussions() {
+async fn unlocated_questions_with_one_related_commit_use_commit_threads() {
     let mut input = question_input();
     input.questions[0].location = None;
     let server = Server::start(vec![
         merge_request(),
         commits(),
+        empty_discussions(),
+        empty_discussions(),
         empty_discussions(),
         merge_request(),
         merge_request(),
@@ -307,7 +311,11 @@ async fn unlocated_questions_fall_back_to_independent_discussions() {
     assert_eq!(report.inline, 0);
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
-    assert!(posts[0].0.contains("/merge_requests/42/discussions "));
+    assert!(
+        posts[0]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
     assert!(posts[0].1.get("position").is_none());
     let body = posts[0].1["body"].as_str().unwrap();
     assert!(!body.contains(CONVERSATION_MARKER));
@@ -355,7 +363,7 @@ async fn questions_at_earlier_commits_use_their_own_diff_positions() {
 }
 
 #[tokio::test]
-async fn questions_in_unchanged_files_fall_back_to_independent_discussions() {
+async fn questions_in_unchanged_files_fall_back_to_commit_threads() {
     let mut input = question_input();
     input.questions[0].location.as_mut().unwrap().file.file = "src/unchanged.rs".into();
     let mut replies = before_inline();
@@ -372,7 +380,11 @@ async fn questions_in_unchanged_files_fall_back_to_independent_discussions() {
     assert_eq!(report.inline, 0);
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
-    assert!(posts[0].0.contains("/merge_requests/42/discussions "));
+    assert!(
+        posts[0]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
     assert!(posts[0].1.get("position").is_none());
     let body = posts[0].1["body"].as_str().unwrap();
     assert!(!body.contains(CONVERSATION_MARKER));
@@ -487,6 +499,11 @@ async fn earlier_commit_locations_use_their_own_diff_positions() {
     assert_eq!(posts[0].1["position"]["head_sha"], OLD);
     assert_eq!(posts[0].1["position"]["base_sha"], "a".repeat(40));
     assert_eq!(posts[0].1["position"]["start_sha"], "a".repeat(40));
+    assert!(
+        server.requests().iter().any(|request| {
+            request.contains(&format!("/repository/commits/{OLD}/discussions?"))
+        })
+    );
     assert!(
         !posts[0].1["body"]
             .as_str()
@@ -746,9 +763,9 @@ async fn rejects_duplicate_remote_commits_before_writes() {
 #[tokio::test]
 async fn detects_merge_request_changes_after_loading_diffs() {
     let mut replies = before_inline();
-    let mut changed: Value = serde_json::from_str(&replies[4].body).unwrap();
+    let mut changed: Value = serde_json::from_str(&replies[6].body).unwrap();
     changed["diff_refs"]["base_sha"] = json!("e".repeat(40));
-    replies[4] = Reply::json(changed);
+    replies[6] = Reply::json(changed);
     let server = Server::start(replies).await;
     let error = server
         .client()
@@ -845,7 +862,7 @@ async fn explicit_position_errors_fall_back_to_file_threads() {
 }
 
 #[tokio::test]
-async fn bad_request_commit_validation_failures_fall_back_to_unpositioned_mr_threads() {
+async fn bad_request_commit_validation_failures_fall_back_to_the_commit() {
     let mut replies = before_inline();
     replies.extend([
         merge_request(),
@@ -866,12 +883,17 @@ async fn bad_request_commit_validation_failures_fall_back_to_unpositioned_mr_thr
     let posts = server.posts();
     assert_eq!(posts.len(), 3);
     assert!(
-        posts
+        posts[..2]
             .iter()
             .all(|(path, _)| path.contains("/merge_requests/42/discussions "))
     );
     assert_eq!(posts[0].1["position"]["position_type"], "text");
     assert_eq!(posts[1].1["position"]["position_type"], "file");
+    assert!(
+        posts[2]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
     assert!(posts[2].1.get("position").is_none());
     assert!(posts[2].1.get("commit_id").is_none());
     assert!(
@@ -882,7 +904,7 @@ async fn bad_request_commit_validation_failures_fall_back_to_unpositioned_mr_thr
 }
 
 #[tokio::test]
-async fn unprocessable_entity_commit_validation_failures_fall_back_to_unpositioned_mr_threads() {
+async fn unprocessable_entity_commit_validation_failures_fall_back_to_the_commit() {
     let mut replies = before_inline();
     replies.extend([
         merge_request(),
@@ -903,12 +925,17 @@ async fn unprocessable_entity_commit_validation_failures_fall_back_to_unposition
     let posts = server.posts();
     assert_eq!(posts.len(), 3);
     assert!(
-        posts
+        posts[..2]
             .iter()
             .all(|(path, _)| path.contains("/merge_requests/42/discussions "))
     );
     assert_eq!(posts[0].1["position"]["position_type"], "text");
     assert_eq!(posts[1].1["position"]["position_type"], "file");
+    assert!(
+        posts[2]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
     assert!(posts[2].1.get("position").is_none());
     assert!(posts[2].1.get("commit_id").is_none());
     assert!(
@@ -1055,7 +1082,7 @@ async fn rate_limited_inline_posts_stop_without_fallback() {
 #[tokio::test]
 async fn unavailable_diff_falls_back_but_diff_authentication_errors_stop() {
     let mut replies = before_inline();
-    replies[3] = Reply::json(json!([{
+    replies[5] = Reply::json(json!([{
         "old_path": "src/main.rs", "new_path": "src/main.rs", "too_large": true,
     }]));
     replies.extend([merge_request(), created(19)]);
@@ -1075,8 +1102,8 @@ async fn unavailable_diff_falls_back_but_diff_authentication_errors_stop() {
     assert_eq!(server.posts()[0].1["position"]["position_type"], "file");
 
     let mut replies = before_inline();
-    replies.truncate(4);
-    replies[3] = Reply::failure(403, json!({ "message": "forbidden" }));
+    replies.truncate(6);
+    replies[5] = Reply::failure(403, json!({ "message": "forbidden" }));
     let server = Server::start(replies).await;
     assert_matches!(
         server
@@ -1240,6 +1267,8 @@ async fn uncertain_fallback_posts_are_confirmed_separately_before_remaining_feed
         merge_request(),
         commits(),
         empty_discussions(),
+        empty_discussions(),
+        empty_discussions(),
         merge_request(),
         merge_request(),
         Reply::failure(500, json!({})),
@@ -1296,6 +1325,8 @@ async fn fallback_items_are_separate_from_each_other_and_the_summary() {
         merge_request(),
         commits(),
         empty_discussions(),
+        empty_discussions(),
+        empty_discussions(),
         merge_request(),
         merge_request(),
         created(17),
@@ -1317,7 +1348,11 @@ async fn fallback_items_are_separate_from_each_other_and_the_summary() {
     let posts = server.posts();
     assert_eq!(posts.len(), 3);
     for (index, message) in ["First", "Second"].into_iter().enumerate() {
-        assert!(posts[index].0.contains("/merge_requests/42/discussions "));
+        assert!(
+            posts[index]
+                .0
+                .contains(&format!("/repository/commits/{HEAD}/discussions "))
+        );
         assert!(posts[index].1.get("position").is_none());
         let body = posts[index].1["body"].as_str().unwrap();
         assert!(body.contains(message));
@@ -1400,6 +1435,8 @@ async fn an_unconfirmed_fallback_stops_before_posting_the_next_item() {
         merge_request(),
         commits(),
         empty_discussions(),
+        empty_discussions(),
+        empty_discussions(),
         merge_request(),
         merge_request(),
         Reply::failure(500, json!({})),
@@ -1428,6 +1465,8 @@ async fn individual_notes_can_exceed_the_limit_in_aggregate() {
     let server = Server::start(vec![
         merge_request(),
         commits(),
+        empty_discussions(),
+        empty_discussions(),
         empty_discussions(),
         merge_request(),
         merge_request(),
@@ -1480,7 +1519,7 @@ async fn root_commits_use_zero_refs_for_the_empty_parent() {
         { "id": HEAD, "parent_ids": [OLD] },
         { "id": OLD, "parent_ids": [] },
     ]));
-    replies[3] = Reply::json(json!([{
+    replies[5] = Reply::json(json!([{
         "old_path": "src/main.rs", "new_path": "src/main.rs", "new_file": true,
         "diff": "@@ -0,0 +1,5 @@\n+one\n+two\n+three\n+four\n+five",
     }]));
@@ -1505,6 +1544,8 @@ async fn absent_parent_metadata_skips_positions_without_assuming_a_root_commit()
         merge_request(),
         commits(),
         empty_discussions(),
+        empty_discussions(),
+        empty_discussions(),
         merge_request(),
     ];
     replies[1] = Reply::json(json!([{ "id": HEAD }, { "id": OLD, "parent_ids": [] }]));
@@ -1520,7 +1561,7 @@ async fn absent_parent_metadata_skips_positions_without_assuming_a_root_commit()
     assert!(
         server.posts()[0]
             .0
-            .contains("/merge_requests/42/discussions ")
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
     assert!(
         !server
@@ -1531,10 +1572,10 @@ async fn absent_parent_metadata_skips_positions_without_assuming_a_root_commit()
 }
 
 #[tokio::test]
-async fn unavailable_commit_diffs_fall_back_to_independent_mr_threads() {
+async fn unavailable_commit_diffs_fall_back_to_commit_threads() {
     for status in [404, 413] {
         let mut replies = before_inline();
-        replies[3] = Reply::failure(status, json!({ "message": "diff unavailable" }));
+        replies[5] = Reply::failure(status, json!({ "message": "diff unavailable" }));
         replies.extend([merge_request(), created(17)]);
         let server = Server::start(replies).await;
         let report = server
@@ -1545,12 +1586,16 @@ async fn unavailable_commit_diffs_fall_back_to_independent_mr_threads() {
         assert_eq!(report.inline, 0, "{status}");
         let posts = server.posts();
         assert_eq!(posts.len(), 1, "{status}");
-        assert!(posts[0].0.contains("/merge_requests/42/discussions "));
+        assert!(
+            posts[0]
+                .0
+                .contains(&format!("/repository/commits/{HEAD}/discussions "))
+        );
     }
 }
 
 #[tokio::test]
-async fn rejected_line_and_file_positions_fall_back_to_an_independent_mr_thread() {
+async fn rejected_line_and_file_positions_fall_back_to_the_commit() {
     let mut replies = before_inline();
     replies.extend([
         merge_request(),
@@ -1571,13 +1616,19 @@ async fn rejected_line_and_file_positions_fall_back_to_an_independent_mr_thread(
     assert_eq!(report.inline, 0);
     assert_eq!(
         report.urls,
-        ["https://gitlab.com/group/subgroup/project/-/merge_requests/42#note_19"]
+        [format!(
+            "https://gitlab.com/group/subgroup/project/-/commit/{HEAD}#note_19"
+        )]
     );
     let posts = server.posts();
     assert_eq!(posts.len(), 3);
     assert_eq!(posts[0].1["position"]["position_type"], "text");
     assert_eq!(posts[1].1["position"]["position_type"], "file");
-    assert!(posts[2].0.contains("/merge_requests/42/discussions "));
+    assert!(
+        posts[2]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
     assert!(posts[2].1.get("position").is_none());
     assert!(posts[2].1.get("commit_id").is_none());
     assert_eq!(posts[0].1["body"], posts[1].1["body"]);
@@ -1597,6 +1648,8 @@ async fn each_target_commit_diff_is_fetched_once_and_used_for_its_positions() {
     let server = Server::start(vec![
         merge_request(),
         commits(),
+        empty_discussions(),
+        empty_discussions(),
         empty_discussions(),
         diffs(),
         old_diff,
@@ -1618,6 +1671,14 @@ async fn each_target_commit_diff_is_fetched_once_and_used_for_its_positions() {
     assert_eq!(report.inline, 3);
     let requests = server.requests();
     for commit in [HEAD, OLD] {
+        assert_eq!(
+            requests
+                .iter()
+                .filter(|request| request.starts_with("GET ")
+                    && request.contains(&format!("/repository/commits/{commit}/discussions?")))
+                .count(),
+            1
+        );
         assert_eq!(
             requests
                 .iter()
