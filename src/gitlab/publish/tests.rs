@@ -216,6 +216,17 @@ fn before_inline() -> Vec<Reply> {
     ]
 }
 
+fn before_commit() -> Vec<Reply> {
+    vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        empty_discussions(),
+        empty_discussions(),
+        merge_request(),
+    ]
+}
+
 fn created(id: u64) -> Reply {
     Reply::json(json!({ "id": "discussion", "notes": [{ "id": id }] }))
 }
@@ -1694,4 +1705,410 @@ async fn each_target_commit_diff_is_fetched_once_and_used_for_its_positions() {
     assert_eq!(posts[2].1["commit_id"], HEAD);
     assert_eq!(posts[1].1["position"]["old_line"], 3);
     assert_eq!(posts[1].1["position"]["new_line"], 5);
+}
+
+#[tokio::test]
+async fn unavailable_line_file_and_commit_targets_fall_back_to_an_independent_mr_thread() {
+    let mut replies = before_inline();
+    replies.extend([
+        merge_request(),
+        Reply::failure(400, json!({ "message": { "position": ["is invalid"] } })),
+        merge_request(),
+        Reply::failure(422, json!({ "message": { "position": ["is invalid"] } })),
+        merge_request(),
+        Reply::failure(404, json!({ "message": "404 Commit Not Found" })),
+        merge_request(),
+        created(20),
+    ]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input(&["Issue"]))
+        .await
+        .unwrap();
+
+    assert_eq!(report.published, 1);
+    assert_eq!(report.inline, 0);
+    assert!(report.urls[0].contains("/merge_requests/42#note_20"));
+    let posts = server.posts();
+    assert_eq!(posts.len(), 4);
+    assert!(
+        posts[2]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
+    assert!(posts[3].0.contains("/merge_requests/42/discussions "));
+    assert!(posts[3].1.get("position").is_none());
+    assert!(posts[3].1.get("commit_id").is_none());
+    assert!(
+        posts
+            .iter()
+            .all(|(_, payload)| payload["body"] == posts[0].1["body"])
+    );
+    assert!(
+        !posts[3].1["body"]
+            .as_str()
+            .unwrap()
+            .contains(CONVERSATION_MARKER)
+    );
+}
+
+#[tokio::test]
+async fn unprocessable_commit_validation_failure_falls_back_to_an_independent_mr_thread() {
+    let mut input = input(&["Issue"]);
+    input.findings[0].location = None;
+    let mut replies = before_commit();
+    replies.extend([
+        merge_request(),
+        Reply::failure(422, json!({ "message": { "commit_id": ["is invalid"] } })),
+        merge_request(),
+        created(20),
+    ]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 2);
+    assert!(
+        posts[0]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
+    assert!(posts[1].0.contains("/merge_requests/42/discussions "));
+    assert!(posts[1].1.get("position").is_none());
+}
+
+#[tokio::test]
+async fn unlocated_questions_with_multiple_related_commits_use_independent_mr_threads() {
+    let mut input = question_input();
+    input.questions[0].location = None;
+    input.questions[0].related_commits = vec![
+        CommitHash::new(OLD).unwrap(),
+        CommitHash::new(HEAD).unwrap(),
+    ];
+    let mut replies = before_commit();
+    replies.extend([merge_request(), created(17)]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.inline, 0);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 1);
+    assert!(posts[0].0.contains("/merge_requests/42/discussions "));
+    assert!(posts[0].1.get("commit_id").is_none());
+    assert!(
+        !server
+            .requests()
+            .iter()
+            .any(|request| request.contains("/diff?"))
+    );
+}
+
+#[tokio::test]
+async fn existing_commit_threads_suppress_items_before_fetching_diffs() {
+    let input = input(&["Issue", "Issue"]);
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let server = Server::start(vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        known(&inline_body(&review.items[0]), 17),
+        empty_discussions(),
+    ])
+    .await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 0);
+    assert_eq!(report.skipped, 2);
+    assert_eq!(server.requests().len(), 5);
+    assert!(server.requests()[3].contains(&format!("/repository/commits/{HEAD}/discussions?")));
+    assert_matches!(server.posts()[..], []);
+}
+
+#[tokio::test]
+async fn earlier_commit_threads_suppress_questions_after_their_target_changes() {
+    let mut previous = question_input();
+    previous.questions[0].location = None;
+    previous.questions[0].related_commits = vec![CommitHash::new(OLD).unwrap()];
+    let previous_review = PreparedReview::for_gitlab(&previous, &repository());
+    let previous_body = inline_body(&previous_review.items[0]);
+
+    for related_commits in [&[HEAD][..], &[HEAD, OLD]] {
+        let mut input = question_input();
+        input.questions[0].location = None;
+        input.questions[0].related_commits = related_commits
+            .iter()
+            .map(|commit| CommitHash::new(commit).unwrap())
+            .collect();
+        let mut first_page = empty_discussions();
+        first_page.headers.push(format!(
+            "Link: <{{base}}projects/group%2Fsubgroup%2Fproject/repository/commits/{OLD}/discussions?per_page=100&page=2>; rel=\"next\"",
+        ));
+        let server = Server::start(vec![
+            merge_request(),
+            commits(),
+            empty_discussions(),
+            empty_discussions(),
+            first_page,
+            Reply::json(json!([{
+                "notes": [
+                    { "id": 16, "body": "Existing discussion" },
+                    { "id": 17, "body": previous_body, "resolved": true },
+                ],
+            }])),
+        ])
+        .await;
+
+        let report = server
+            .client()
+            .publish(&repository(), number(), &input)
+            .await
+            .unwrap();
+
+        assert_eq!(report.published, 0, "{related_commits:?}");
+        assert_eq!(report.skipped, 1, "{related_commits:?}");
+        assert_matches!(server.posts()[..], []);
+        let requests = server.requests();
+        assert_eq!(requests.len(), 6);
+        assert!(requests[3].contains(&format!("/repository/commits/{HEAD}/discussions?")));
+        assert!(requests[4].contains(&format!("/repository/commits/{OLD}/discussions?")));
+        assert!(requests[5].contains(&format!("/repository/commits/{OLD}/discussions?")));
+        assert!(requests[5].contains("page=2"));
+    }
+}
+
+#[tokio::test]
+async fn unreadable_unrelated_commit_discussions_stop_before_writes() {
+    let server = Server::start(vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        empty_discussions(),
+        Reply::failure(403, json!({ "message": "forbidden" })),
+    ])
+    .await;
+
+    let error = server
+        .client()
+        .publish(&repository(), number(), &input(&["Issue"]))
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error.reason.as_ref(),
+        PublishFailure::Api(GitLabError::Api { status: 403, .. })
+    );
+    assert_eq!(error.report.published, 0);
+    assert_matches!(server.posts()[..], []);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 5);
+    assert!(requests[4].contains(&format!("/repository/commits/{OLD}/discussions?")));
+}
+
+#[tokio::test]
+async fn rerunning_a_partial_commit_publication_posts_only_remaining_items() {
+    let mut input = input(&["First", "Second"]);
+    for finding in &mut input.findings {
+        finding.location = None;
+    }
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let mut replies = before_commit();
+    replies.extend([
+        merge_request(),
+        created(17),
+        merge_request(),
+        Reply::failure(403, json!({ "message": "forbidden" })),
+    ]);
+    let mut retry = before_commit();
+    retry[3] = known(&inline_body(&review.items[0]), 17);
+    retry.extend([merge_request(), created(18)]);
+    replies.extend(retry);
+    let server = Server::start(replies).await;
+    let client = server.client();
+    let error = client
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap_err();
+    assert_eq!(error.report.published, 1);
+    let report = client
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.inline, 0);
+    assert_eq!(server.posts().len(), 3);
+    assert!(
+        server
+            .posts()
+            .iter()
+            .all(|(path, _)| path.contains(&format!("/repository/commits/{HEAD}/discussions ")))
+    );
+    assert_eq!(server.posts()[1].1, server.posts()[2].1);
+}
+
+#[tokio::test]
+async fn confirms_commit_posts_after_server_errors_without_fallback() {
+    let mut input = input(&["Issue"]);
+    input.findings[0].location = None;
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let mut replies = before_commit();
+    replies.extend([
+        merge_request(),
+        Reply::failure(500, json!({})),
+        known(&inline_body(&review.items[0]), 17),
+    ]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.inline, 0);
+    assert_eq!(
+        report.urls,
+        [format!(
+            "https://gitlab.com/group/subgroup/project/-/commit/{HEAD}#note_17"
+        )]
+    );
+    assert_eq!(server.posts().len(), 1);
+    let requests = server.requests();
+    assert!(requests.last().unwrap().starts_with("GET "));
+    assert!(
+        requests
+            .last()
+            .unwrap()
+            .contains(&format!("/repository/commits/{HEAD}/discussions?"))
+    );
+}
+
+#[tokio::test]
+async fn confirms_commit_posts_with_empty_note_lists_without_fallback() {
+    let mut input = input(&["Issue"]);
+    input.findings[0].location = None;
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let mut replies = before_commit();
+    replies.extend([
+        merge_request(),
+        Reply::json(json!({ "notes": [] })),
+        known(&inline_body(&review.items[0]), 17),
+    ]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.inline, 0);
+    assert_eq!(
+        report.urls,
+        [format!(
+            "https://gitlab.com/group/subgroup/project/-/commit/{HEAD}#note_17"
+        )]
+    );
+    assert_eq!(server.posts().len(), 1);
+    let requests = server.requests();
+    assert!(requests.last().unwrap().starts_with("GET "));
+    assert!(
+        requests
+            .last()
+            .unwrap()
+            .contains(&format!("/repository/commits/{HEAD}/discussions?"))
+    );
+}
+
+#[tokio::test]
+async fn a_failed_commit_confirmation_never_posts_a_duplicate_mr_fallback() {
+    let mut input = input(&["Issue"]);
+    input.findings[0].location = None;
+    let mut replies = before_commit();
+    replies.extend([
+        merge_request(),
+        Reply::failure(503, json!({})),
+        Reply::failure(404, json!({ "message": "not found" })),
+    ]);
+    let server = Server::start(replies).await;
+    let error = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap_err();
+    assert_matches!(
+        error.reason.as_ref(),
+        PublishFailure::Unconfirmed {
+            request: Some(GitLabError::Api { status: 503, .. }),
+            verification: Some(GitLabError::Api { status: 404, .. }),
+        }
+    );
+    assert_eq!(error.report.published, 0);
+    assert_eq!(server.posts().len(), 1);
+    let requests = server.requests();
+    let confirmation = requests.last().unwrap();
+    assert!(confirmation.starts_with("GET "));
+    assert!(confirmation.contains(&format!("/repository/commits/{HEAD}/discussions?")));
+}
+
+#[tokio::test]
+async fn unprocessable_commit_posts_without_target_errors_stop_without_fallback() {
+    let mut input = input(&["Issue"]);
+    input.findings[0].location = None;
+    let mut replies = before_commit();
+    replies.extend([
+        merge_request(),
+        Reply::failure(422, json!({ "message": "rejected" })),
+    ]);
+    let server = Server::start(replies).await;
+    let error = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap_err();
+    assert_matches!(
+        error.reason.as_ref(),
+        PublishFailure::Api(GitLabError::Api {
+            status: 422,
+            commit_invalid: false,
+            ..
+        })
+    );
+    assert_eq!(error.report.published, 0);
+    assert_eq!(server.posts().len(), 1);
+}
+
+#[tokio::test]
+async fn forbidden_commit_posts_stop_without_fallback() {
+    let mut input = input(&["Issue"]);
+    input.findings[0].location = None;
+    let mut replies = before_commit();
+    replies.extend([
+        merge_request(),
+        Reply::failure(403, json!({ "message": "rejected" })),
+    ]);
+    let server = Server::start(replies).await;
+    let error = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap_err();
+    assert_matches!(
+        error.reason.as_ref(),
+        PublishFailure::Api(GitLabError::Api { status: 403, .. })
+    );
+    assert_eq!(error.report.published, 0);
+    assert_eq!(server.posts().len(), 1);
 }
