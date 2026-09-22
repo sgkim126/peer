@@ -16,6 +16,7 @@ pub enum GitLabError {
         status: u16,
         rate_limited: bool,
         position_invalid: bool,
+        commit_invalid: bool,
     },
     Decode {
         endpoint: String,

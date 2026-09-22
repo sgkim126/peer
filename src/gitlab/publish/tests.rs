@@ -841,6 +841,66 @@ async fn explicit_position_errors_fall_back_to_independent_discussions() {
 }
 
 #[tokio::test]
+async fn bad_request_commit_validation_failures_fall_back_to_unpositioned_mr_threads() {
+    let mut replies = before_inline();
+    replies.extend([
+        merge_request(),
+        Reply::failure(400, json!({ "message": { "commit_id": ["is invalid"] } })),
+        merge_request(),
+        created(20),
+    ]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input(&["Issue"]))
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.inline, 0);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 2);
+    assert!(
+        posts
+            .iter()
+            .all(|(path, _)| path.contains("/merge_requests/42/discussions "))
+    );
+    assert!(posts[0].1.get("position").is_some());
+    assert!(posts[1].1.get("position").is_none());
+    assert!(posts[1].1.get("commit_id").is_none());
+    assert_eq!(posts[0].1["body"], posts[1].1["body"]);
+}
+
+#[tokio::test]
+async fn unprocessable_entity_commit_validation_failures_fall_back_to_unpositioned_mr_threads() {
+    let mut replies = before_inline();
+    replies.extend([
+        merge_request(),
+        Reply::failure(422, json!({ "message": { "commit_id": ["is invalid"] } })),
+        merge_request(),
+        created(20),
+    ]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input(&["Issue"]))
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.inline, 0);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 2);
+    assert!(
+        posts
+            .iter()
+            .all(|(path, _)| path.contains("/merge_requests/42/discussions "))
+    );
+    assert!(posts[0].1.get("position").is_some());
+    assert!(posts[1].1.get("position").is_none());
+    assert!(posts[1].1.get("commit_id").is_none());
+    assert_eq!(posts[0].1["body"], posts[1].1["body"]);
+}
+
+#[tokio::test]
 async fn bad_requests_without_position_errors_stop_without_fallback() {
     let mut replies = before_inline();
     replies.extend([

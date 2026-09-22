@@ -1226,6 +1226,163 @@ fn rejects_bare_bad_request_error_strings() {
     assert!(!position_error(&message));
 }
 
+#[test]
+fn recognizes_commit_target_string_validation_messages() {
+    let message = json!({"commit_id": "is invalid"});
+
+    assert!(commit_error(&message));
+}
+
+#[test]
+fn recognizes_multiple_commit_target_validation_messages() {
+    let message = json!({"commit_id": ["is invalid", "does not exist"]});
+
+    assert!(commit_error(&message));
+}
+
+#[test]
+fn rejects_commit_target_errors_mixed_with_body_errors() {
+    let message = json!({"commit_id": ["is invalid"], "body": ["is invalid"]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_commit_target_errors_mixed_with_position_errors() {
+    let message = json!({"commit_id": ["is invalid"], "position": ["is invalid"]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_commit_target_errors_with_empty_message_arrays() {
+    let message = json!({"commit_id": []});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_commit_target_errors_with_mixed_blank_and_nonblank_messages() {
+    let message = json!({"commit_id": ["is invalid", " "]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_null_commit_target_error_messages() {
+    assert!(!commit_error(&Value::Null));
+}
+
+#[test]
+fn rejects_empty_commit_target_error_objects() {
+    let message = json!({});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_field_names_that_only_start_with_commit_id() {
+    let message = json!({"commit_id_suffix": ["is invalid"]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_body_errors_that_only_mention_commit_id() {
+    let message = json!({"body": ["commit_id is invalid"]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_plain_text_commit_target_validation_errors() {
+    let message = json!("commit_id is invalid");
+
+    assert!(!commit_error(&message));
+}
+
+#[tokio::test]
+async fn bad_request_responses_can_report_commit_target_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({"message": {"commit_id": ["is invalid"]}})).status(400),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/merge_requests/1/discussions",
+            &json!({"body": "A note", "commit_id": "abc1234"}),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            status: 400,
+            position_invalid: false,
+            commit_invalid: true,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn forbidden_responses_are_not_commit_target_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({"message": {"commit_id": ["is invalid"]}})).status(403),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/merge_requests/1/discussions",
+            &json!({"body": "A note", "commit_id": "abc1234"}),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            status: 403,
+            position_invalid: false,
+            commit_invalid: false,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn mixed_target_and_body_response_errors_do_not_permit_fallback() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "commit_id": ["is invalid"],
+                "body": ["can't be blank"]
+            }
+        }))
+        .status(422),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/merge_requests/1/discussions",
+            &json!({"body": "A note", "commit_id": "abc1234"}),
+        )
+        .await;
+
+    assert_matches!(
+        error,
+        Err(GitLabError::Api {
+            position_invalid: false,
+            commit_invalid: false,
+            ..
+        })
+    );
+}
+
 #[tokio::test]
 async fn bad_request_responses_can_report_position_failures() {
     let server = Server::start(vec![

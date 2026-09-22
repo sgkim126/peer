@@ -319,6 +319,11 @@ impl GitLabClient {
                         position_invalid: true,
                         ..
                     }) if inline => continue,
+                    Err(GitLabError::Api {
+                        status: 400 | 422,
+                        commit_invalid: true,
+                        ..
+                    }) if inline => continue,
                     Err(error) => return Err(error.into()),
                 }
                 break;

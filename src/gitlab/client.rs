@@ -174,24 +174,28 @@ impl GitLabClient {
                         .get("ratelimit-remaining")
                         .is_some_and(|value| value == "0")
                         || response.headers().contains_key("retry-after")));
-            // Only a definite position validation error permits moving an
-            // inline comment into the overview. Never retain response bodies:
+            // Only definite target validation errors permit retrying an inline
+            // discussion without a position. Never retain error response bodies:
             // they can contain private note text or credentials.
-            let position_invalid = if matches!(status.as_u16(), 400 | 422) {
+            let (position_invalid, commit_invalid) = if matches!(status.as_u16(), 400 | 422) {
                 response
                     .json::<serde_json::Value>()
                     .await
                     .ok()
-                    .and_then(|body| body.get("message").map(position_error))
-                    .unwrap_or(false)
+                    .and_then(|body| {
+                        body.get("message")
+                            .map(|message| (position_error(message), commit_error(message)))
+                    })
+                    .unwrap_or((false, false))
             } else {
-                false
+                (false, false)
             };
             return Err(GitLabError::Api {
                 endpoint,
                 status: status.as_u16(),
                 rate_limited,
                 position_invalid,
+                commit_invalid,
             });
         }
         let headers = response.headers().clone();
@@ -220,6 +224,18 @@ fn position_error(message: &serde_json::Value) -> bool {
                     (position_field(field) && has_validation_message(detail))
                         || (field == "commit_id" && diff_refs_message(detail))
                 })
+        }
+        _ => false,
+    }
+}
+
+fn commit_error(message: &serde_json::Value) -> bool {
+    match message {
+        serde_json::Value::Object(fields) => {
+            !fields.is_empty()
+                && fields
+                    .iter()
+                    .all(|(field, detail)| field == "commit_id" && has_validation_message(detail))
         }
         _ => false,
     }
