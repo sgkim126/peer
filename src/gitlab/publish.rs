@@ -258,8 +258,9 @@ impl GitLabClient {
         if remaining.is_empty() && !include_summary {
             return Ok(());
         }
-        // Validate the largest possible fallback before making any writes.
-        check_body(&conversation_body(&review, &remaining, include_summary))?;
+        // Feedback items and the summary each have their own note limit.
+        let summary = summary_body(&review, include_summary);
+        check_body(&summary)?;
         for item in &remaining {
             check_body(&inline_body(item))?;
         }
@@ -277,52 +278,53 @@ impl GitLabClient {
         self.assert_current(repository, number, &merge_request)
             .await?;
 
-        let mut fallback = Vec::new();
         for item in remaining {
             let position = head_location(item, &source)
                 .then_some(item.location.as_ref())
                 .flatten()
                 .and_then(|location| comment_position(&files, location, &source.diff_refs));
-            let Some(position) = position else {
-                fallback.push(item);
-                continue;
-            };
-            self.assert_current(repository, number, &merge_request)
-                .await?;
+            let candidates = position.into_iter().map(Some).chain(std::iter::once(None));
             let body = inline_body(item);
-            let result = self
-                .post::<PublishedDiscussion>(
-                    &format!("{prefix}/discussions"),
-                    &json!({ "body": body, "position": position }),
-                )
-                .await;
-            match result {
-                Ok(discussion) => match discussion.notes.first() {
-                    Some(note) => report.record(note_url(repository, number, note.id), true, false),
-                    None => {
+            for position in candidates {
+                self.assert_current(repository, number, &merge_request)
+                    .await?;
+                let inline = position.is_some();
+                let mut payload = json!({ "body": body });
+                if let Some(position) = position {
+                    payload["position"] = position;
+                }
+                let result = self
+                    .post::<PublishedDiscussion>(&format!("{prefix}/discussions"), &payload)
+                    .await;
+                match result {
+                    Ok(discussion) => match discussion.notes.first() {
+                        Some(note) => {
+                            report.record(note_url(repository, number, note.id), inline, false)
+                        }
+                        None => {
+                            let url = self
+                                .confirm_publication(repository, number, &body, None)
+                                .await?;
+                            report.record(url, inline, true);
+                        }
+                    },
+                    Err(error) if error.may_have_published() => {
                         let url = self
-                            .confirm_publication(repository, number, &body, None)
+                            .confirm_publication(repository, number, &body, Some(error))
                             .await?;
-                        report.record(url, true, true);
+                        report.record(url, inline, true);
                     }
-                },
-                Err(error) if error.may_have_published() => {
-                    let url = self
-                        .confirm_publication(repository, number, &body, Some(error))
-                        .await?;
-                    report.record(url, true, true);
+                    Err(GitLabError::Api {
+                        status: 400 | 422,
+                        position_invalid: true,
+                        ..
+                    }) if inline => continue,
+                    Err(error) => return Err(error.into()),
                 }
-                Err(GitLabError::Api {
-                    status: 400 | 422,
-                    position_invalid: true,
-                    ..
-                }) => {
-                    fallback.push(item);
-                }
-                Err(error) => return Err(error.into()),
+                break;
             }
         }
-        let body = conversation_body(&review, &fallback, include_summary);
+        let body = summary;
         if !body.is_empty() {
             self.assert_current(repository, number, &merge_request)
                 .await?;
@@ -516,12 +518,8 @@ fn inline_body(item: &Feedback) -> String {
     format!("{}\n\n{}", item.body, marker(&item.fingerprint))
 }
 
-fn conversation_body(
-    review: &PreparedReview,
-    items: &[&Feedback],
-    include_summary: bool,
-) -> String {
-    let body = review.aggregate(items, include_summary);
+fn summary_body(review: &PreparedReview, include_summary: bool) -> String {
+    let body = review.aggregate(&[], include_summary);
     if body.trim().is_empty() {
         String::new()
     } else {

@@ -111,6 +111,17 @@ The MR's commits and base must already be available in the local Git
 repository. `peer init --repo` continues to configure GitHub only.
 GitLab rendering also accepts `--repo` and works without a token or network access.
 
+To publish a saved review, provide `GITLAB_TOKEN` with the `api` scope:
+
+```bash
+peer render --gitlab 123 < review.json
+```
+
+Each question, recommendation, and finding is published as a separate
+thread, including feedback without a usable inline location. The summary
+note contains only review metadata, token usage, and stage summaries.
+Existing feedback markers prevent duplicate publication on subsequent runs.
+
 ## Documentation
 
 See the [wiki home](https://github.com/sgkim126/peer/wiki) for the full documentation.

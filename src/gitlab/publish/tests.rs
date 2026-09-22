@@ -280,7 +280,7 @@ async fn publishes_head_questions_regardless_of_related_commits() {
 }
 
 #[tokio::test]
-async fn unlocated_questions_fall_back_to_a_summary_note() {
+async fn unlocated_questions_fall_back_to_independent_discussions() {
     let mut input = question_input();
     input.questions[0].location = None;
     let server = Server::start(vec![
@@ -289,7 +289,7 @@ async fn unlocated_questions_fall_back_to_a_summary_note() {
         empty_discussions(),
         merge_request(),
         merge_request(),
-        Reply::json(json!({ "id": 19 })),
+        created(19),
     ])
     .await;
 
@@ -303,10 +303,10 @@ async fn unlocated_questions_fall_back_to_a_summary_note() {
     assert_eq!(report.inline, 0);
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
-    assert!(posts[0].0.contains("/notes "));
+    assert!(posts[0].0.contains("/merge_requests/42/discussions "));
     assert!(posts[0].1.get("position").is_none());
     let body = posts[0].1["body"].as_str().unwrap();
-    assert!(body.contains(CONVERSATION_MARKER));
+    assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
     assert!(
         !server
@@ -317,7 +317,7 @@ async fn unlocated_questions_fall_back_to_a_summary_note() {
 }
 
 #[tokio::test]
-async fn questions_at_earlier_commits_fall_back_to_a_summary_note() {
+async fn questions_at_earlier_commits_fall_back_to_independent_discussions() {
     let mut input = question_input();
     input.questions[0].location.as_mut().unwrap().commit = CommitHash::new(OLD).unwrap();
     let server = Server::start(vec![
@@ -326,7 +326,7 @@ async fn questions_at_earlier_commits_fall_back_to_a_summary_note() {
         empty_discussions(),
         merge_request(),
         merge_request(),
-        Reply::json(json!({ "id": 19 })),
+        created(19),
     ])
     .await;
 
@@ -340,10 +340,10 @@ async fn questions_at_earlier_commits_fall_back_to_a_summary_note() {
     assert_eq!(report.inline, 0);
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
-    assert!(posts[0].0.contains("/notes "));
+    assert!(posts[0].0.contains("/merge_requests/42/discussions "));
     assert!(posts[0].1.get("position").is_none());
     let body = posts[0].1["body"].as_str().unwrap();
-    assert!(body.contains(CONVERSATION_MARKER));
+    assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
     assert!(
         !server
@@ -354,11 +354,11 @@ async fn questions_at_earlier_commits_fall_back_to_a_summary_note() {
 }
 
 #[tokio::test]
-async fn questions_in_unchanged_files_fall_back_to_a_summary_note() {
+async fn questions_in_unchanged_files_fall_back_to_independent_discussions() {
     let mut input = question_input();
     input.questions[0].location.as_mut().unwrap().file.file = "src/unchanged.rs".into();
     let mut replies = before_inline();
-    replies.extend([merge_request(), Reply::json(json!({ "id": 19 }))]);
+    replies.extend([merge_request(), created(19)]);
     let server = Server::start(replies).await;
 
     let report = server
@@ -371,10 +371,10 @@ async fn questions_in_unchanged_files_fall_back_to_a_summary_note() {
     assert_eq!(report.inline, 0);
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
-    assert!(posts[0].0.contains("/notes "));
+    assert!(posts[0].0.contains("/merge_requests/42/discussions "));
     assert!(posts[0].1.get("position").is_none());
     let body = posts[0].1["body"].as_str().unwrap();
-    assert!(body.contains(CONVERSATION_MARKER));
+    assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
     assert!(
         server
@@ -385,11 +385,11 @@ async fn questions_in_unchanged_files_fall_back_to_a_summary_note() {
 }
 
 #[tokio::test]
-async fn questions_outside_diff_hunks_fall_back_to_a_summary_note() {
+async fn questions_outside_diff_hunks_fall_back_to_independent_discussions() {
     let mut input = question_input();
     input.questions[0].location.as_mut().unwrap().file.line = Some(6);
     let mut replies = before_inline();
-    replies.extend([merge_request(), Reply::json(json!({ "id": 19 }))]);
+    replies.extend([merge_request(), created(19)]);
     let server = Server::start(replies).await;
 
     let report = server
@@ -402,10 +402,10 @@ async fn questions_outside_diff_hunks_fall_back_to_a_summary_note() {
     assert_eq!(report.inline, 0);
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
-    assert!(posts[0].0.contains("/notes "));
+    assert!(posts[0].0.contains("/merge_requests/42/discussions "));
     assert!(posts[0].1.get("position").is_none());
     let body = posts[0].1["body"].as_str().unwrap();
-    assert!(body.contains(CONVERSATION_MARKER));
+    assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
     assert!(
         server
@@ -465,7 +465,7 @@ async fn legacy_input_can_use_unambiguous_abbreviated_head_hashes() {
 }
 
 #[tokio::test]
-async fn earlier_commit_locations_fall_back_to_a_summary_note() {
+async fn earlier_commit_locations_fall_back_to_independent_discussions() {
     let mut input = input(&["Old issue"]);
     input.findings[0].commit = CommitHash::new(OLD).unwrap();
     let server = Server::start(vec![
@@ -474,7 +474,7 @@ async fn earlier_commit_locations_fall_back_to_a_summary_note() {
         empty_discussions(),
         merge_request(),
         merge_request(),
-        Reply::json(json!({ "id": 19 })),
+        created(19),
     ])
     .await;
     let report = server
@@ -485,9 +485,9 @@ async fn earlier_commit_locations_fall_back_to_a_summary_note() {
     assert_eq!(report.inline, 0);
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
-    assert!(posts[0].0.contains("/notes "));
+    assert!(posts[0].0.contains("/merge_requests/42/discussions "));
     assert!(
-        posts[0].1["body"]
+        !posts[0].1["body"]
             .as_str()
             .unwrap()
             .contains(CONVERSATION_MARKER)
@@ -819,13 +819,13 @@ async fn rerunning_a_partial_publication_posts_only_the_remaining_feedback() {
 }
 
 #[tokio::test]
-async fn explicit_position_errors_fall_back_to_a_summary_note() {
+async fn explicit_position_errors_fall_back_to_independent_discussions() {
     let mut replies = before_inline();
     replies.extend([
         merge_request(),
         Reply::failure(400, json!({ "message": { "position": ["is invalid"] } })),
         merge_request(),
-        Reply::json(json!({ "id": 18 })),
+        created(18),
     ]);
     let server = Server::start(replies).await;
     let report = server
@@ -837,7 +837,7 @@ async fn explicit_position_errors_fall_back_to_a_summary_note() {
     assert_eq!(report.inline, 0);
     let posts = server.posts();
     assert_eq!(posts.len(), 2);
-    assert!(posts[1].0.contains("/notes "));
+    assert!(posts[1].0.contains("/merge_requests/42/discussions "));
 }
 
 #[tokio::test]
@@ -980,7 +980,7 @@ async fn unavailable_diff_falls_back_but_diff_authentication_errors_stop() {
     replies[3] = Reply::json(json!([{
         "old_path": "src/main.rs", "new_path": "src/main.rs", "too_large": true,
     }]));
-    replies.extend([merge_request(), Reply::json(json!({ "id": 19 }))]);
+    replies.extend([merge_request(), created(19)]);
     let server = Server::start(replies).await;
     let report = server
         .client()
@@ -988,7 +988,11 @@ async fn unavailable_diff_falls_back_but_diff_authentication_errors_stop() {
         .await
         .unwrap();
     assert_eq!(report.inline, 0);
-    assert!(server.posts()[0].0.contains("/notes "));
+    assert!(
+        server.posts()[0]
+            .0
+            .contains("/merge_requests/42/discussions ")
+    );
 
     let mut replies = before_inline();
     replies.truncate(4);
@@ -1146,13 +1150,12 @@ async fn forbidden_confirmation_stops_before_remaining_feedback() {
 }
 
 #[tokio::test]
-async fn uncertain_summary_posts_require_all_markers_in_one_public_note() {
+async fn uncertain_fallback_posts_are_confirmed_separately_before_remaining_feedback() {
     let mut input = input(&["First", "Second"]);
     for finding in &mut input.findings {
         finding.location = None;
     }
     let review = PreparedReview::for_gitlab(&input, &repository());
-    let body = conversation_body(&review, &review.items.iter().collect::<Vec<_>>(), false);
     let server = Server::start(vec![
         merge_request(),
         commits(),
@@ -1160,7 +1163,9 @@ async fn uncertain_summary_posts_require_all_markers_in_one_public_note() {
         merge_request(),
         merge_request(),
         Reply::failure(500, json!({})),
-        known(&body, 19),
+        known(&inline_body(&review.items[0]), 19),
+        merge_request(),
+        created(20),
     ])
     .await;
     let report = server
@@ -1168,10 +1173,15 @@ async fn uncertain_summary_posts_require_all_markers_in_one_public_note() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert_eq!(report.published, 1);
+    assert_eq!(report.published, 2);
     assert_eq!(report.recovered, 1);
     assert_eq!(report.inline, 0);
-    assert_eq!(server.posts().len(), 1);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 2);
+    assert!(posts[0].1["body"].as_str().unwrap().contains("First"));
+    assert!(!posts[0].1["body"].as_str().unwrap().contains("Second"));
+    assert!(posts[1].1["body"].as_str().unwrap().contains("Second"));
+    assert!(posts.iter().all(|(path, _)| path.contains("/discussions ")));
 }
 
 #[tokio::test]
@@ -1191,4 +1201,171 @@ async fn rejects_oversized_feedback_before_writes() {
 fn note_size_limit_counts_unicode_characters() {
     assert_matches!(check_body(&"한".repeat(MAX_NOTE_CHARACTERS)), Ok(()));
     assert_matches!(check_body(&"한".repeat(MAX_NOTE_CHARACTERS + 1)), Err(_));
+}
+
+#[tokio::test]
+async fn fallback_items_are_separate_from_each_other_and_the_summary() {
+    let mut input = input(&["First", "Second", "First"]);
+    for finding in &mut input.findings {
+        finding.location = None;
+    }
+    input.summary = Some(crate::review::ReviewSummary {
+        peer_version: "0.16.2".into(),
+    });
+    let server = Server::start(vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        merge_request(),
+        merge_request(),
+        created(17),
+        merge_request(),
+        created(18),
+        merge_request(),
+        Reply::json(json!({ "id": 19 })),
+    ])
+    .await;
+
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 3);
+    assert_eq!(report.inline, 0);
+    assert_eq!(report.skipped, 1);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 3);
+    for (index, message) in ["First", "Second"].into_iter().enumerate() {
+        assert!(posts[index].0.contains("/merge_requests/42/discussions "));
+        assert!(posts[index].1.get("position").is_none());
+        let body = posts[index].1["body"].as_str().unwrap();
+        assert!(body.contains(message));
+        assert!(!body.contains(CONVERSATION_MARKER));
+        assert!(!body.contains("Review summary"));
+        assert_eq!(fingerprints(body).len(), 1);
+    }
+    assert!(!posts[0].1["body"].as_str().unwrap().contains("Second"));
+    assert!(!posts[1].1["body"].as_str().unwrap().contains("First"));
+    assert!(posts[2].0.contains("/notes "));
+    let summary = posts[2].1["body"].as_str().unwrap();
+    assert!(summary.contains("Review summary"));
+    assert!(summary.contains(CONVERSATION_MARKER));
+    assert!(!summary.contains("First"));
+    assert!(!summary.contains("Second"));
+    assert_eq!(fingerprints(summary).len(), 1);
+}
+
+#[tokio::test]
+async fn existing_combined_notes_still_suppress_items_and_summary() {
+    let mut input = input(&["First", "Second"]);
+    input.summary = Some(crate::review::ReviewSummary {
+        peer_version: "0.16.2".into(),
+    });
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let legacy_body = format!(
+        "{}\n\n{CONVERSATION_MARKER}",
+        review.aggregate(&review.items.iter().collect::<Vec<_>>(), true),
+    );
+    let server = Server::start(vec![merge_request(), commits(), known(&legacy_body, 17)]).await;
+
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 0);
+    assert_eq!(report.skipped, 3);
+    assert!(server.posts().is_empty());
+}
+
+#[tokio::test]
+async fn uncertain_summary_posts_are_confirmed_with_the_summary_marker() {
+    let mut input = input(&[]);
+    input.summary = Some(crate::review::ReviewSummary {
+        peer_version: "0.16.2".into(),
+    });
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let server = Server::start(vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        merge_request(),
+        merge_request(),
+        Reply::failure(500, json!({})),
+        known(&summary_body(&review, true), 19),
+    ])
+    .await;
+
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.inline, 0);
+    assert_eq!(server.posts().len(), 1);
+    assert!(server.posts()[0].0.contains("/notes "));
+}
+
+#[tokio::test]
+async fn an_unconfirmed_fallback_stops_before_posting_the_next_item() {
+    let mut input = input(&["First", "Second"]);
+    for finding in &mut input.findings {
+        finding.location = None;
+    }
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let server = Server::start(vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        merge_request(),
+        merge_request(),
+        Reply::failure(500, json!({})),
+        known(&inline_body(&review.items[1]), 19),
+    ])
+    .await;
+
+    let error = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap_err();
+    assert_matches!(error.reason.as_ref(), PublishFailure::Unconfirmed { .. });
+    assert_eq!(error.report.published, 0);
+    assert_eq!(server.posts().len(), 1);
+}
+
+#[tokio::test]
+async fn individual_notes_can_exceed_the_limit_in_aggregate() {
+    let first = "a".repeat(MAX_NOTE_CHARACTERS / 2 + 1);
+    let second = "b".repeat(MAX_NOTE_CHARACTERS / 2 + 1);
+    let mut input = input(&[&first, &second]);
+    for finding in &mut input.findings {
+        finding.location = None;
+    }
+    let server = Server::start(vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        merge_request(),
+        merge_request(),
+        created(17),
+        merge_request(),
+        created(18),
+    ])
+    .await;
+
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 2);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 2);
+    assert!(posts.iter().all(|(_, payload)| {
+        payload["body"].as_str().unwrap().chars().count() < MAX_NOTE_CHARACTERS
+    }));
 }

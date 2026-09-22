@@ -543,6 +543,56 @@ mod tests {
     }
 
     #[test]
+    fn gitlab_summary_contains_metadata_usage_and_stages_without_feedback() {
+        let document = serde_json::from_value(json!({
+            "summary": {"peer_version": "0.16.2"},
+            "ordered_commits": ["abc1234"],
+            "stages": [{
+                "stage": "quality",
+                "target": "abc1234",
+                "outcome": {
+                    "status": "issues",
+                    "summary": "Stage summary",
+                    "iterations": 2,
+                    "usage": [{
+                        "provider": "provider",
+                        "model": "model",
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
+                        "cost_usd": 0.001
+                    }]
+                }
+            }],
+            "questions": [question()],
+            "recommendations": [recommendation()],
+            "findings": [finding()],
+        }))
+        .unwrap();
+        let prepared = PreparedReview::for_gitlab(
+            &document,
+            &crate::gitlab::Repository::parse("group/project").unwrap(),
+        );
+
+        let summary = prepared.aggregate(&[], true);
+
+        assert!(summary.contains("## Review summary"));
+        assert!(summary.contains("**Peer version:** 0\\.16\\.2"));
+        assert!(summary.contains("### Total token usage"));
+        assert!(summary.contains("100 input tokens, 20 output tokens"));
+        assert!(summary.contains("Stage summary"));
+        assert!(summary.contains("**Iterations:** 2"));
+        assert!(!summary.contains("## Review questions"));
+        assert!(!summary.contains("## Structural recommendations"));
+        assert!(!summary.contains("## Review findings"));
+        assert_eq!(
+            fingerprints(&summary),
+            HashSet::from([prepared.summary_fingerprint.unwrap()])
+        );
+    }
+
+    #[test]
     fn finding_fingerprint_distinguishes_message() {
         let mut value = finding();
         let original = identity("findings", value.clone(), "owner/repo");
