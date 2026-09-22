@@ -120,7 +120,27 @@ peer render --gitlab 123 < review.json
 Each question, recommendation, and finding is published as a separate
 thread, including feedback without a usable inline location. The summary
 note contains only review metadata, token usage, and stage summaries.
-Existing feedback markers prevent duplicate publication on subsequent runs.
+Feedback targets are tried in this order:
+
+1. The specified commit, file, and line.
+2. The specified commit and file.
+3. The specified commit.
+4. An independent MR discussion.
+
+Missing locations and rejected targets fall through to the next level.
+Questions and recommendations with exactly one related commit use that
+commit when no explicit location is given. Feedback with multiple related
+commits and no explicit location goes directly to an MR discussion.
+
+Only definite target failures permit another attempt. Authentication,
+permission, and rate-limit failures stop publication. An uncertain response
+must be confirmed at its original destination before publication continues.
+
+Commit threads belong to the repository commit. GitLab also displays them
+in MR activity when the commit is among the MR's latest 100 commits.
+Existing feedback markers prevent duplicate publication on subsequent runs,
+including items in older combined notes; publication does not split or
+replace those existing notes.
 
 ## Documentation
 

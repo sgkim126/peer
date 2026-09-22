@@ -174,24 +174,29 @@ impl GitLabClient {
                         .get("ratelimit-remaining")
                         .is_some_and(|value| value == "0")
                         || response.headers().contains_key("retry-after")));
-            // Only a definite position validation error permits moving an
-            // inline comment into the overview. Never retain response bodies:
-            // they can contain private note text or credentials.
-            let position_invalid = if matches!(status.as_u16(), 400 | 422) {
+            // Only definite target validation errors permit falling back from
+            // a line to a file, commit, or independent MR discussion. Never
+            // retain response bodies: they can contain private note text or
+            // credentials.
+            let (position_invalid, commit_invalid) = if matches!(status.as_u16(), 400 | 422) {
                 response
                     .json::<serde_json::Value>()
                     .await
                     .ok()
-                    .and_then(|body| body.get("message").map(position_error))
-                    .unwrap_or(false)
+                    .and_then(|body| {
+                        body.get("message")
+                            .map(|message| (position_error(message), commit_error(message)))
+                    })
+                    .unwrap_or_default()
             } else {
-                false
+                (false, false)
             };
             return Err(GitLabError::Api {
                 endpoint,
                 status: status.as_u16(),
                 rate_limited,
                 position_invalid,
+                commit_invalid,
             });
         }
         let headers = response.headers().clone();
@@ -223,17 +228,7 @@ fn position_error(message: &serde_json::Value) -> bool {
         }
         serde_json::Value::String(message) => {
             let message = message.trim().to_ascii_lowercase();
-            // GitLab sometimes stringifies its Ruby validation hash:
-            // https://gitlab.com/gitlab-org/gitlab/-/issues/37518
-            let fields = message
-                .strip_prefix("400 bad request - note {")
-                .and_then(|note| note.strip_suffix('}'))
-                .or_else(|| {
-                    message
-                        .strip_prefix("400 (bad request) \"note {")
-                        .and_then(|note| note.strip_suffix("}\" not given"))
-                });
-            let Some(fields) = fields.and_then(|fields| fields.strip_prefix(':')) else {
+            let Some(fields) = ruby_validation_fields(&message) else {
                 return false;
             };
             // Every field must be a position error. Mixed body/author errors
@@ -247,6 +242,48 @@ fn position_error(message: &serde_json::Value) -> bool {
         }
         _ => false,
     }
+}
+
+fn commit_error(message: &serde_json::Value) -> bool {
+    match message {
+        serde_json::Value::Object(fields) => {
+            !fields.is_empty()
+                && fields
+                    .iter()
+                    .all(|(field, detail)| field == "commit_id" && has_validation_message(detail))
+        }
+        serde_json::Value::String(message) => {
+            let message = message.trim().to_ascii_lowercase();
+            let Some(fields) = ruby_validation_fields(&message) else {
+                return false;
+            };
+            let Some((field, detail)) = fields.split_once("=>") else {
+                return false;
+            };
+            // A commit fallback must discard only a rejected commit target.
+            // Parsing the entire detail rejects mixed fields and empty Ruby
+            // arrays without treating their punctuation as an error message.
+            field.trim() == "commit_id"
+                && serde_json::from_str::<serde_json::Value>(detail)
+                    .ok()
+                    .is_some_and(|detail| has_validation_message(&detail))
+        }
+        _ => false,
+    }
+}
+
+fn ruby_validation_fields(message: &str) -> Option<&str> {
+    // GitLab sometimes stringifies its Ruby validation hash:
+    // https://gitlab.com/gitlab-org/gitlab/-/issues/37518
+    message
+        .strip_prefix("400 bad request - note {")
+        .and_then(|note| note.strip_suffix('}'))
+        .or_else(|| {
+            message
+                .strip_prefix("400 (bad request) \"note {")
+                .and_then(|note| note.strip_suffix("}\" not given"))
+        })
+        .and_then(|fields| fields.strip_prefix(':'))
 }
 
 fn position_field(field: &str) -> bool {
