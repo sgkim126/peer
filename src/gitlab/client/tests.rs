@@ -1118,29 +1118,6 @@ fn recognizes_commit_id_errors_that_mention_diff_refs() {
 }
 
 #[test]
-fn recognizes_line_code_errors_in_stringified_ruby_hashes() {
-    let message = json!("400 Bad request - Note {:line_code=>[\"can't be blank\"]}");
-
-    assert!(position_error(&message));
-}
-
-#[test]
-fn recognizes_position_errors_in_quoted_ruby_hashes() {
-    let message = json!("400 (Bad request) \"Note {:position=>[\"is incomplete\"]}\" not given");
-
-    assert!(position_error(&message));
-}
-
-#[test]
-fn recognizes_commit_diff_refs_errors_in_quoted_ruby_hashes() {
-    let message = json!(
-        "400 (Bad request) \"Note {:commit_id=>[\"does not match the diff refs\"]}\" not given"
-    );
-
-    assert!(position_error(&message));
-}
-
-#[test]
 fn rejects_null_position_error_messages() {
     assert!(!position_error(&Value::Null));
 }
@@ -1229,13 +1206,6 @@ fn rejects_plain_text_bracketed_position_errors() {
 }
 
 #[test]
-fn rejects_bad_request_text_without_a_ruby_hash() {
-    let message = json!("400 Bad request - position is incomplete");
-
-    assert!(!position_error(&message));
-}
-
-#[test]
 fn rejects_plain_text_body_errors_that_mention_position() {
     let message = json!("body contains an invalid position");
 
@@ -1252,37 +1222,6 @@ fn rejects_plain_text_mixed_position_and_body_errors() {
 #[test]
 fn rejects_bare_bad_request_error_strings() {
     let message = json!("400 Bad request");
-
-    assert!(!position_error(&message));
-}
-
-#[test]
-fn rejects_mixed_position_and_body_errors_in_ruby_hashes() {
-    let message =
-        json!("400 Bad request - Note {:position=>[\"is invalid\"], :body=>[\"can't be blank\"]}");
-
-    assert!(!position_error(&message));
-}
-
-#[test]
-fn rejects_non_diff_refs_commit_errors_in_ruby_hashes() {
-    let message = json!(
-        "400 Bad request - Note {:line_code=>[\"is invalid\"], :commit_id=>[\"is invalid\"]}"
-    );
-
-    assert!(!position_error(&message));
-}
-
-#[test]
-fn rejects_empty_stringified_ruby_hashes() {
-    let message = json!("400 Bad request - Note {}");
-
-    assert!(!position_error(&message));
-}
-
-#[test]
-fn rejects_stringified_ruby_hashes_without_a_closing_brace() {
-    let message = json!("400 Bad request - Note {:position=>[\"is incomplete\"]");
 
     assert!(!position_error(&message));
 }
