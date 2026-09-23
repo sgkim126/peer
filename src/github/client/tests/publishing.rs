@@ -4,6 +4,7 @@ use crate::render::RenderDocument;
 
 mod file_fallback;
 mod inline;
+mod native;
 mod recovery;
 mod revalidation;
 mod targets;
