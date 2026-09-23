@@ -89,7 +89,7 @@ impl fmt::Display for GitHubError {
             ),
             Self::PullRequestChanged => write!(
                 f,
-                "GitHub pull request changed while loading comment positions; retry with a stable PR"
+                "GitHub pull request changed while preparing feedback; retry with a stable PR"
             ),
         }
     }

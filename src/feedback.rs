@@ -37,27 +37,11 @@ impl PreparedReview {
 
     pub fn for_gitlab(document: &RenderDocument, repository: &crate::gitlab::Repository) -> Self {
         let parts = gitlab::DocumentParts::for_gitlab(document, &repository.to_string());
-        let mut prepared = Self::with_parts(document, parts);
-        let related_commits = document
-            .questions
-            .iter()
-            .map(|question| question.related_commits.as_slice())
-            .chain(
-                document
-                    .recommendations
-                    .iter()
-                    .map(|recommendation| recommendation.related_commits.as_slice()),
-            );
-        for (item, commits) in prepared.items.iter_mut().zip(related_commits) {
-            if item.commit.is_none() {
-                item.commit = unique_commit(commits).cloned();
-            }
-        }
-        prepared
+        Self::with_parts(document, parts)
     }
 
     fn with_parts(document: &RenderDocument, parts: github::DocumentParts) -> Self {
-        let items: Vec<_> = document
+        let mut items: Vec<_> = document
             .questions
             .iter()
             .zip(&parts.questions)
@@ -79,6 +63,21 @@ impl PreparedReview {
                     .map(|(finding, body)| prepare_finding(finding, body.clone())),
             )
             .collect();
+        let related_commits = document
+            .questions
+            .iter()
+            .map(|question| question.related_commits.as_slice())
+            .chain(
+                document
+                    .recommendations
+                    .iter()
+                    .map(|recommendation| recommendation.related_commits.as_slice()),
+            );
+        for (item, commits) in items.iter_mut().zip(related_commits) {
+            if item.commit.is_none() {
+                item.commit = unique_commit(commits).cloned();
+            }
+        }
         let parts = Some(parts);
         let summary_fingerprint = match &parts {
             Some(parts)
@@ -291,14 +290,25 @@ mod tests {
         .unwrap()
     }
 
-    fn gitlab_feedback(section: &str, value: Value) -> Feedback {
+    fn feedback_by_provider(section: &str, value: Value) -> [(&'static str, Feedback); 2] {
         let document = document_with_feedback(section, value);
-        let prepared = PreparedReview::for_gitlab(
-            &document,
-            &crate::gitlab::Repository::parse("group/project").unwrap(),
-        );
-        assert_eq!(prepared.items.len(), 1);
-        prepared.items.into_iter().next().unwrap()
+        [
+            (
+                "GitHub",
+                PreparedReview::new(&document, &Repository::parse("owner/repo").unwrap()),
+            ),
+            (
+                "GitLab",
+                PreparedReview::for_gitlab(
+                    &document,
+                    &crate::gitlab::Repository::parse("group/project").unwrap(),
+                ),
+            ),
+        ]
+        .map(|(provider, prepared)| {
+            assert_eq!(prepared.items.len(), 1, "{provider}");
+            (provider, prepared.items.into_iter().next().unwrap())
+        })
     }
 
     #[test]
@@ -331,56 +341,89 @@ mod tests {
 
     #[test]
     fn questions_keep_location_and_commit_with_a_matching_related_commit() {
-        let question: KnowledgeQuestion = serde_json::from_value(question()).unwrap();
+        let question = question();
 
-        let feedback = prepare_question(&question, "Question".into());
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
-        let location = feedback.location.unwrap();
-        assert_eq!(location.file, "src/main.rs");
-        assert_eq!(location.line, Some(5));
+        for (provider, feedback) in feedback_by_provider("questions", question) {
+            assert_eq!(
+                feedback.commit.as_ref().map(AsRef::as_ref),
+                Some("abc1234"),
+                "{provider}"
+            );
+            assert_eq!(
+                feedback.location,
+                Some(FileLocation {
+                    file: "src/main.rs".into(),
+                    line: Some(5),
+                }),
+                "{provider}"
+            );
+        }
     }
 
     #[test]
     fn questions_keep_location_and_commit_with_multiple_related_commits() {
         let mut value = question();
         value["related_commits"] = json!(["abc1234", "def5678"]);
-        let question: KnowledgeQuestion = serde_json::from_value(value).unwrap();
 
-        let feedback = prepare_question(&question, "Question".into());
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
-        let location = feedback.location.unwrap();
-        assert_eq!(location.file, "src/main.rs");
-        assert_eq!(location.line, Some(5));
+        for (provider, feedback) in feedback_by_provider("questions", value) {
+            assert_eq!(
+                feedback.commit.as_ref().map(AsRef::as_ref),
+                Some("abc1234"),
+                "{provider}"
+            );
+            assert_eq!(
+                feedback.location,
+                Some(FileLocation {
+                    file: "src/main.rs".into(),
+                    line: Some(5),
+                }),
+                "{provider}"
+            );
+        }
     }
 
     #[test]
     fn questions_keep_location_and_commit_with_a_different_related_commit() {
         let mut value = question();
         value["related_commits"] = json!(["def5678"]);
-        let question: KnowledgeQuestion = serde_json::from_value(value).unwrap();
 
-        let feedback = prepare_question(&question, "Question".into());
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
-        let location = feedback.location.unwrap();
-        assert_eq!(location.file, "src/main.rs");
-        assert_eq!(location.line, Some(5));
+        for (provider, feedback) in feedback_by_provider("questions", value) {
+            assert_eq!(
+                feedback.commit.as_ref().map(AsRef::as_ref),
+                Some("abc1234"),
+                "{provider}"
+            );
+            assert_eq!(
+                feedback.location,
+                Some(FileLocation {
+                    file: "src/main.rs".into(),
+                    line: Some(5),
+                }),
+                "{provider}"
+            );
+        }
     }
 
     #[test]
     fn questions_keep_location_and_commit_without_related_commits() {
         let mut value = question();
         value["related_commits"] = json!([]);
-        let question: KnowledgeQuestion = serde_json::from_value(value).unwrap();
 
-        let feedback = prepare_question(&question, "Question".into());
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
-        let location = feedback.location.unwrap();
-        assert_eq!(location.file, "src/main.rs");
-        assert_eq!(location.line, Some(5));
+        for (provider, feedback) in feedback_by_provider("questions", value) {
+            assert_eq!(
+                feedback.commit.as_ref().map(AsRef::as_ref),
+                Some("abc1234"),
+                "{provider}"
+            );
+            assert_eq!(
+                feedback.location,
+                Some(FileLocation {
+                    file: "src/main.rs".into(),
+                    line: Some(5),
+                }),
+                "{provider}"
+            );
+        }
     }
 
     #[test]
@@ -393,91 +436,115 @@ mod tests {
     }
 
     #[test]
-    fn gitlab_unlocated_question_without_related_commits_has_no_target() {
+    fn unlocated_question_without_related_commits_has_no_target() {
         let mut question = question();
         question["location"] = Value::Null;
         question["related_commits"] = json!([]);
 
-        let feedback = gitlab_feedback("questions", question);
-
-        assert_eq!(feedback.commit, None);
+        for (provider, feedback) in feedback_by_provider("questions", question) {
+            assert_eq!(feedback.commit, None, "{provider}");
+            assert_eq!(feedback.location, None, "{provider}");
+        }
     }
 
     #[test]
-    fn gitlab_unlocated_question_with_one_related_commit_targets_that_commit() {
+    fn unlocated_question_with_one_related_commit_targets_that_commit() {
         let mut question = question();
         question["location"] = Value::Null;
         question["related_commits"] = json!(["abc1234"]);
 
-        let feedback = gitlab_feedback("questions", question);
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+        for (provider, feedback) in feedback_by_provider("questions", question) {
+            assert_eq!(
+                feedback.commit.as_ref().map(AsRef::as_ref),
+                Some("abc1234"),
+                "{provider}"
+            );
+            assert_eq!(feedback.location, None, "{provider}");
+        }
     }
 
     #[test]
-    fn gitlab_unlocated_question_with_duplicate_related_commits_targets_that_commit() {
+    fn unlocated_question_with_duplicate_related_commits_targets_that_commit() {
         let mut question = question();
         question["location"] = Value::Null;
         question["related_commits"] = json!(["abc1234", "abc1234"]);
 
-        let feedback = gitlab_feedback("questions", question);
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+        for (provider, feedback) in feedback_by_provider("questions", question) {
+            assert_eq!(
+                feedback.commit.as_ref().map(AsRef::as_ref),
+                Some("abc1234"),
+                "{provider}"
+            );
+            assert_eq!(feedback.location, None, "{provider}");
+        }
     }
 
     #[test]
-    fn gitlab_unlocated_question_with_distinct_related_commits_has_no_target() {
+    fn unlocated_question_with_distinct_related_commits_has_no_target() {
         let mut question = question();
         question["location"] = Value::Null;
         question["related_commits"] = json!(["abc1234", "def5678"]);
 
-        let feedback = gitlab_feedback("questions", question);
-
-        assert_eq!(feedback.commit, None);
+        for (provider, feedback) in feedback_by_provider("questions", question) {
+            assert_eq!(feedback.commit, None, "{provider}");
+            assert_eq!(feedback.location, None, "{provider}");
+        }
     }
 
     #[test]
-    fn gitlab_recommendation_without_related_commits_has_no_target() {
+    fn recommendation_without_related_commits_has_no_target() {
         let mut recommendation = recommendation();
         recommendation["related_commits"] = json!([]);
 
-        let feedback = gitlab_feedback("recommendations", recommendation);
-
-        assert_eq!(feedback.commit, None);
+        for (provider, feedback) in feedback_by_provider("recommendations", recommendation) {
+            assert_eq!(feedback.commit, None, "{provider}");
+            assert_eq!(feedback.location, None, "{provider}");
+        }
     }
 
     #[test]
-    fn gitlab_recommendation_with_one_related_commit_targets_that_commit() {
+    fn recommendation_with_one_related_commit_targets_that_commit() {
         let mut recommendation = recommendation();
         recommendation["related_commits"] = json!(["abc1234"]);
 
-        let feedback = gitlab_feedback("recommendations", recommendation);
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+        for (provider, feedback) in feedback_by_provider("recommendations", recommendation) {
+            assert_eq!(
+                feedback.commit.as_ref().map(AsRef::as_ref),
+                Some("abc1234"),
+                "{provider}"
+            );
+            assert_eq!(feedback.location, None, "{provider}");
+        }
     }
 
     #[test]
-    fn gitlab_recommendation_with_duplicate_related_commits_targets_that_commit() {
+    fn recommendation_with_duplicate_related_commits_targets_that_commit() {
         let mut recommendation = recommendation();
         recommendation["related_commits"] = json!(["abc1234", "abc1234"]);
 
-        let feedback = gitlab_feedback("recommendations", recommendation);
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+        for (provider, feedback) in feedback_by_provider("recommendations", recommendation) {
+            assert_eq!(
+                feedback.commit.as_ref().map(AsRef::as_ref),
+                Some("abc1234"),
+                "{provider}"
+            );
+            assert_eq!(feedback.location, None, "{provider}");
+        }
     }
 
     #[test]
-    fn gitlab_recommendation_with_distinct_related_commits_has_no_target() {
+    fn recommendation_with_distinct_related_commits_has_no_target() {
         let mut recommendation = recommendation();
         recommendation["related_commits"] = json!(["abc1234", "def5678"]);
 
-        let feedback = gitlab_feedback("recommendations", recommendation);
-
-        assert_eq!(feedback.commit, None);
+        for (provider, feedback) in feedback_by_provider("recommendations", recommendation) {
+            assert_eq!(feedback.commit, None, "{provider}");
+            assert_eq!(feedback.location, None, "{provider}");
+        }
     }
 
     #[test]
-    fn gitlab_keeps_commit_targets_with_their_feedback_kinds() {
+    fn keeps_commit_targets_with_their_feedback_kinds() {
         let mut question = question();
         question["location"] = Value::Null;
         let mut recommendation = recommendation();
@@ -492,32 +559,43 @@ mod tests {
             "findings": [finding],
         }))
         .unwrap();
-        let prepared = PreparedReview::for_gitlab(
-            &document,
-            &crate::gitlab::Repository::parse("group/project").unwrap(),
-        );
-        let mut targets = prepared
-            .items
-            .iter()
-            .map(|item| {
-                let kind = match item.kind {
-                    FeedbackKind::Question => "question",
-                    FeedbackKind::Recommendation => "recommendation",
-                    FeedbackKind::Finding => "finding",
-                };
-                (kind, item.commit.as_ref().map(AsRef::as_ref))
-            })
-            .collect::<Vec<_>>();
-        targets.sort_unstable();
+        for (provider, prepared) in [
+            (
+                "GitHub",
+                PreparedReview::new(&document, &Repository::parse("owner/repo").unwrap()),
+            ),
+            (
+                "GitLab",
+                PreparedReview::for_gitlab(
+                    &document,
+                    &crate::gitlab::Repository::parse("group/project").unwrap(),
+                ),
+            ),
+        ] {
+            let mut targets = prepared
+                .items
+                .iter()
+                .map(|item| {
+                    let kind = match item.kind {
+                        FeedbackKind::Question => "question",
+                        FeedbackKind::Recommendation => "recommendation",
+                        FeedbackKind::Finding => "finding",
+                    };
+                    (kind, item.commit.as_ref().map(AsRef::as_ref))
+                })
+                .collect::<Vec<_>>();
+            targets.sort_unstable();
 
-        assert_eq!(
-            targets,
-            [
-                ("finding", Some("fedcba9")),
-                ("question", Some("abc1234")),
-                ("recommendation", Some("def5678")),
-            ]
-        );
+            assert_eq!(
+                targets,
+                [
+                    ("finding", Some("fedcba9")),
+                    ("question", Some("abc1234")),
+                    ("recommendation", Some("def5678")),
+                ],
+                "{provider}"
+            );
+        }
     }
 
     #[test]

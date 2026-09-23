@@ -48,7 +48,7 @@ async fn empty_documents_do_not_create_comments() {
     assert!(
         report
             .to_string()
-            .starts_with("Published 0 comment(s). 0 inline, 0 conversation.")
+            .starts_with("Published 0 comment(s). 0 inline, 0 commit, 0 conversation.")
     );
     assert_eq!(server.requests().len(), 5);
 }
@@ -102,11 +102,21 @@ async fn published_bodies(input: &RenderDocument) -> Vec<String> {
 }
 
 #[tokio::test]
-async fn publishes_rendered_input_to_the_selected_pull_request() {
+async fn publishes_rendered_input_to_the_selected_commit() {
+    let url = "https://github.com/owner/repo/commit/abc1234#commitcomment-1";
+    let mut reply = Reply::json(json!({ "html_url": url }));
+    reply.status = 201;
     let mut replies = before_publish();
-    replies.push(created());
+    replies.push(reply);
     let server = Server::start(replies).await;
     let input = finding();
+    let review = crate::github::feedback::PreparedReview::new(&input, &repository());
+    let item = &review.items[0];
+    let body = format!(
+        "{}\n\n{}",
+        item.body,
+        crate::github::feedback::marker(&item.fingerprint)
+    );
     let report = server
         .client()
         .publish(&repository(), number(), &input)
@@ -117,20 +127,18 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
     assert_eq!(requests.len(), 8);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
     assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
-    assert!(requests[7].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    let body = request_body(&requests[7])["body"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    assert!(requests[7].starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
+    assert_eq!(request_body(&requests[7]), json!({ "body": body }));
     assert!(body.contains("**finding/high**"));
     assert_eq!(body.matches(CONVERSATION_MARKER).count(), 0);
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
-    assert_eq!(report.urls.len(), 1);
+    assert_eq!(report.urls, [url]);
     assert_eq!(report.published, 1);
+    assert_eq!(report.commit_comments, 1);
     assert!(
         report
             .to_string()
-            .starts_with("Published 1 comment(s). 0 inline, 1 conversation.")
+            .starts_with("Published 1 comment(s). 0 inline, 1 commit, 0 conversation.")
     );
 }
 
@@ -151,6 +159,8 @@ async fn does_not_publish_when_the_pull_request_cannot_be_loaded() {
 
 #[tokio::test]
 async fn reports_comment_creation_failure_without_retrying() {
+    let mut input = finding();
+    input.findings[0].commit = CommitHash::new("fedcba9").unwrap();
     let mut reply = created();
     reply.status = 403;
     let mut replies = before_publish();
@@ -159,7 +169,7 @@ async fn reports_comment_creation_failure_without_retrying() {
     assert_matches!(
         server
             .client()
-            .publish(&repository(), number(), &finding())
+            .publish(&repository(), number(), &input)
             .await,
         Err(GitHubError::Api { status: 403, .. })
     );
@@ -228,7 +238,7 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
     assert!(
         report
             .to_string()
-            .starts_with("Published 0 comment(s). 0 inline, 0 conversation.")
+            .starts_with("Published 0 comment(s). 0 inline, 0 commit, 0 conversation.")
     );
     assert_eq!(server.requests().len(), 5);
 }
@@ -300,6 +310,7 @@ async fn only_new_items_are_included_while_statistics_cover_the_full_review() {
         Reply::json(json!([{ "body": body }])),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        pull(),
         created(),
         created(),
     ])

@@ -22,6 +22,7 @@ pub struct PublishReport {
     pub published: usize,
     pub skipped: usize,
     pub inline: usize,
+    pub commit_comments: usize,
     pub recovered: usize,
 }
 
@@ -30,9 +31,10 @@ impl fmt::Display for PublishReport {
         write!(f, "Published {} comment(s).", self.published)?;
         write!(
             f,
-            " {} inline, {} conversation.",
+            " {} inline, {} commit, {} conversation.",
             self.inline,
-            self.published - self.inline
+            self.commit_comments,
+            self.published - self.inline - self.commit_comments
         )?;
         write!(f, " Skipped {} duplicate item(s) or summary.", self.skipped)?;
         if self.recovered != 0 {
@@ -118,16 +120,19 @@ impl GitHubClient {
             {
                 Ok(files) => (files, true),
                 Err(error) => {
-                    warn!(
-                        "Could not load changed files; collecting feedback in a conversation comment: {error}"
-                    );
+                    warn!("Could not load changed files; continuing without PR positions: {error}");
                     (Vec::new(), false)
                 }
             }
         } else {
             (Vec::new(), false)
         };
-        if files_loaded {
+        // Commit comments also depend on current PR membership, even without positions.
+        if files_loaded
+            || remaining
+                .iter()
+                .any(|item| resolve_commit(item.commit.as_ref(), &commits).is_some())
+        {
             let current = self.pull_request(repository, number).await?;
             if current.base.sha != pull.base.sha || current.head.sha != pull.head.sha {
                 return Err(GitHubError::PullRequestChanged);
@@ -157,10 +162,30 @@ impl GitHubClient {
             &mut report,
         )
         .await?;
-        let fallback = remaining
-            .into_iter()
-            .filter(|item| fallback_fingerprints.contains(&item.fingerprint))
-            .collect::<Vec<_>>();
+        let mut fallback = Vec::new();
+        for item in remaining {
+            if !fallback_fingerprints.contains(&item.fingerprint) {
+                continue;
+            }
+            if let Some(commit) = resolve_commit(item.commit.as_ref(), &commits) {
+                let params = json!({
+                    "body": format!("{}\n\n{}", item.body, marker(&item.fingerprint))
+                });
+                if self
+                    .publish_commit_comment(
+                        repository,
+                        commit,
+                        &params,
+                        &item.fingerprint,
+                        &mut report,
+                    )
+                    .await?
+                {
+                    continue;
+                }
+            }
+            fallback.push(item);
+        }
         let summary = review.aggregate(&[], include_summary);
         let feedback = fallback.iter().map(|item| {
             (
@@ -287,6 +312,45 @@ impl GitHubClient {
             }
         }
         Ok(())
+    }
+
+    async fn publish_commit_comment(
+        &self,
+        repository: &Repository,
+        commit: &CommitHash,
+        params: &serde_json::Value,
+        fingerprint: &str,
+        report: &mut PublishReport,
+    ) -> Result<bool, GitHubError> {
+        let path = format!("repos/{repository}/commits/{commit}/comments");
+        match self.post::<PublishedComment>(&path, params).await {
+            Ok(comment) => report.urls.push(comment.html_url),
+            Err(
+                error @ GitHubError::Api {
+                    rate_limited: true, ..
+                },
+            ) => return Err(error),
+            Err(error) => {
+                if error.may_have_published() {
+                    let confirmed = self.feedback_from_comments(&[path]).await?;
+                    if confirmed.fingerprints.contains(fingerprint) {
+                        if let Some(url) = confirmed.urls.get(fingerprint) {
+                            report.urls.push(url.clone());
+                        }
+                        report.recovered += 1;
+                    } else {
+                        warn!("Could not publish feedback on commit {commit}: {error}");
+                        return Ok(false);
+                    }
+                } else {
+                    warn!("Could not publish feedback on commit {commit}: {error}");
+                    return Ok(false);
+                }
+            }
+        }
+        report.published += 1;
+        report.commit_comments += 1;
+        Ok(true)
     }
 
     async fn existing_feedback(

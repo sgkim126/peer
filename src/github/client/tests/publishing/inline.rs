@@ -79,7 +79,7 @@ async fn publishes_file_comment_at_the_current_head_with_a_hidden_fingerprint() 
     assert!(
         report
             .to_string()
-            .starts_with("Published 1 comment(s). 1 inline, 0 conversation.")
+            .starts_with("Published 1 comment(s). 1 inline, 0 commit, 0 conversation.")
     );
     assert_eq!(requests.len(), 8);
 }
@@ -98,8 +98,8 @@ async fn separates_fallback_feedback_from_the_review_summary() {
         .unwrap();
     let requests = server.requests();
     assert!(requests[7].starts_with("POST /repos/owner/repo/pulls/123/comments "));
-    assert!(requests[8].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    assert!(requests[9].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[8].starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
+    assert!(requests[9].starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
     let bodies = posted_bodies(&server);
     assert!(requests[10].starts_with("POST /repos/owner/repo/issues/123/comments "));
     assert!(bodies[1].contains("First issue"));
@@ -125,7 +125,7 @@ async fn separates_fallback_feedback_from_the_review_summary() {
     assert!(
         report
             .to_string()
-            .starts_with("Published 3 comment(s). 0 inline, 3 conversation.")
+            .starts_with("Published 3 comment(s). 0 inline, 2 commit, 1 conversation.")
     );
 }
 
@@ -157,14 +157,13 @@ async fn keeps_summary_and_full_counts_even_when_every_item_is_inline() {
     assert!(
         report
             .to_string()
-            .starts_with("Published 2 comment(s). 1 inline, 1 conversation.")
+            .starts_with("Published 2 comment(s). 1 inline, 0 commit, 1 conversation.")
     );
 }
 
 #[tokio::test]
-async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
+async fn failure_to_load_files_falls_back_to_a_commit_comment() {
     let mut replies = before_publish();
-    replies.pop();
     replies[5].status = 500;
     replies.push(created());
     let server = Server::start(replies).await;
@@ -174,7 +173,8 @@ async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
         .await
         .unwrap();
     assert_eq!(report.inline, 0);
-    assert_eq!(server.requests().len(), 7);
+    assert_eq!(server.requests().len(), 8);
+    assert!(server.requests()[6].starts_with("GET /repos/owner/repo/pulls/123 "));
     let params = request_body(server.requests().last().unwrap());
     assert_eq!(
         params["body"]
@@ -189,7 +189,7 @@ async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
             .requests()
             .last()
             .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+            .starts_with("POST /repos/owner/repo/commits/abc1234/comments ")
     );
 }
 
@@ -350,7 +350,7 @@ async fn questions_outside_diff_lines_fall_back_to_file_comments() {
 }
 
 #[tokio::test]
-async fn unlocated_questions_and_recommendations_have_individual_conversation_comments() {
+async fn unlocated_questions_and_recommendations_have_individual_commit_comments() {
     let input = serde_json::from_value(json!({
         "ordered_commits": ["abc1234"],
         "stages": [],
@@ -375,6 +375,7 @@ async fn unlocated_questions_and_recommendations_have_individual_conversation_co
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        pull(),
         created(),
         created(),
     ])
@@ -386,7 +387,7 @@ async fn unlocated_questions_and_recommendations_have_individual_conversation_co
         .unwrap();
     let requests = server.requests();
     let request = requests.last().unwrap();
-    assert!(request.starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(request.starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
     let body = request_body(request)["body"].as_str().unwrap().to_string();
     assert!(posted_bodies(&server)[0].contains("**question/rationale**"));
     assert!(body.contains("**recommendation/split_commit**"));
@@ -394,9 +395,11 @@ async fn unlocated_questions_and_recommendations_have_individual_conversation_co
     assert_eq!(body.matches(CONVERSATION_MARKER).count(), 0);
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     assert_eq!(report.inline, 0);
+    assert_eq!(report.commit_comments, 2);
     assert_eq!(report.published, 2);
     assert_eq!(report.urls.len(), 2);
-    assert_eq!(requests.len(), 7);
+    assert_eq!(requests.len(), 8);
+    assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
 }
 
 #[tokio::test]
@@ -467,7 +470,8 @@ async fn positions_from_later_file_pages_are_used() {
 
 #[tokio::test]
 async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
-    let input = file_document();
+    let mut input = file_document();
+    input.findings[1].commit = CommitHash::new("fedcba9").unwrap();
     let mut replies = before_inline();
     let mut rejected = created();
     rejected.status = 403;

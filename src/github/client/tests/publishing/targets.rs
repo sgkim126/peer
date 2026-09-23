@@ -37,9 +37,10 @@ async fn historical_line_location_is_not_retargeted_to_the_pull_request_head() {
         .await
         .unwrap();
     assert_eq!(report.inline, 0);
+    assert_eq!(report.commit_comments, 1);
     let requests = server.requests();
     let post = requests.last().unwrap();
-    assert!(post.starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(post.starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
     assert!(request_body(post).get("commit_id").is_none());
     assert_eq!(
         requests
@@ -48,6 +49,27 @@ async fn historical_line_location_is_not_retargeted_to_the_pull_request_head() {
             .count(),
         1
     );
+}
+
+#[tokio::test]
+async fn historical_file_location_is_not_retargeted_to_the_pull_request_head() {
+    let mut input = finding();
+    input.findings[0].location.as_mut().unwrap().line = None;
+    let mut replies = target_replies(&["abc1234", "def5678"]);
+    replies.push(created());
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.inline, 0);
+    assert_eq!(report.commit_comments, 1);
+    let requests = server.requests();
+    let post = requests.last().unwrap();
+    assert!(post.starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
+    assert!(request_body(post).get("commit_id").is_none());
+    assert_eq!(posted_bodies(&server).len(), 1);
 }
 
 #[tokio::test]
@@ -145,11 +167,12 @@ async fn explicit_question_commit_takes_precedence_over_related_head() {
         .await
         .unwrap();
     assert_eq!(report.inline, 0);
+    assert_eq!(report.commit_comments, 1);
     assert!(
         server
             .requests()
             .last()
             .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+            .starts_with("POST /repos/owner/repo/commits/abc1234/comments ")
     );
 }

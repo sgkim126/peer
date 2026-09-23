@@ -95,7 +95,7 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
     assert!(requests[10].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[11].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[12].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
-    assert!(requests[13].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[13].starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
 
     assert!(
         request_body(&requests[7])["body"]
@@ -128,8 +128,8 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
             .contains("Confirmed inline without URL")
     );
 
-    assert!(requests[14].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    assert!(requests[15].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[14].starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
+    assert!(requests[15].starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
     let bodies: Vec<_> = requests[13..]
         .iter()
         .map(|request| request_body(request)["body"].as_str().unwrap().to_owned())
@@ -153,11 +153,12 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
     assert_eq!(report.published, 6);
     assert_eq!(report.recovered, 2);
     assert_eq!(report.inline, 3);
+    assert_eq!(report.commit_comments, 3);
     assert_eq!(report.urls.len(), 5);
     assert!(
         report
             .to_string()
-            .starts_with("Published 6 comment(s). 3 inline, 3 conversation.")
+            .starts_with("Published 6 comment(s). 3 inline, 3 commit, 0 conversation.")
     );
     assert!(
         report
@@ -220,7 +221,7 @@ async fn an_uncertain_inline_post_with_a_missing_url_is_counted_after_confirmati
     assert_eq!(
         report.to_string(),
         concat!(
-            "Published 1 comment(s). 1 inline, 0 conversation.",
+            "Published 1 comment(s). 1 inline, 0 commit, 0 conversation.",
             " Skipped 0 duplicate item(s) or summary.",
             " Confirmed 1 comment(s) after an uncertain response."
         )
@@ -256,7 +257,7 @@ async fn an_uncertain_inline_post_with_a_null_url_is_counted_after_confirmation(
     assert_eq!(
         report.to_string(),
         concat!(
-            "Published 1 comment(s). 1 inline, 0 conversation.",
+            "Published 1 comment(s). 1 inline, 0 commit, 0 conversation.",
             " Skipped 0 duplicate item(s) or summary.",
             " Confirmed 1 comment(s) after an uncertain response."
         )
@@ -349,9 +350,10 @@ async fn inline_recovery_checks_only_inline_comments_before_posting_a_fallback()
     assert!(requests[3].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
     assert!(requests[7].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
-    assert!(requests[9].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[9].starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
     assert_eq!(report.published, 1);
     assert_eq!(report.inline, 0);
+    assert_eq!(report.commit_comments, 1);
     assert_eq!(report.recovered, 0);
     assert_eq!(report.urls.len(), 1);
 }
@@ -417,6 +419,7 @@ async fn an_uncertain_fallback_post_is_checked_with_fresh_feedback() {
     replies.extend([
         failed(500),
         Reply::json(json!([])),
+        failed(422),
         failed(502),
         known_comment(&body),
         Reply::json(json!([])),
@@ -429,12 +432,13 @@ async fn an_uncertain_fallback_post_is_checked_with_fresh_feedback() {
         .await
         .unwrap();
     let requests = server.requests();
-    assert_eq!(requests.len(), 13);
+    assert_eq!(requests.len(), 14);
     assert!(requests[7].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
-    assert!(requests[9].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    assert!(requests[10].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
-    assert!(requests[11].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert!(requests[9].starts_with("POST /repos/owner/repo/commits/abc1234/comments "));
+    assert!(requests[10].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[11].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
+    assert!(requests[12].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
     assert_eq!(report.published, 1);
     assert_eq!(report.recovered, 1);
     assert_eq!(report.inline, 0);
@@ -450,6 +454,7 @@ async fn an_uncertain_feedback_post_with_every_marker_is_confirmed() {
     input.summary = None;
     input.stages.clear();
     input.findings.truncate(1);
+    input.findings[0].commit = CommitHash::new("fedcba9").unwrap();
     let body = published_body(&input).await;
     let mut replies = before_publish();
     replies.extend([
@@ -485,6 +490,7 @@ async fn an_uncertain_feedback_post_with_a_missing_url_is_counted_once_after_con
     input.summary = None;
     input.stages.clear();
     input.findings.truncate(1);
+    input.findings[0].commit = CommitHash::new("fedcba9").unwrap();
     let body = published_body(&input).await;
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     let comment = json!({ "body": body });
@@ -509,7 +515,7 @@ async fn an_uncertain_feedback_post_with_a_missing_url_is_counted_once_after_con
     assert_eq!(
         report.to_string(),
         concat!(
-            "Published 1 comment(s). 0 inline, 1 conversation.",
+            "Published 1 comment(s). 0 inline, 0 commit, 1 conversation.",
             " Skipped 0 duplicate item(s) or summary.",
             " Confirmed 1 comment(s) after an uncertain response."
         )
@@ -530,6 +536,7 @@ async fn an_uncertain_feedback_post_with_a_null_url_is_counted_once_after_confir
     input.summary = None;
     input.stages.clear();
     input.findings.truncate(1);
+    input.findings[0].commit = CommitHash::new("fedcba9").unwrap();
     let body = published_body(&input).await;
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     let comment = json!({ "body": body, "html_url": null });
@@ -554,7 +561,7 @@ async fn an_uncertain_feedback_post_with_a_null_url_is_counted_once_after_confir
     assert_eq!(
         report.to_string(),
         concat!(
-            "Published 1 comment(s). 0 inline, 1 conversation.",
+            "Published 1 comment(s). 0 inline, 0 commit, 1 conversation.",
             " Skipped 0 duplicate item(s) or summary.",
             " Confirmed 1 comment(s) after an uncertain response."
         )
@@ -571,7 +578,10 @@ async fn an_uncertain_feedback_post_with_a_null_url_is_counted_once_after_confir
 
 #[tokio::test]
 async fn an_uncertain_feedback_post_without_markers_returns_the_original_error() {
-    let input = document();
+    let mut input = document();
+    for finding in &mut input.findings {
+        finding.commit = CommitHash::new("fedcba9").unwrap();
+    }
     let body = published_body(&input).await;
     let existing = body
         .lines()
