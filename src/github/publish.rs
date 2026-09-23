@@ -6,6 +6,7 @@ use log::warn;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::feedback::Feedback;
 use crate::git::CommitHash;
 use crate::render::RenderDocument;
 
@@ -63,6 +64,13 @@ struct CommentBody {
 struct ExistingFeedback {
     fingerprints: HashSet<String>,
     urls: HashMap<String, String>,
+}
+
+struct PrCommentTarget<'a> {
+    path: String,
+    head: &'a CommitHash,
+    commits: &'a [CommitHash],
+    files: &'a [ChangedFile],
 }
 
 impl GitHubClient {
@@ -126,63 +134,14 @@ impl GitHubClient {
             }
         }
         let mut fallback_fingerprints = HashSet::new();
-        let mut uncertain = Vec::new();
-        for &item in &remaining {
-            let position = resolve_commit(item.commit.as_ref(), &commits)
-                .filter(|commit| *commit == &pull.head.sha)
-                .and(item.location.as_ref())
-                .and_then(|location| comment_position(&files, location));
-            let Some(mut params) = position else {
-                fallback_fingerprints.insert(&item.fingerprint);
-                continue;
-            };
-            params["commit_id"] = json!(pull.head.sha);
-            params["body"] = json!(format!("{}\n\n{}", item.body, marker(&item.fingerprint)));
-            match self
-                .post::<PublishedComment>(
-                    &format!("repos/{repository}/pulls/{number}/comments"),
-                    &params,
-                )
-                .await
-            {
-                Ok(comment) => {
-                    report.urls.push(comment.html_url);
-                    report.published += 1;
-                    report.inline += 1;
-                }
-                Err(error) => {
-                    if error.may_have_published() {
-                        uncertain.push((item, params["path"].take(), error));
-                        continue;
-                    }
-                    warn!(
-                        "Could not publish inline feedback at {}: {error}; collecting it in a conversation comment",
-                        params["path"]
-                    );
-                    fallback_fingerprints.insert(&item.fingerprint);
-                }
-            }
-        }
-        if !uncertain.is_empty() {
-            let confirmed = self
-                .feedback_from_comments(&[format!("repos/{repository}/pulls/{number}/comments")])
-                .await?;
-            for (item, path, error) in uncertain {
-                if confirmed.fingerprints.contains(&item.fingerprint) {
-                    if let Some(url) = confirmed.urls.get(&item.fingerprint) {
-                        report.urls.push(url.clone());
-                    }
-                    report.published += 1;
-                    report.inline += 1;
-                    report.recovered += 1;
-                } else {
-                    warn!(
-                        "Could not publish inline feedback at {path}: {error}; collecting it in a conversation comment"
-                    );
-                    fallback_fingerprints.insert(&item.fingerprint);
-                }
-            }
-        }
+        let target = PrCommentTarget {
+            path: format!("repos/{repository}/pulls/{number}/comments"),
+            head: &pull.head.sha,
+            commits: &commits,
+            files: &files,
+        };
+        self.publish_pr_comments(&target, &remaining, &mut fallback_fingerprints, &mut report)
+            .await?;
         let fallback = remaining
             .into_iter()
             .filter(|item| fallback_fingerprints.contains(&item.fingerprint))
@@ -225,6 +184,67 @@ impl GitHubClient {
             }
         }
         Ok(report)
+    }
+
+    async fn publish_pr_comments<'a>(
+        &self,
+        target: &PrCommentTarget<'_>,
+        remaining: &[&'a Feedback],
+        fallback_fingerprints: &mut HashSet<&'a String>,
+        report: &mut PublishReport,
+    ) -> Result<(), GitHubError> {
+        let mut uncertain = Vec::new();
+        for &item in remaining {
+            let position = resolve_commit(item.commit.as_ref(), target.commits)
+                .filter(|commit| *commit == target.head)
+                .and(item.location.as_ref())
+                .and_then(|location| comment_position(target.files, location));
+            let Some(mut params) = position else {
+                fallback_fingerprints.insert(&item.fingerprint);
+                continue;
+            };
+            params["commit_id"] = json!(target.head);
+            params["body"] = json!(format!("{}\n\n{}", item.body, marker(&item.fingerprint)));
+            match self.post::<PublishedComment>(&target.path, &params).await {
+                Ok(comment) => {
+                    report.urls.push(comment.html_url);
+                    report.published += 1;
+                    report.inline += 1;
+                }
+                Err(error) => {
+                    if error.may_have_published() {
+                        uncertain.push((item, params["path"].take(), error));
+                        continue;
+                    }
+                    warn!(
+                        "Could not publish inline feedback at {}: {error}; collecting it in a conversation comment",
+                        params["path"]
+                    );
+                    fallback_fingerprints.insert(&item.fingerprint);
+                }
+            }
+        }
+        if !uncertain.is_empty() {
+            let confirmed = self
+                .feedback_from_comments(std::slice::from_ref(&target.path))
+                .await?;
+            for (item, path, error) in uncertain {
+                if confirmed.fingerprints.contains(&item.fingerprint) {
+                    if let Some(url) = confirmed.urls.get(&item.fingerprint) {
+                        report.urls.push(url.clone());
+                    }
+                    report.published += 1;
+                    report.inline += 1;
+                    report.recovered += 1;
+                } else {
+                    warn!(
+                        "Could not publish inline feedback at {path}: {error}; collecting it in a conversation comment"
+                    );
+                    fallback_fingerprints.insert(&item.fingerprint);
+                }
+            }
+        }
+        Ok(())
     }
 
     async fn existing_feedback(
