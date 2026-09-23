@@ -161,9 +161,22 @@ impl GitHubClient {
             .into_iter()
             .filter(|item| fallback_fingerprints.contains(&item.fingerprint))
             .collect::<Vec<_>>();
-        let body = review.aggregate(&fallback, include_summary);
-        if !body.trim().is_empty() {
-            let body = format!("{body}\n\n{CONVERSATION_MARKER}");
+        let summary = review.aggregate(&[], include_summary);
+        let feedback = fallback.iter().map(|item| {
+            (
+                format!("{}\n\n{}", item.body, marker(&item.fingerprint)),
+                false,
+            )
+        });
+        for (body, is_summary) in feedback.chain(std::iter::once((summary, true))) {
+            if body.trim().is_empty() {
+                continue;
+            }
+            let body = if is_summary {
+                format!("{body}\n\n{CONVERSATION_MARKER}")
+            } else {
+                body
+            };
             match self
                 .post::<PublishedComment>(
                     &format!("repos/{repository}/issues/{number}/comments"),
