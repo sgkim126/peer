@@ -8,6 +8,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+mod commit_comments;
 mod publishing;
 
 struct Reply {
@@ -153,6 +154,8 @@ async fn paginates_pull_request_commits_in_api_order() {
             "Link: <{base}repos/owner/repo/pulls/123/commits?per_page=100&page=2>; rel=\"next\"",
         ),
         Reply::json(json!([{"sha": "def5678"}])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
         Reply::json(pull),
     ])
     .await;
@@ -171,12 +174,18 @@ async fn paginates_pull_request_commits_in_api_order() {
         ["abc1234", "def5678"]
     );
     let requests = server.requests();
-    assert_eq!(requests.len(), 7);
+    assert_eq!(requests.len(), 9);
     assert!(requests[4].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
     assert!(
         requests[5].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100&page=2 ")
     );
-    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(
+        requests[6].starts_with("GET /repos/owner/repo/commits/abc1234/comments?per_page=100 ")
+    );
+    assert!(
+        requests[7].starts_with("GET /repos/owner/repo/commits/def5678/comments?per_page=100 ")
+    );
+    assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123 "));
 }
 
 #[tokio::test]
@@ -198,6 +207,8 @@ async fn rejects_changed_base_head_or_count_after_commit_pagination() {
                 "Link: <{base}repos/owner/repo/pulls/123/commits?per_page=100&page=2>; rel=\"next\"",
             ),
             Reply::json(json!([{"sha": "def5678"}])),
+            Reply::json(json!([])),
+            Reply::json(json!([])),
             Reply::json(json!({
                 "title": "Title", "body": "Description",
                 "base": {"sha": base}, "head": {"sha": head}, "commits": count,
@@ -209,8 +220,8 @@ async fn rejects_changed_base_head_or_count_after_commit_pagination() {
             Err(GitHubError::IncompleteCommits)
         );
         let requests = server.requests();
-        assert_eq!(requests.len(), 7);
-        assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+        assert_eq!(requests.len(), 9);
+        assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123 "));
     }
 }
 
@@ -224,6 +235,7 @@ async fn pull_request_revalidation_failure_discards_the_whole_input() {
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([{"sha": "abc1234"}])),
+        Reply::json(json!([])),
         failure,
     ])
     .await;
@@ -231,7 +243,7 @@ async fn pull_request_revalidation_failure_discards_the_whole_input() {
         server.client().review_input(&repository(), number()).await,
         Err(GitHubError::Api { status: 500, .. })
     );
-    assert_eq!(server.requests().len(), 6);
+    assert_eq!(server.requests().len(), 7);
 }
 
 #[tokio::test]
@@ -313,6 +325,7 @@ async fn paginates_comments_and_matches_direct_input() {
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([{"sha": "abc1234"}])),
+        Reply::json(json!([])),
         pull(),
     ])
     .await;
@@ -333,14 +346,17 @@ async fn paginates_comments_and_matches_direct_input() {
     );
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 7);
+    assert_eq!(requests.len(), 8);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
     assert!(requests[1].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
     assert!(requests[2].contains("per_page=100&page=2"));
     assert!(requests[3].starts_with("GET /repos/owner/repo/pulls/123/reviews?per_page=100 "));
     assert!(requests[4].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
     assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
-    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(
+        requests[6].starts_with("GET /repos/owner/repo/commits/abc1234/comments?per_page=100 ")
+    );
+    assert!(requests[7].starts_with("GET /repos/owner/repo/pulls/123 "));
     for request in requests {
         let request = request.to_ascii_lowercase();
         assert!(request.contains("authorization: bearer test-token\r\n"));
@@ -372,6 +388,7 @@ async fn skips_peer_conversation_comments_across_pages() {
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([{"sha": "abc1234"}])),
+        Reply::json(json!([])),
         pull(),
     ])
         .await;
@@ -390,7 +407,7 @@ async fn skips_peer_conversation_comments_across_pages() {
             .collect::<Vec<_>>(),
         [legacy_body.as_str(), "Comment 4"]
     );
-    assert_eq!(server.requests().len(), 7);
+    assert_eq!(server.requests().len(), 8);
 }
 
 #[tokio::test]
@@ -405,6 +422,7 @@ async fn missing_body_and_comments_match_empty_input_files() {
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([{"sha": "abc1234"}])),
+        Reply::json(json!([])),
         Reply::json(pull),
     ])
     .await;
@@ -610,6 +628,7 @@ async fn paginates_reviews_and_groups_inline_replies_across_pages() {
             .header("Link: <{base}repos/owner/repo/pulls/123/comments?page=2>; rel=\"next\""),
         Reply::json(json!([inline(10, None)])),
         Reply::json(json!([{"sha": "abc1234"}])),
+        Reply::json(json!([])),
         pull(),
     ])
     .await;
@@ -630,7 +649,7 @@ async fn paginates_reviews_and_groups_inline_replies_across_pages() {
             .collect::<Vec<_>>(),
         ["Inline 10", "Inline 11"]
     );
-    assert_eq!(server.requests().len(), 8);
+    assert_eq!(server.requests().len(), 9);
 }
 
 #[tokio::test]
@@ -666,4 +685,79 @@ async fn review_comments_endpoint_failure_discards_the_whole_context() {
         Err(GitHubError::Api { status: 403, .. })
     );
     assert_eq!(server.requests().len(), 4);
+}
+
+fn commit_comment(id: u64, commit: &str) -> Value {
+    json!({
+        "id": id, "created_at": "2026-01-01T00:00:00Z",
+        "body": format!("Commit comment {id}"),
+        "user": {
+            "login": "reviewer"
+        },
+        "path": "src/main.rs",
+        "commit_id": commit,
+        "line": 14,
+        "position": 4,
+    })
+}
+
+#[tokio::test]
+async fn paginates_native_comments_for_every_pull_request_commit() {
+    let pull = json!({
+        "title": "Title",
+        "body": "Description",
+        "base": {
+            "sha": "0123456"
+        },
+        "head": {
+            "sha": "def5678"
+        },
+        "commits": 2,
+    });
+    let server = Server::start(vec![
+        Reply::json(pull.clone()),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([
+            {"sha": "abc1234"},
+            {"sha": "def5678"}
+        ])),
+        Reply::json(json!([commit_comment(2, "abc1234")])).header(
+            "Link: <{base}repos/owner/repo/commits/abc1234/comments?per_page=100&page=2>; rel=\"next\"",
+        ),
+        Reply::json(json!([commit_comment(1, "abc1234")])),
+        Reply::json(json!([commit_comment(3, "def5678")])),
+        Reply::json(pull),
+    ])
+    .await;
+    let input = server
+        .client()
+        .review_input(&repository(), number())
+        .await
+        .unwrap();
+    let threads = input.context.comments;
+    assert_eq!(threads.len(), 3);
+    for (index, thread) in threads.iter().enumerate() {
+        assert_eq!(
+            thread.comments[0].body,
+            format!("Commit comment {}", index + 1)
+        );
+    }
+    assert_eq!(threads[0].commit.as_ref().unwrap().as_ref(), "abc1234");
+    assert_eq!(threads[1].commit.as_ref().unwrap().as_ref(), "abc1234");
+    assert_eq!(threads[2].commit.as_ref().unwrap().as_ref(), "def5678");
+    let requests = server.requests();
+    assert_eq!(requests.len(), 9);
+    assert!(
+        requests[5].starts_with("GET /repos/owner/repo/commits/abc1234/comments?per_page=100 ")
+    );
+    assert!(
+        requests[6]
+            .starts_with("GET /repos/owner/repo/commits/abc1234/comments?per_page=100&page=2 ")
+    );
+    assert!(
+        requests[7].starts_with("GET /repos/owner/repo/commits/def5678/comments?per_page=100 ")
+    );
+    assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123 "));
 }

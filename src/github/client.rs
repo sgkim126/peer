@@ -65,6 +65,12 @@ impl GitHubClient {
             .join(&format!("{prefix}/pulls/{number}"))
             .expect("valid PR path");
         let (pull, _) = self.get::<PullRequest>(pull_url.clone()).await?;
+        let source_repository = pull
+            .head
+            .repo
+            .as_ref()
+            .map(|repo| Repository::parse(&repo.full_name))
+            .transpose()?;
         let comments = self
             .list::<IssueComment>(&format!("{prefix}/issues/{number}/comments"))
             .await?;
@@ -75,21 +81,46 @@ impl GitHubClient {
             .list::<ReviewComment>(&format!("{prefix}/pulls/{number}/comments"))
             .await?;
         let commits = self.pull_request_commits(repository, number, &pull).await?;
+        let repositories = [
+            Some(repository),
+            source_repository.as_ref().filter(|source| {
+                !source
+                    .to_string()
+                    .eq_ignore_ascii_case(&repository.to_string())
+            }),
+        ];
+        let mut commit_comments = Vec::new();
+        for commit in &commits {
+            for repository in repositories.iter().flatten() {
+                commit_comments.extend(self.commit_comments(repository, commit).await?);
+            }
+        }
         // A base change can alter commit membership without changing the head or count.
         let (current_pull, _) = self.get::<PullRequest>(pull_url).await?;
         if current_pull.base.sha != pull.base.sha
             || current_pull.head.sha != pull.head.sha
+            || current_pull.head.repo != pull.head.repo
             || current_pull.commits != pull.commits
         {
             return Err(GitHubError::IncompleteCommits);
         }
-        let context = mapping::review_context(pull, comments, reviews, review_comments);
+        let context =
+            mapping::review_context(pull, comments, reviews, review_comments, commit_comments);
         debug!(
             "loaded GitHub review input: repository={repository} pull_request={number} commits={} threads={}",
             commits.len(),
             context.comments.len()
         );
         Ok(GitHubReviewInput { context, commits })
+    }
+
+    async fn commit_comments(
+        &self,
+        repository: &Repository,
+        commit: &CommitHash,
+    ) -> Result<Vec<CommitComment>, GitHubError> {
+        self.list::<CommitComment>(&format!("repos/{repository}/commits/{commit}/comments"))
+            .await
     }
 
     pub async fn pull_request_commits(
@@ -348,6 +379,12 @@ pub struct PullRequest {
 #[derive(Debug, Deserialize)]
 pub struct CommitRef {
     pub sha: CommitHash,
+    pub repo: Option<RepositoryRef>,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct RepositoryRef {
+    pub full_name: String,
 }
 
 #[derive(Debug)]
@@ -392,6 +429,16 @@ pub struct ReviewComment {
     pub line: Option<NonZeroU32>,
     pub original_line: Option<NonZeroU32>,
     pub side: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommitComment {
+    pub id: u64,
+    pub created_at: String,
+    pub user: Option<User>,
+    pub body: String,
+    pub path: Option<String>,
+    pub commit_id: CommitHash,
 }
 
 #[cfg(test)]
