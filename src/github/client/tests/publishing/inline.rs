@@ -312,7 +312,7 @@ async fn question_without_related_commits_is_published_inline() {
 
 #[tokio::test]
 async fn questions_on_unpositionable_lines_fall_back_to_a_conversation_comment() {
-    for line in [4, 99] {
+    for line in [3, 99] {
         let mut input = file_question(&["abc1234", "def5678"], "abc1234");
         input.questions[0].location.as_mut().unwrap().file.line = Some(line);
         let mut replies = before_inline();
@@ -412,9 +412,9 @@ async fn publishes_inline_on_a_changed_line() {
 }
 
 #[tokio::test]
-async fn unchanged_lines_fall_back_to_a_conversation_comment() {
+async fn publishes_inline_on_a_context_line() {
     let mut input = finding();
-    input.findings[0].location.as_mut().unwrap().line = Some(4);
+    input.findings[0].location.as_mut().unwrap().line = Some(6);
     let mut replies = before_inline();
     replies.push(created());
     let server = Server::start(replies).await;
@@ -423,15 +423,14 @@ async fn unchanged_lines_fall_back_to_a_conversation_comment() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert_eq!(report.inline, 0);
+    assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 1);
     let requests = server.requests();
-    assert!(
-        requests
-            .last()
-            .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
-    );
+    let request = requests.last().unwrap();
+    assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    let params = request_body(request);
+    assert_eq!(params["line"], 6);
+    assert_eq!(params["side"], "RIGHT");
 }
 
 #[tokio::test]
