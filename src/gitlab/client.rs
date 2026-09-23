@@ -174,24 +174,28 @@ impl GitLabClient {
                         .get("ratelimit-remaining")
                         .is_some_and(|value| value == "0")
                         || response.headers().contains_key("retry-after")));
-            // Only a definite position validation error permits moving an
-            // inline comment into the overview. Never retain response bodies:
+            // Only definite target validation errors permit retrying an inline
+            // discussion without a position. Never retain error response bodies:
             // they can contain private note text or credentials.
-            let position_invalid = if matches!(status.as_u16(), 400 | 422) {
+            let (position_invalid, commit_invalid) = if matches!(status.as_u16(), 400 | 422) {
                 response
                     .json::<serde_json::Value>()
                     .await
                     .ok()
-                    .and_then(|body| body.get("message").map(position_error))
-                    .unwrap_or(false)
+                    .and_then(|body| {
+                        body.get("message")
+                            .map(|message| (position_error(message), commit_error(message)))
+                    })
+                    .unwrap_or((false, false))
             } else {
-                false
+                (false, false)
             };
             return Err(GitLabError::Api {
                 endpoint,
                 status: status.as_u16(),
                 rate_limited,
                 position_invalid,
+                commit_invalid,
             });
         }
         let headers = response.headers().clone();
@@ -221,29 +225,17 @@ fn position_error(message: &serde_json::Value) -> bool {
                         || (field == "commit_id" && diff_refs_message(detail))
                 })
         }
-        serde_json::Value::String(message) => {
-            let message = message.trim().to_ascii_lowercase();
-            // GitLab sometimes stringifies its Ruby validation hash:
-            // https://gitlab.com/gitlab-org/gitlab/-/issues/37518
-            let fields = message
-                .strip_prefix("400 bad request - note {")
-                .and_then(|note| note.strip_suffix('}'))
-                .or_else(|| {
-                    message
-                        .strip_prefix("400 (bad request) \"note {")
-                        .and_then(|note| note.strip_suffix("}\" not given"))
-                });
-            let Some(fields) = fields.and_then(|fields| fields.strip_prefix(':')) else {
-                return false;
-            };
-            // Every field must be a position error. Mixed body/author errors
-            // and unrecognized string formats still stop publication.
-            fields.split(':').all(|field| {
-                field.split_once("=>").is_some_and(|(field, detail)| {
-                    (position_field(field.trim()) && !detail.trim().is_empty())
-                        || (field.trim() == "commit_id" && detail.contains("diff refs"))
-                })
-            })
+        _ => false,
+    }
+}
+
+fn commit_error(message: &serde_json::Value) -> bool {
+    match message {
+        serde_json::Value::Object(fields) => {
+            !fields.is_empty()
+                && fields
+                    .iter()
+                    .all(|(field, detail)| field == "commit_id" && has_validation_message(detail))
         }
         _ => false,
     }

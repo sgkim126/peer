@@ -37,7 +37,23 @@ impl PreparedReview {
 
     pub fn for_gitlab(document: &RenderDocument, repository: &crate::gitlab::Repository) -> Self {
         let parts = gitlab::DocumentParts::for_gitlab(document, &repository.to_string());
-        Self::with_parts(document, parts)
+        let mut prepared = Self::with_parts(document, parts);
+        let related_commits = document
+            .questions
+            .iter()
+            .map(|question| question.related_commits.as_slice())
+            .chain(
+                document
+                    .recommendations
+                    .iter()
+                    .map(|recommendation| recommendation.related_commits.as_slice()),
+            );
+        for (item, commits) in prepared.items.iter_mut().zip(related_commits) {
+            if item.commit.is_none() {
+                item.commit = unique_commit(commits).cloned();
+            }
+        }
+        prepared
     }
 
     fn with_parts(document: &RenderDocument, parts: github::DocumentParts) -> Self {
@@ -114,6 +130,14 @@ impl PreparedReview {
         }
         output
     }
+}
+
+fn unique_commit(commits: &[CommitHash]) -> Option<&CommitHash> {
+    let first = commits.first()?;
+    commits
+        .iter()
+        .all(|commit| commit.matches(first))
+        .then_some(first)
 }
 
 fn prepare_question(question: &KnowledgeQuestion, body: String) -> Feedback {
@@ -249,6 +273,34 @@ mod tests {
         })
     }
 
+    fn recommendation() -> Value {
+        json!({
+            "kind": "split_commit",
+            "message": "Split this",
+            "rationale": "Separate concerns",
+            "related_commits": ["abc1234"]
+        })
+    }
+
+    fn document_with_feedback(section: &str, feedback: Value) -> RenderDocument {
+        serde_json::from_value(json!({
+            "ordered_commits": ["abc1234", "def5678"],
+            "stages": [],
+            (section): [feedback],
+        }))
+        .unwrap()
+    }
+
+    fn gitlab_feedback(section: &str, value: Value) -> Feedback {
+        let document = document_with_feedback(section, value);
+        let prepared = PreparedReview::for_gitlab(
+            &document,
+            &crate::gitlab::Repository::parse("group/project").unwrap(),
+        );
+        assert_eq!(prepared.items.len(), 1);
+        prepared.items.into_iter().next().unwrap()
+    }
+
     #[test]
     fn finding_fingerprint_ignores_commit() {
         let mut value = finding();
@@ -338,6 +390,206 @@ mod tests {
         let feedback = prepare_question(&question, "Question".into());
         assert!(feedback.commit.is_none());
         assert!(feedback.location.is_none());
+    }
+
+    #[test]
+    fn gitlab_unlocated_question_without_related_commits_has_no_target() {
+        let mut question = question();
+        question["location"] = Value::Null;
+        question["related_commits"] = json!([]);
+
+        let feedback = gitlab_feedback("questions", question);
+
+        assert_eq!(feedback.commit, None);
+    }
+
+    #[test]
+    fn gitlab_unlocated_question_with_one_related_commit_targets_that_commit() {
+        let mut question = question();
+        question["location"] = Value::Null;
+        question["related_commits"] = json!(["abc1234"]);
+
+        let feedback = gitlab_feedback("questions", question);
+
+        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+    }
+
+    #[test]
+    fn gitlab_unlocated_question_with_duplicate_related_commits_targets_that_commit() {
+        let mut question = question();
+        question["location"] = Value::Null;
+        question["related_commits"] = json!(["abc1234", "abc1234"]);
+
+        let feedback = gitlab_feedback("questions", question);
+
+        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+    }
+
+    #[test]
+    fn gitlab_unlocated_question_with_distinct_related_commits_has_no_target() {
+        let mut question = question();
+        question["location"] = Value::Null;
+        question["related_commits"] = json!(["abc1234", "def5678"]);
+
+        let feedback = gitlab_feedback("questions", question);
+
+        assert_eq!(feedback.commit, None);
+    }
+
+    #[test]
+    fn gitlab_recommendation_without_related_commits_has_no_target() {
+        let mut recommendation = recommendation();
+        recommendation["related_commits"] = json!([]);
+
+        let feedback = gitlab_feedback("recommendations", recommendation);
+
+        assert_eq!(feedback.commit, None);
+    }
+
+    #[test]
+    fn gitlab_recommendation_with_one_related_commit_targets_that_commit() {
+        let mut recommendation = recommendation();
+        recommendation["related_commits"] = json!(["abc1234"]);
+
+        let feedback = gitlab_feedback("recommendations", recommendation);
+
+        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+    }
+
+    #[test]
+    fn gitlab_recommendation_with_duplicate_related_commits_targets_that_commit() {
+        let mut recommendation = recommendation();
+        recommendation["related_commits"] = json!(["abc1234", "abc1234"]);
+
+        let feedback = gitlab_feedback("recommendations", recommendation);
+
+        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
+    }
+
+    #[test]
+    fn gitlab_recommendation_with_distinct_related_commits_has_no_target() {
+        let mut recommendation = recommendation();
+        recommendation["related_commits"] = json!(["abc1234", "def5678"]);
+
+        let feedback = gitlab_feedback("recommendations", recommendation);
+
+        assert_eq!(feedback.commit, None);
+    }
+
+    #[test]
+    fn gitlab_keeps_commit_targets_with_their_feedback_kinds() {
+        let mut question = question();
+        question["location"] = Value::Null;
+        let mut recommendation = recommendation();
+        recommendation["related_commits"] = json!(["def5678"]);
+        let mut finding = finding();
+        finding["commit"] = json!("fedcba9");
+        let document = serde_json::from_value(json!({
+            "ordered_commits": ["abc1234", "def5678", "fedcba9"],
+            "stages": [],
+            "questions": [question],
+            "recommendations": [recommendation],
+            "findings": [finding],
+        }))
+        .unwrap();
+        let prepared = PreparedReview::for_gitlab(
+            &document,
+            &crate::gitlab::Repository::parse("group/project").unwrap(),
+        );
+        let mut targets = prepared
+            .items
+            .iter()
+            .map(|item| {
+                let kind = match item.kind {
+                    FeedbackKind::Question => "question",
+                    FeedbackKind::Recommendation => "recommendation",
+                    FeedbackKind::Finding => "finding",
+                };
+                (kind, item.commit.as_ref().map(AsRef::as_ref))
+            })
+            .collect::<Vec<_>>();
+        targets.sort_unstable();
+
+        assert_eq!(
+            targets,
+            [
+                ("finding", Some("fedcba9")),
+                ("question", Some("abc1234")),
+                ("recommendation", Some("def5678")),
+            ]
+        );
+    }
+
+    #[test]
+    fn gitlab_prefers_explicit_question_location_over_related_commits() {
+        let mut question = question();
+        question["related_commits"] = json!(["def5678"]);
+        let document = serde_json::from_value(json!({
+            "ordered_commits": ["abc1234", "def5678"],
+            "stages": [],
+            "questions": [question],
+        }))
+        .unwrap();
+        let prepared = PreparedReview::for_gitlab(
+            &document,
+            &crate::gitlab::Repository::parse("group/project").unwrap(),
+        );
+
+        assert_eq!(
+            prepared.items[0].commit.as_ref().unwrap().as_ref(),
+            "abc1234"
+        );
+        assert_eq!(prepared.items[0].location.as_ref().unwrap().line, Some(5));
+    }
+
+    #[test]
+    fn gitlab_summary_contains_metadata_usage_and_stages_without_feedback() {
+        let document = serde_json::from_value(json!({
+            "summary": {"peer_version": "0.16.2"},
+            "ordered_commits": ["abc1234"],
+            "stages": [{
+                "stage": "quality",
+                "target": "abc1234",
+                "outcome": {
+                    "status": "issues",
+                    "summary": "Stage summary",
+                    "iterations": 2,
+                    "usage": [{
+                        "provider": "provider",
+                        "model": "model",
+                        "input_tokens": 100,
+                        "output_tokens": 20,
+                        "cache_read_tokens": 0,
+                        "cache_write_tokens": 0,
+                        "cost_usd": 0.001
+                    }]
+                }
+            }],
+            "questions": [question()],
+            "recommendations": [recommendation()],
+            "findings": [finding()],
+        }))
+        .unwrap();
+        let prepared = PreparedReview::for_gitlab(
+            &document,
+            &crate::gitlab::Repository::parse("group/project").unwrap(),
+        );
+
+        let summary = prepared.aggregate(&[], true);
+
+        assert!(summary.contains("## Review summary"));
+        assert!(summary.contains("**Peer version:** 0\\.16\\.2"));
+        assert!(summary.contains("### Total token usage"));
+        assert!(summary.contains("100 input tokens, 20 output tokens"));
+        assert!(summary.contains("Stage summary"));
+        assert!(summary.contains("**Iterations:** 2"));
+        assert!(!summary.contains("## Review questions"));
+        assert!(!summary.contains("## Structural recommendations"));
+        assert!(!summary.contains("## Review findings"));
+        assert_eq!(
+            fingerprints(&summary),
+            HashSet::from([prepared.summary_fingerprint.unwrap()])
+        );
     }
 
     #[test]

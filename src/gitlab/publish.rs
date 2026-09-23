@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::num::NonZeroU64;
 
@@ -12,7 +12,9 @@ use crate::stage::StageTarget;
 
 use super::client::MergeRequest;
 use super::position::{ChangedFile, comment_position};
-use super::{CONVERSATION_MARKER, GitLabClient, GitLabError, GitLabReviewSource, Repository};
+use super::{
+    CONVERSATION_MARKER, DiffRefs, GitLabClient, GitLabError, GitLabReviewSource, Repository,
+};
 
 const MAX_NOTE_CHARACTERS: usize = 1_000_000;
 
@@ -158,6 +160,22 @@ impl From<GitLabError> for PublishFailure {
 #[derive(Deserialize)]
 struct CommitRef {
     id: CommitHash,
+    parent_ids: Option<Vec<CommitHash>>,
+}
+
+impl CommitRef {
+    fn diff_refs(&self) -> Option<DiffRefs> {
+        let parents = self.parent_ids.as_ref()?;
+        // GitLab represents the parent of a root commit with its blank ref.
+        let parent = parents.first().cloned().unwrap_or_else(|| {
+            CommitHash::new(&"0".repeat(self.id.as_ref().len())).expect("valid blank commit ref")
+        });
+        Some(DiffRefs {
+            base_sha: parent.clone(),
+            start_sha: parent,
+            head_sha: self.id.clone(),
+        })
+    }
 }
 
 #[derive(Deserialize)]
@@ -235,7 +253,7 @@ impl GitLabClient {
         validate_commits(input, &commits, &source)?;
 
         let mut seen = self
-            .existing_feedback(repository, number)
+            .existing_feedback(repository, number, None)
             .await?
             .fingerprints;
         let remaining: Vec<_> = review
@@ -258,71 +276,158 @@ impl GitLabClient {
         if remaining.is_empty() && !include_summary {
             return Ok(());
         }
-        // Validate the largest possible fallback before making any writes.
-        check_body(&conversation_body(&review, &remaining, include_summary))?;
+        // Each feedback item and the summary are separate notes, including fallbacks.
+        let body = summary_body(&review, include_summary);
+        check_body(&body)?;
         for item in &remaining {
             check_body(&inline_body(item))?;
         }
-        let has_head_location = remaining.iter().any(|item| head_location(item, &source));
-        let files = if has_head_location {
-            self.list::<ChangedFile>(&format!("{prefix}/diffs"))
-                .await
-                .or_else(|err| match err {
-                    GitLabError::Api { status: 413, .. } => Ok(vec![]),
-                    _ => Err(err),
-                })?
-        } else {
-            Vec::new()
-        };
-        self.assert_current(repository, number, &merge_request)
-            .await?;
 
-        let mut fallback = Vec::new();
-        for item in remaining {
-            let position = head_location(item, &source)
-                .then_some(item.location.as_ref())
-                .flatten()
-                .and_then(|location| comment_position(&files, location, &source.diff_refs));
-            let Some(position) = position else {
-                fallback.push(item);
-                continue;
-            };
-            self.assert_current(repository, number, &merge_request)
-                .await?;
-            let body = inline_body(item);
-            let result = self
-                .post::<PublishedDiscussion>(
-                    &format!("{prefix}/discussions"),
-                    &json!({ "body": body, "position": position }),
-                )
-                .await;
-            match result {
-                Ok(discussion) => match discussion.notes.first() {
-                    Some(note) => report.record(note_url(repository, number, note.id), true, false),
-                    None => {
-                        let url = self
-                            .confirm_publication(repository, number, &body, None)
-                            .await?;
-                        report.record(url, true, true);
-                    }
-                },
-                Err(error) if error.may_have_published() => {
-                    let url = self
-                        .confirm_publication(repository, number, &body, Some(error))
-                        .await?;
-                    report.record(url, true, true);
+        // Commit discussions are not returned by the MR discussions API.
+        // Check every MR commit so a changed feedback target cannot hide a
+        // previous publication. Summaries are only published on the MR itself.
+        let mut commit_fingerprints = HashSet::new();
+        if !remaining.is_empty() {
+            for commit in &commits {
+                match self
+                    .existing_feedback(repository, number, Some(&commit.id))
+                    .await
+                {
+                    Ok(existing) => commit_fingerprints.extend(existing.fingerprints),
+                    Err(GitLabError::Api { status: 404, .. }) => {}
+                    Err(error) => return Err(error.into()),
                 }
-                Err(GitLabError::Api {
-                    status: 400 | 422,
-                    position_invalid: true,
-                    ..
-                }) => {
-                    fallback.push(item);
-                }
-                Err(error) => return Err(error.into()),
             }
         }
-        let body = conversation_body(&review, &fallback, include_summary);
+        let mut files_by_commit = HashMap::new();
+        let mut planned = Vec::new();
+        for item in remaining {
+            if commit_fingerprints.contains(&item.fingerprint) {
+                report.skipped += 1;
+                continue;
+            }
+            let commit = item_commit(item, &commits);
+            if let Some(commit) = commit
+                && item.location.is_some()
+                && commit.diff_refs().is_some()
+                && !files_by_commit.contains_key(commit.id.as_ref())
+            {
+                let files = self
+                    .list::<ChangedFile>(&format!(
+                        "{}/repository/commits/{}/diff",
+                        repository.api_path(),
+                        commit.id,
+                    ))
+                    .await
+                    .or_else(|error| match error {
+                        GitLabError::Api {
+                            status: 404 | 413, ..
+                        } => Ok(vec![]),
+                        _ => Err(error),
+                    })?;
+                files_by_commit.insert(commit.id.as_ref().to_string(), files);
+            }
+            let mut positions = Vec::new();
+            if let Some(commit) = commit
+                && let Some(refs) = commit.diff_refs()
+                && let Some(location) = &item.location
+                && let Some(files) = files_by_commit.get(commit.id.as_ref())
+            {
+                if location.line.is_some()
+                    && let Some(position) = comment_position(files, location, &refs)
+                {
+                    positions.push(position);
+                }
+                let mut file_location = location.clone();
+                file_location.line = None;
+                if let Some(position) = comment_position(files, &file_location, &refs) {
+                    positions.push(position);
+                }
+            }
+            planned.push((item, commit, positions));
+        }
+        if planned.is_empty() && body.is_empty() {
+            return Ok(());
+        }
+        self.assert_current(repository, number, &merge_request)
+            .await?;
+        for (item, commit, positions) in planned {
+            let body = inline_body(item);
+            let mut candidates = Vec::new();
+            if let Some(commit) = commit {
+                for position in positions {
+                    candidates.push((
+                        format!("{prefix}/discussions"),
+                        json!({ "body": body, "commit_id": commit.id, "position": position }),
+                        None,
+                        true,
+                    ));
+                }
+                candidates.push((
+                    format!(
+                        "{}/repository/commits/{}/discussions",
+                        repository.api_path(),
+                        commit.id
+                    ),
+                    json!({ "body": body }),
+                    Some(&commit.id),
+                    false,
+                ));
+            }
+            candidates.push((
+                format!("{prefix}/discussions"),
+                json!({ "body": body }),
+                None,
+                false,
+            ));
+            for (path, payload, commit_target, inline) in candidates {
+                self.assert_current(repository, number, &merge_request)
+                    .await?;
+                let result = self.post::<PublishedDiscussion>(&path, &payload).await;
+                match result {
+                    Ok(discussion) => match discussion.notes.first() {
+                        Some(note) => report.record(
+                            feedback_url(repository, number, commit_target, note.id),
+                            inline,
+                            false,
+                        ),
+                        None => {
+                            let url = self
+                                .confirm_publication(repository, number, commit_target, &body, None)
+                                .await?;
+                            report.record(url, inline, true);
+                        }
+                    },
+                    Err(error) if error.may_have_published() => {
+                        let url = self
+                            .confirm_publication(
+                                repository,
+                                number,
+                                commit_target,
+                                &body,
+                                Some(error),
+                            )
+                            .await?;
+                        report.record(url, inline, true);
+                    }
+                    Err(GitLabError::Api {
+                        status: 400 | 422,
+                        position_invalid: true,
+                        ..
+                    }) if inline => continue,
+                    Err(GitLabError::Api {
+                        status: 400 | 422,
+                        commit_invalid: true,
+                        ..
+                    }) if commit_target.is_some() || inline => continue,
+                    Err(GitLabError::Api { status: 404, .. }) if commit_target.is_some() => {
+                        continue;
+                    }
+                    Err(error) => return Err(error.into()),
+                }
+                break;
+            }
+        }
         if !body.is_empty() {
             self.assert_current(repository, number, &merge_request)
                 .await?;
@@ -333,7 +438,7 @@ impl GitLabClient {
                 Ok(note) => report.record(note_url(repository, number, note.id), false, false),
                 Err(error) if error.may_have_published() => {
                     let url = self
-                        .confirm_publication(repository, number, &body, Some(error))
+                        .confirm_publication(repository, number, None, &body, Some(error))
                         .await?;
                     report.record(url, false, true);
                 }
@@ -366,12 +471,19 @@ impl GitLabClient {
         &self,
         repository: &Repository,
         number: NonZeroU64,
+        commit: Option<&CommitHash>,
     ) -> Result<ExistingFeedback, GitLabError> {
         let mut result = ExistingFeedback::default();
-        let path = format!(
-            "{}/merge_requests/{number}/discussions",
-            repository.api_path()
-        );
+        let path = match commit {
+            Some(commit) => format!(
+                "{}/repository/commits/{commit}/discussions",
+                repository.api_path()
+            ),
+            None => format!(
+                "{}/merge_requests/{number}/discussions",
+                repository.api_path()
+            ),
+        };
         let discussions = self.list::<ExistingDiscussion>(&path).await?;
         for note in discussions
             .into_iter()
@@ -391,7 +503,7 @@ impl GitLabClient {
                 result.fingerprints.extend(markers.iter().cloned());
                 result
                     .notes
-                    .push((markers, note_url(repository, number, note.id)));
+                    .push((markers, feedback_url(repository, number, commit, note.id)));
             }
         }
         Ok(result)
@@ -401,11 +513,12 @@ impl GitLabClient {
         &self,
         repository: &Repository,
         number: NonZeroU64,
+        commit: Option<&CommitHash>,
         body: &str,
         request: Option<GitLabError>,
     ) -> Result<String, PublishFailure> {
         let expected = fingerprints(body);
-        match self.existing_feedback(repository, number).await {
+        match self.existing_feedback(repository, number, commit).await {
             Ok(existing) => {
                 if !expected.is_empty()
                     && let Some((_, url)) = existing
@@ -504,24 +617,17 @@ fn validate_commits(
     Ok(())
 }
 
-fn head_location(item: &Feedback, source: &GitLabReviewSource) -> bool {
-    item.location.is_some()
-        && item
-            .commit
-            .as_ref()
-            .is_some_and(|commit| commit.matches(&source.diff_refs.head_sha))
+fn item_commit<'a>(item: &Feedback, commits: &'a [CommitRef]) -> Option<&'a CommitRef> {
+    let hash = item.commit.as_ref()?;
+    commits.iter().find(|commit| hash.matches(&commit.id))
 }
 
 fn inline_body(item: &Feedback) -> String {
     format!("{}\n\n{}", item.body, marker(&item.fingerprint))
 }
 
-fn conversation_body(
-    review: &PreparedReview,
-    items: &[&Feedback],
-    include_summary: bool,
-) -> String {
-    let body = review.aggregate(items, include_summary);
+fn summary_body(review: &PreparedReview, include_summary: bool) -> String {
+    let body = review.aggregate(&[], include_summary);
     if body.trim().is_empty() {
         String::new()
     } else {
@@ -534,6 +640,18 @@ fn check_body(body: &str) -> Result<(), PublishFailure> {
         Err(PublishFailure::NoteTooLong)
     } else {
         Ok(())
+    }
+}
+
+fn feedback_url(
+    repository: &Repository,
+    number: NonZeroU64,
+    commit: Option<&CommitHash>,
+    id: NonZeroU64,
+) -> String {
+    match commit {
+        Some(commit) => format!("https://gitlab.com/{repository}/-/commit/{commit}#note_{id}"),
+        None => note_url(repository, number, id),
     }
 }
 

@@ -1118,29 +1118,6 @@ fn recognizes_commit_id_errors_that_mention_diff_refs() {
 }
 
 #[test]
-fn recognizes_line_code_errors_in_stringified_ruby_hashes() {
-    let message = json!("400 Bad request - Note {:line_code=>[\"can't be blank\"]}");
-
-    assert!(position_error(&message));
-}
-
-#[test]
-fn recognizes_position_errors_in_quoted_ruby_hashes() {
-    let message = json!("400 (Bad request) \"Note {:position=>[\"is incomplete\"]}\" not given");
-
-    assert!(position_error(&message));
-}
-
-#[test]
-fn recognizes_commit_diff_refs_errors_in_quoted_ruby_hashes() {
-    let message = json!(
-        "400 (Bad request) \"Note {:commit_id=>[\"does not match the diff refs\"]}\" not given"
-    );
-
-    assert!(position_error(&message));
-}
-
-#[test]
 fn rejects_null_position_error_messages() {
     assert!(!position_error(&Value::Null));
 }
@@ -1229,13 +1206,6 @@ fn rejects_plain_text_bracketed_position_errors() {
 }
 
 #[test]
-fn rejects_bad_request_text_without_a_ruby_hash() {
-    let message = json!("400 Bad request - position is incomplete");
-
-    assert!(!position_error(&message));
-}
-
-#[test]
 fn rejects_plain_text_body_errors_that_mention_position() {
     let message = json!("body contains an invalid position");
 
@@ -1257,34 +1227,160 @@ fn rejects_bare_bad_request_error_strings() {
 }
 
 #[test]
-fn rejects_mixed_position_and_body_errors_in_ruby_hashes() {
-    let message =
-        json!("400 Bad request - Note {:position=>[\"is invalid\"], :body=>[\"can't be blank\"]}");
+fn recognizes_commit_target_string_validation_messages() {
+    let message = json!({"commit_id": "is invalid"});
 
-    assert!(!position_error(&message));
+    assert!(commit_error(&message));
 }
 
 #[test]
-fn rejects_non_diff_refs_commit_errors_in_ruby_hashes() {
-    let message = json!(
-        "400 Bad request - Note {:line_code=>[\"is invalid\"], :commit_id=>[\"is invalid\"]}"
+fn recognizes_multiple_commit_target_validation_messages() {
+    let message = json!({"commit_id": ["is invalid", "does not exist"]});
+
+    assert!(commit_error(&message));
+}
+
+#[test]
+fn rejects_commit_target_errors_mixed_with_body_errors() {
+    let message = json!({"commit_id": ["is invalid"], "body": ["is invalid"]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_commit_target_errors_mixed_with_position_errors() {
+    let message = json!({"commit_id": ["is invalid"], "position": ["is invalid"]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_commit_target_errors_with_empty_message_arrays() {
+    let message = json!({"commit_id": []});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_commit_target_errors_with_mixed_blank_and_nonblank_messages() {
+    let message = json!({"commit_id": ["is invalid", " "]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_null_commit_target_error_messages() {
+    assert!(!commit_error(&Value::Null));
+}
+
+#[test]
+fn rejects_empty_commit_target_error_objects() {
+    let message = json!({});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_field_names_that_only_start_with_commit_id() {
+    let message = json!({"commit_id_suffix": ["is invalid"]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_body_errors_that_only_mention_commit_id() {
+    let message = json!({"body": ["commit_id is invalid"]});
+
+    assert!(!commit_error(&message));
+}
+
+#[test]
+fn rejects_plain_text_commit_target_validation_errors() {
+    let message = json!("commit_id is invalid");
+
+    assert!(!commit_error(&message));
+}
+
+#[tokio::test]
+async fn bad_request_responses_can_report_commit_target_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({"message": {"commit_id": ["is invalid"]}})).status(400),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/merge_requests/1/discussions",
+            &json!({"body": "A note", "commit_id": "abc1234"}),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            status: 400,
+            position_invalid: false,
+            commit_invalid: true,
+            ..
+        }
     );
-
-    assert!(!position_error(&message));
 }
 
-#[test]
-fn rejects_empty_stringified_ruby_hashes() {
-    let message = json!("400 Bad request - Note {}");
+#[tokio::test]
+async fn forbidden_responses_are_not_commit_target_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({"message": {"commit_id": ["is invalid"]}})).status(403),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/merge_requests/1/discussions",
+            &json!({"body": "A note", "commit_id": "abc1234"}),
+        )
+        .await
+        .unwrap_err();
 
-    assert!(!position_error(&message));
+    assert_matches!(
+        error,
+        GitLabError::Api {
+            status: 403,
+            position_invalid: false,
+            commit_invalid: false,
+            ..
+        }
+    );
 }
 
-#[test]
-fn rejects_stringified_ruby_hashes_without_a_closing_brace() {
-    let message = json!("400 Bad request - Note {:position=>[\"is incomplete\"]");
+#[tokio::test]
+async fn mixed_target_and_body_response_errors_do_not_permit_fallback() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "commit_id": ["is invalid"],
+                "body": ["can't be blank"]
+            }
+        }))
+        .status(422),
+    ])
+    .await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "projects/5/merge_requests/1/discussions",
+            &json!({"body": "A note", "commit_id": "abc1234"}),
+        )
+        .await;
 
-    assert!(!position_error(&message));
+    assert_matches!(
+        error,
+        Err(GitLabError::Api {
+            position_invalid: false,
+            commit_invalid: false,
+            ..
+        })
+    );
 }
 
 #[tokio::test]
