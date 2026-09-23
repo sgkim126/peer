@@ -84,11 +84,11 @@ async fn publishes_file_comment_at_the_current_head_with_a_hidden_fingerprint() 
 }
 
 #[tokio::test]
-async fn combines_inline_failures_with_unpositioned_items_and_summary() {
+async fn separates_fallback_feedback_from_the_review_summary() {
     let mut replies = before_inline();
     let mut rejected = created();
     rejected.status = 422;
-    replies.extend([rejected, created()]);
+    replies.extend([rejected, created(), created(), created()]);
     let server = Server::start(replies).await;
     let report = server
         .client()
@@ -98,23 +98,33 @@ async fn combines_inline_failures_with_unpositioned_items_and_summary() {
     let requests = server.requests();
     assert!(requests[6].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[7].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    let body = request_body(&requests[7])["body"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    assert!(body.contains("First issue"));
-    assert!(body.contains("Second issue"));
-    assert!(body.contains("## Review summary"));
-    assert!(body.contains("<summary>Stage:"));
-    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 1);
-    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 3);
+    assert!(requests[8].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let bodies = posted_bodies(&server);
+    assert!(requests[9].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(bodies[1].contains("First issue"));
+    assert!(!bodies[1].contains("Second issue"));
+    assert!(bodies[2].contains("Second issue"));
+    assert!(!bodies[2].contains("First issue"));
+    for feedback in &bodies[1..3] {
+        assert!(!feedback.contains("## Review summary"));
+        assert!(!feedback.contains("<summary>Stage:"));
+        assert!(!feedback.contains(CONVERSATION_MARKER));
+        assert_eq!(crate::github::feedback::fingerprints(feedback).len(), 1);
+    }
+    let summary = &bodies[3];
+    assert!(summary.contains("## Review summary"));
+    assert!(summary.contains("<summary>Stage:"));
+    assert!(summary.contains(CONVERSATION_MARKER));
+    assert!(!summary.contains("First issue"));
+    assert!(!summary.contains("Second issue"));
+    assert_eq!(crate::github::feedback::fingerprints(summary).len(), 1);
     assert_eq!(report.inline, 0);
-    assert_eq!(report.urls.len(), 1);
-    assert_eq!(report.published, 1);
+    assert_eq!(report.urls.len(), 3);
+    assert_eq!(report.published, 3);
     assert!(
         report
             .to_string()
-            .starts_with("Published 1 comment(s). 0 inline, 1 conversation.")
+            .starts_with("Published 3 comment(s). 0 inline, 3 conversation.")
     );
 }
 
@@ -171,7 +181,7 @@ async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
             .unwrap()
             .matches(CONVERSATION_MARKER)
             .count(),
-        1
+        0
     );
     assert!(
         server
@@ -311,7 +321,7 @@ async fn question_without_related_commits_is_published_inline() {
 }
 
 #[tokio::test]
-async fn questions_on_unpositionable_lines_fall_back_to_a_conversation_comment() {
+async fn questions_outside_diff_lines_fall_back_to_file_comments() {
     for line in [3, 99] {
         let mut input = file_question(&["abc1234", "def5678"], "abc1234");
         input.questions[0].location.as_mut().unwrap().file.line = Some(line);
@@ -325,12 +335,13 @@ async fn questions_on_unpositionable_lines_fall_back_to_a_conversation_comment()
             .unwrap();
         let requests = server.requests();
         let request = requests.last().unwrap();
-        assert!(request.starts_with("POST /repos/owner/repo/issues/123/comments "));
+        assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
         let params = request_body(request);
         let body = params["body"].as_str().unwrap();
         assert!(body.contains("**question/rationale**"));
-        assert!(body.contains(CONVERSATION_MARKER));
-        assert_eq!(report.inline, 0);
+        assert!(!body.contains(CONVERSATION_MARKER));
+        assert_eq!(params["subject_type"], "file");
+        assert_eq!(report.inline, 1);
         assert_eq!(report.published, 1);
         assert_eq!(report.urls.len(), 1);
         assert_eq!(requests.len(), 7);
@@ -338,7 +349,7 @@ async fn questions_on_unpositionable_lines_fall_back_to_a_conversation_comment()
 }
 
 #[tokio::test]
-async fn unlocated_questions_and_recommendations_share_one_comment() {
+async fn unlocated_questions_and_recommendations_have_individual_conversation_comments() {
     let input = serde_json::from_value(json!({
         "ordered_commits": ["abc1234"],
         "stages": [],
@@ -363,6 +374,7 @@ async fn unlocated_questions_and_recommendations_share_one_comment() {
         Reply::json(json!([])),
         Reply::json(json!([])),
         created(),
+        created(),
     ])
     .await;
     let report = server
@@ -374,14 +386,15 @@ async fn unlocated_questions_and_recommendations_share_one_comment() {
     let request = requests.last().unwrap();
     assert!(request.starts_with("POST /repos/owner/repo/issues/123/comments "));
     let body = request_body(request)["body"].as_str().unwrap().to_string();
-    assert!(body.contains("## Review questions"));
-    assert!(body.contains("## Structural recommendations"));
-    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 1);
-    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 2);
+    assert!(posted_bodies(&server)[0].contains("**question/rationale**"));
+    assert!(body.contains("**recommendation/split_commit**"));
+    assert!(!body.contains("**question/rationale**"));
+    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 0);
+    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     assert_eq!(report.inline, 0);
-    assert_eq!(report.published, 1);
-    assert_eq!(report.urls.len(), 1);
-    assert_eq!(requests.len(), 5);
+    assert_eq!(report.published, 2);
+    assert_eq!(report.urls.len(), 2);
+    assert_eq!(requests.len(), 6);
 }
 
 #[tokio::test]
@@ -483,6 +496,7 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
             "body": inline_body.as_str()
         }])),
         created(),
+        created(),
     ])
     .await;
     let report = second
@@ -492,17 +506,15 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
         .unwrap();
     assert_eq!(report.skipped, 1);
     assert_eq!(report.inline, 0);
-    assert_eq!(
-        request_body(second.requests().last().unwrap())["body"],
-        failed_body
-    );
+    assert_eq!(posted_bodies(&second)[0], failed_body);
+    let summary_body = posted_bodies(&second)[1].clone();
 
     let third = Server::start(vec![
         pull(),
         pr_commits(),
         Reply::json(json!([{
             "body": failed_body.as_str()
-        }])),
+        }, {"body": summary_body}])),
         Reply::json(json!([{
             "body": inline_body.as_str()
         }])),
@@ -518,7 +530,7 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
 }
 
 #[tokio::test]
-async fn zero_line_falls_back_to_a_conversation_comment() {
+async fn zero_line_falls_back_to_a_file_comment() {
     let mut input = finding();
     input.findings[0].location.as_mut().unwrap().line = Some(0);
     let mut replies = before_inline();
@@ -529,19 +541,23 @@ async fn zero_line_falls_back_to_a_conversation_comment() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert_eq!(report.inline, 0);
+    assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 1);
     let requests = server.requests();
+    assert_eq!(
+        request_body(requests.last().unwrap())["subject_type"],
+        "file"
+    );
     assert!(
         requests
             .last()
             .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+            .starts_with("POST /repos/owner/repo/pulls/123/comments ")
     );
 }
 
 #[tokio::test]
-async fn line_outside_patch_falls_back_to_a_conversation_comment() {
+async fn line_outside_patch_falls_back_to_a_file_comment() {
     let mut input = finding();
     input.findings[0].location.as_mut().unwrap().line = Some(100);
     let mut replies = before_inline();
@@ -552,13 +568,17 @@ async fn line_outside_patch_falls_back_to_a_conversation_comment() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert_eq!(report.inline, 0);
+    assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 1);
     let requests = server.requests();
+    assert_eq!(
+        request_body(requests.last().unwrap())["subject_type"],
+        "file"
+    );
     assert!(
         requests
             .last()
             .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+            .starts_with("POST /repos/owner/repo/pulls/123/comments ")
     );
 }

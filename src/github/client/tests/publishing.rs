@@ -1,7 +1,8 @@
 use super::*;
 use crate::github::publish::CONVERSATION_MARKER;
-use crate::render::{RenderDocument, github};
+use crate::render::RenderDocument;
 
+mod file_fallback;
 mod inline;
 mod recovery;
 mod revalidation;
@@ -79,18 +80,23 @@ fn before_publish() -> Vec<Reply> {
 }
 
 async fn published_body(input: &RenderDocument) -> String {
+    published_bodies(input).await.join("\n\n")
+}
+
+async fn published_bodies(input: &RenderDocument) -> Vec<String> {
     let mut replies = before_publish();
-    replies.push(created());
+    let review = crate::github::feedback::PreparedReview::new(input, &repository());
+    replies.extend(review.items.iter().map(|_| created()));
+    if review.summary_fingerprint.is_some() {
+        replies.push(created());
+    }
     let server = Server::start(replies).await;
     server
         .client()
         .publish(&repository(), number(), input)
         .await
         .unwrap();
-    request_body(server.requests().last().unwrap())["body"]
-        .as_str()
-        .unwrap()
-        .to_string()
+    posted_bodies(&server)
 }
 
 #[tokio::test]
@@ -114,8 +120,8 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
         .as_str()
         .unwrap()
         .to_string();
-    assert!(body.starts_with(&github::render(&input, "owner/repo")));
-    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 1);
+    assert!(body.contains("**finding/high**"));
+    assert_eq!(body.matches(CONVERSATION_MARKER).count(), 0);
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     assert_eq!(report.urls.len(), 1);
     assert_eq!(report.published, 1);
@@ -289,6 +295,7 @@ async fn only_new_items_are_included_while_statistics_cover_the_full_review() {
         Reply::json(json!([{ "body": body }])),
         Reply::json(json!([])),
         created(),
+        created(),
     ])
     .await;
     let report = server
@@ -296,10 +303,7 @@ async fn only_new_items_are_included_while_statistics_cover_the_full_review() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    let body = request_body(server.requests().last().unwrap())["body"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    let body = posted_bodies(&server).join("\n\n");
     assert!(!body.contains("First issue"));
     assert!(!body.contains("Second issue"));
     assert!(body.contains("Changed issue"));
@@ -402,4 +406,140 @@ async fn duplicate_commits_prevent_feedback_lookup_and_publication() {
     assert_eq!(requests.len(), 2);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
     assert!(requests[1].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
+}
+
+fn posted_bodies(server: &Server) -> Vec<String> {
+    server
+        .requests()
+        .iter()
+        .filter(|request| request.starts_with("POST "))
+        .map(|request| request_body(request)["body"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+#[tokio::test]
+async fn rerunning_after_summary_failure_posts_only_the_summary() {
+    let input = document();
+    let mut replies = before_publish();
+    let mut rejected = created();
+    rejected.status = 403;
+    replies.extend([created(), created(), rejected]);
+    let first = Server::start(replies).await;
+    assert!(
+        first
+            .client()
+            .publish(&repository(), number(), &input)
+            .await
+            .is_err()
+    );
+    let bodies = posted_bodies(&first);
+    assert_eq!(bodies.len(), 3);
+    assert!(!bodies[0].contains(CONVERSATION_MARKER));
+    assert!(bodies[2].contains(CONVERSATION_MARKER));
+    assert!(!bodies[2].contains("First issue"));
+    let second = Server::start(vec![
+        pull(),
+        pr_commits(),
+        Reply::json(json!([{"body": bodies[0]}, {"body": bodies[1]}])),
+        Reply::json(json!([])),
+        created(),
+    ])
+    .await;
+    let report = second
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.skipped, 2);
+    assert_eq!(report.published, 1);
+    assert_eq!(posted_bodies(&second), vec![bodies[2].clone()]);
+}
+
+#[tokio::test]
+async fn an_existing_summary_does_not_suppress_new_feedback() {
+    let input = document();
+    let bodies = published_bodies(&input).await;
+    let mut replies = before_publish();
+    replies[2] = Reply::json(json!([{"body": bodies[2]}]));
+    replies.extend([created(), created()]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.skipped, 1);
+    assert_eq!(posted_bodies(&server), bodies[..2].to_vec());
+}
+
+#[tokio::test]
+async fn a_summary_only_review_creates_one_marked_comment() {
+    let mut input = document();
+    input.findings.clear();
+    let server = Server::start(vec![
+        pull(),
+        pr_commits(),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        created(),
+    ])
+    .await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    let bodies = posted_bodies(&server);
+    assert_eq!(report.published, 1);
+    assert_eq!(bodies.len(), 1);
+    assert!(bodies[0].contains(CONVERSATION_MARKER));
+    assert_eq!(crate::github::feedback::fingerprints(&bodies[0]).len(), 1);
+}
+
+#[tokio::test]
+async fn individual_feedback_retries_only_the_unpublished_items() {
+    let mut input = document();
+    for finding in &mut input.findings {
+        finding.commit = CommitHash::new("fedcba9").unwrap();
+    }
+    let mut replies = before_publish();
+    let mut rejected = created();
+    rejected.status = 403;
+    replies.extend([created(), rejected]);
+    let first = Server::start(replies).await;
+    assert!(
+        first
+            .client()
+            .publish(&repository(), number(), &input)
+            .await
+            .is_err()
+    );
+    let bodies = posted_bodies(&first);
+    assert_eq!(bodies.len(), 2);
+    assert!(
+        bodies
+            .iter()
+            .all(|body| crate::github::feedback::fingerprints(body).len() == 1)
+    );
+    assert!(bodies[0].contains("First issue"));
+    assert!(bodies[1].contains("Second issue"));
+    let second = Server::start(vec![
+        pull(),
+        pr_commits(),
+        Reply::json(json!([{"body": bodies[0]}])),
+        Reply::json(json!([])),
+        created(),
+        created(),
+    ])
+    .await;
+    let report = second
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    let retried = posted_bodies(&second);
+    assert_eq!(report.skipped, 1);
+    assert_eq!(report.published, 2);
+    assert_eq!(retried[0], bodies[1]);
+    assert!(retried[1].contains(CONVERSATION_MARKER));
 }

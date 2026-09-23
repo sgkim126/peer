@@ -1,5 +1,12 @@
 use super::{inline::*, *};
 
+// File comments isolate the original recovery behavior from line-to-file fallback.
+fn finding() -> RenderDocument {
+    let mut input = super::finding();
+    input.findings[0].location.as_mut().unwrap().line = None;
+    input
+}
+
 fn failed(status: u16) -> Reply {
     let mut reply = created();
     reply.status = status;
@@ -22,7 +29,6 @@ fn inline_findings(messages: &[&str]) -> RenderDocument {
                 "severity": "high",
                 "message": message,
                 "file": "src/main.rs",
-                "line": 5,
             })
         })
         .collect::<Vec<_>>();
@@ -71,6 +77,8 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
             { "body": body_without_url }
         ])),
         created(),
+        created(),
+        created(),
     ]);
     let server = Server::start(replies).await;
     let report = server
@@ -80,7 +88,7 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
         .unwrap();
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 13);
+    assert_eq!(requests.len(), 15);
     assert!(requests[6].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[7].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[8].starts_with("POST /repos/owner/repo/pulls/123/comments "));
@@ -120,8 +128,18 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
             .contains("Confirmed inline without URL")
     );
 
-    let params = request_body(&requests[12]);
-    let fallback = params["body"].as_str().unwrap();
+    assert!(requests[13].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[14].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let bodies: Vec<_> = requests[12..]
+        .iter()
+        .map(|request| request_body(request)["body"].as_str().unwrap().to_owned())
+        .collect();
+    assert!(
+        bodies
+            .iter()
+            .all(|body| crate::github::feedback::fingerprints(body).len() == 1)
+    );
+    let fallback = &bodies.join("\n\n");
     assert!(!fallback.contains("Confirmed inline"));
     assert!(!fallback.contains("Successful inline"));
 
@@ -132,14 +150,14 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
     assert!(rejected < unpositioned);
 
     assert_eq!(crate::github::feedback::fingerprints(fallback).len(), 3);
-    assert_eq!(report.published, 4);
+    assert_eq!(report.published, 6);
     assert_eq!(report.recovered, 2);
     assert_eq!(report.inline, 3);
-    assert_eq!(report.urls.len(), 3);
+    assert_eq!(report.urls.len(), 5);
     assert!(
         report
             .to_string()
-            .starts_with("Published 4 comment(s). 3 inline, 1 conversation.")
+            .starts_with("Published 6 comment(s). 3 inline, 3 conversation.")
     );
     assert!(
         report
@@ -426,8 +444,11 @@ async fn an_uncertain_fallback_post_is_checked_with_fresh_feedback() {
 }
 
 #[tokio::test]
-async fn an_uncertain_aggregate_post_with_every_marker_is_confirmed() {
-    let input = document();
+async fn an_uncertain_feedback_post_with_every_marker_is_confirmed() {
+    let mut input = document();
+    input.summary = None;
+    input.stages.clear();
+    input.findings.truncate(1);
     let body = published_body(&input).await;
     let mut replies = before_publish();
     replies.extend([failed(500), known_comment(&body), Reply::json(json!([]))]);
@@ -437,7 +458,7 @@ async fn an_uncertain_aggregate_post_with_every_marker_is_confirmed() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 3);
+    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     assert_eq!(report.published, 1);
     assert_eq!(report.inline, 0);
     assert_eq!(report.recovered, 1);
@@ -453,10 +474,13 @@ async fn an_uncertain_aggregate_post_with_every_marker_is_confirmed() {
 }
 
 #[tokio::test]
-async fn an_uncertain_aggregate_post_with_a_missing_url_is_counted_once_after_confirmation() {
-    let input = document();
+async fn an_uncertain_feedback_post_with_a_missing_url_is_counted_once_after_confirmation() {
+    let mut input = document();
+    input.summary = None;
+    input.stages.clear();
+    input.findings.truncate(1);
     let body = published_body(&input).await;
-    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 3);
+    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     let comment = json!({ "body": body });
     let mut replies = before_publish();
     replies.extend([
@@ -494,10 +518,13 @@ async fn an_uncertain_aggregate_post_with_a_missing_url_is_counted_once_after_co
 }
 
 #[tokio::test]
-async fn an_uncertain_aggregate_post_with_a_null_url_is_counted_once_after_confirmation() {
-    let input = document();
+async fn an_uncertain_feedback_post_with_a_null_url_is_counted_once_after_confirmation() {
+    let mut input = document();
+    input.summary = None;
+    input.stages.clear();
+    input.findings.truncate(1);
     let body = published_body(&input).await;
-    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 3);
+    assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
     let comment = json!({ "body": body, "html_url": null });
     let mut replies = before_publish();
     replies.extend([
@@ -535,7 +562,7 @@ async fn an_uncertain_aggregate_post_with_a_null_url_is_counted_once_after_confi
 }
 
 #[tokio::test]
-async fn an_uncertain_aggregate_post_without_markers_returns_the_original_error() {
+async fn an_uncertain_feedback_post_without_markers_returns_the_original_error() {
     let input = document();
     let body = published_body(&input).await;
     let existing = body
