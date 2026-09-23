@@ -83,7 +83,7 @@ impl GitHubClient {
         let pull = self.pull_request(repository, number).await?;
         let commits = self.pull_request_commits(repository, number, &pull).await?;
         let mut seen = self
-            .existing_feedback(repository, number)
+            .existing_feedback(repository, number, &commits)
             .await?
             .fingerprints;
         let review = PreparedReview::new(input, repository);
@@ -195,7 +195,7 @@ impl GitHubClient {
                         return Err(error);
                     }
                     let expected = fingerprints(&body);
-                    let confirmed = self.existing_feedback(repository, number).await?;
+                    let confirmed = self.existing_feedback(repository, number, &commits).await?;
                     if !expected.is_subset(&confirmed.fingerprints) {
                         return Err(error);
                     }
@@ -293,12 +293,18 @@ impl GitHubClient {
         &self,
         repository: &Repository,
         number: NonZeroU64,
+        commits: &[CommitHash],
     ) -> Result<ExistingFeedback, GitHubError> {
-        self.feedback_from_comments(&[
+        let mut paths = vec![
             format!("repos/{repository}/issues/{number}/comments"),
             format!("repos/{repository}/pulls/{number}/comments"),
-        ])
-        .await
+        ];
+        paths.extend(
+            commits
+                .iter()
+                .map(|commit| format!("repos/{repository}/commits/{commit}/comments")),
+        );
+        self.feedback_from_comments(&paths).await
     }
 
     async fn feedback_from_comments(

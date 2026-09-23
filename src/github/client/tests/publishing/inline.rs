@@ -37,6 +37,7 @@ pub fn before_inline() -> Vec<Reply> {
         pr_commits(),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        Reply::json(json!([])),
         changed_file(),
         pull(),
     ]
@@ -80,7 +81,7 @@ async fn publishes_file_comment_at_the_current_head_with_a_hidden_fingerprint() 
             .to_string()
             .starts_with("Published 1 comment(s). 1 inline, 0 conversation.")
     );
-    assert_eq!(requests.len(), 7);
+    assert_eq!(requests.len(), 8);
 }
 
 #[tokio::test]
@@ -96,11 +97,11 @@ async fn separates_fallback_feedback_from_the_review_summary() {
         .await
         .unwrap();
     let requests = server.requests();
-    assert!(requests[6].starts_with("POST /repos/owner/repo/pulls/123/comments "));
-    assert!(requests[7].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[7].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[8].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    let bodies = posted_bodies(&server);
     assert!(requests[9].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let bodies = posted_bodies(&server);
+    assert!(requests[10].starts_with("POST /repos/owner/repo/issues/123/comments "));
     assert!(bodies[1].contains("First issue"));
     assert!(!bodies[1].contains("Second issue"));
     assert!(bodies[2].contains("Second issue"));
@@ -164,7 +165,7 @@ async fn keeps_summary_and_full_counts_even_when_every_item_is_inline() {
 async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
     let mut replies = before_publish();
     replies.pop();
-    replies[4].status = 500;
+    replies[5].status = 500;
     replies.push(created());
     let server = Server::start(replies).await;
     let report = server
@@ -173,7 +174,7 @@ async fn failure_to_load_files_falls_back_to_a_conversation_comment() {
         .await
         .unwrap();
     assert_eq!(report.inline, 0);
-    assert_eq!(server.requests().len(), 6);
+    assert_eq!(server.requests().len(), 7);
     let params = request_body(server.requests().last().unwrap());
     assert_eq!(
         params["body"]
@@ -344,7 +345,7 @@ async fn questions_outside_diff_lines_fall_back_to_file_comments() {
         assert_eq!(report.inline, 1);
         assert_eq!(report.published, 1);
         assert_eq!(report.urls.len(), 1);
-        assert_eq!(requests.len(), 7);
+        assert_eq!(requests.len(), 8);
     }
 }
 
@@ -373,6 +374,7 @@ async fn unlocated_questions_and_recommendations_have_individual_conversation_co
         pr_commits(),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        Reply::json(json!([])),
         created(),
         created(),
     ])
@@ -394,7 +396,7 @@ async fn unlocated_questions_and_recommendations_have_individual_conversation_co
     assert_eq!(report.inline, 0);
     assert_eq!(report.published, 2);
     assert_eq!(report.urls.len(), 2);
-    assert_eq!(requests.len(), 6);
+    assert_eq!(requests.len(), 7);
 }
 
 #[tokio::test]
@@ -451,7 +453,7 @@ async fn positions_from_later_file_pages_are_used() {
     let first_page = Reply::json(json!([]))
         .header("Link: <{base}repos/owner/repo/pulls/123/files?per_page=100&page=2>; rel=\"next\"");
     let mut replies = before_inline();
-    replies.insert(4, first_page);
+    replies.insert(5, first_page);
     replies.push(created());
     let server = Server::start(replies).await;
     let report = server
@@ -460,7 +462,7 @@ async fn positions_from_later_file_pages_are_used() {
         .await
         .unwrap();
     assert_eq!(report.inline, 1);
-    assert_eq!(server.requests().len(), 8);
+    assert_eq!(server.requests().len(), 9);
 }
 
 #[tokio::test]
@@ -479,11 +481,11 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
         Err(_)
     );
     let requests = first.requests();
-    let inline_body = request_body(&requests[6])["body"]
+    let inline_body = request_body(&requests[7])["body"]
         .as_str()
         .unwrap()
         .to_string();
-    let failed_body = request_body(&requests[7])["body"]
+    let failed_body = request_body(&requests[8])["body"]
         .as_str()
         .unwrap()
         .to_string();
@@ -495,6 +497,7 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
         Reply::json(json!([{
             "body": inline_body.as_str()
         }])),
+        Reply::json(json!([])),
         created(),
         created(),
     ])
@@ -518,6 +521,7 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
         Reply::json(json!([{
             "body": inline_body.as_str()
         }])),
+        Reply::json(json!([])),
     ])
     .await;
     let report = third
@@ -526,7 +530,7 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
         .await
         .unwrap();
     assert_eq!(report.skipped, 3);
-    assert_eq!(third.requests().len(), 4);
+    assert_eq!(third.requests().len(), 5);
 }
 
 #[tokio::test]

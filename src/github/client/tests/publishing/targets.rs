@@ -15,6 +15,7 @@ fn target_replies(commits: &[&str]) -> Vec<Reply> {
         Reply::json(json!([])),
         Reply::json(json!([])),
     ];
+    replies.extend(commits.iter().map(|_| Reply::json(json!([]))));
     replies.extend([
         Reply::json(json!([{
             "filename": "src/main.rs",

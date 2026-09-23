@@ -35,6 +35,7 @@ async fn empty_documents_do_not_create_comments() {
         pr_commits(),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        Reply::json(json!([])),
     ])
     .await;
     let report = server
@@ -49,7 +50,7 @@ async fn empty_documents_do_not_create_comments() {
             .to_string()
             .starts_with("Published 0 comment(s). 0 inline, 0 conversation.")
     );
-    assert_eq!(server.requests().len(), 4);
+    assert_eq!(server.requests().len(), 5);
 }
 
 fn created() -> Reply {
@@ -72,6 +73,7 @@ fn before_publish() -> Vec<Reply> {
     vec![
         pull(),
         pr_commits(),
+        Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([])),
@@ -112,11 +114,11 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
         .unwrap();
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 7);
+    assert_eq!(requests.len(), 8);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
-    assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
-    assert!(requests[6].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    let body = request_body(&requests[6])["body"]
+    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests[7].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let body = request_body(&requests[7])["body"]
         .as_str()
         .unwrap()
         .to_string();
@@ -161,7 +163,7 @@ async fn reports_comment_creation_failure_without_retrying() {
             .await,
         Err(GitHubError::Api { status: 403, .. })
     );
-    assert_eq!(server.requests().len(), 7);
+    assert_eq!(server.requests().len(), 8);
 }
 
 fn document() -> RenderDocument {
@@ -212,6 +214,7 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
         pr_commits(),
         Reply::json(json!([{ "body": body }])),
         Reply::json(json!([])),
+        Reply::json(json!([])),
     ])
     .await;
     let report = server
@@ -227,7 +230,7 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
             .to_string()
             .starts_with("Published 0 comment(s). 0 inline, 0 conversation.")
     );
-    assert_eq!(server.requests().len(), 4);
+    assert_eq!(server.requests().len(), 5);
 }
 
 #[tokio::test]
@@ -244,6 +247,7 @@ async fn finds_duplicates_on_later_pages_of_conversation_comments() {
         page,
         duplicate,
         Reply::json(json!([])),
+        Reply::json(json!([])),
     ])
     .await;
     let report = server
@@ -254,7 +258,7 @@ async fn finds_duplicates_on_later_pages_of_conversation_comments() {
     assert_eq!(report.skipped, 1);
     assert_eq!(report.urls, Vec::<String>::new());
     assert_eq!(report.published, 0);
-    assert_eq!(server.requests().len(), 5);
+    assert_eq!(server.requests().len(), 6);
 }
 
 #[tokio::test]
@@ -271,6 +275,7 @@ async fn finds_duplicates_on_later_pages_of_inline_comments() {
         Reply::json(json!([])),
         page,
         duplicate,
+        Reply::json(json!([])),
     ])
     .await;
     let report = server
@@ -281,7 +286,7 @@ async fn finds_duplicates_on_later_pages_of_inline_comments() {
     assert_eq!(report.skipped, 1);
     assert_eq!(report.urls, Vec::<String>::new());
     assert_eq!(report.published, 0);
-    assert_eq!(server.requests().len(), 5);
+    assert_eq!(server.requests().len(), 6);
 }
 
 #[tokio::test]
@@ -293,6 +298,7 @@ async fn only_new_items_are_included_while_statistics_cover_the_full_review() {
         pull(),
         pr_commits(),
         Reply::json(json!([{ "body": body }])),
+        Reply::json(json!([])),
         Reply::json(json!([])),
         created(),
         created(),
@@ -442,6 +448,7 @@ async fn rerunning_after_summary_failure_posts_only_the_summary() {
         pr_commits(),
         Reply::json(json!([{"body": bodies[0]}, {"body": bodies[1]}])),
         Reply::json(json!([])),
+        Reply::json(json!([])),
         created(),
     ])
     .await;
@@ -479,6 +486,7 @@ async fn a_summary_only_review_creates_one_marked_comment() {
     let server = Server::start(vec![
         pull(),
         pr_commits(),
+        Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([])),
         created(),
@@ -528,6 +536,7 @@ async fn individual_feedback_retries_only_the_unpublished_items() {
         pr_commits(),
         Reply::json(json!([{"body": bodies[0]}])),
         Reply::json(json!([])),
+        Reply::json(json!([])),
         created(),
         created(),
     ])
@@ -542,4 +551,51 @@ async fn individual_feedback_retries_only_the_unpublished_items() {
     assert_eq!(report.published, 2);
     assert_eq!(retried[0], bodies[1]);
     assert!(retried[1].contains(CONVERSATION_MARKER));
+}
+
+#[tokio::test]
+async fn finds_old_aggregate_markers_on_a_different_current_commit() {
+    let input = document();
+    let review = crate::github::feedback::PreparedReview::new(&input, &repository());
+    let body = review.aggregate(&review.items.iter().collect::<Vec<_>>(), true);
+    let mut initial: Value = serde_json::from_str(&pull().body).unwrap();
+    initial["commits"] = json!(2);
+    let server = Server::start(vec![
+        Reply::json(initial),
+        Reply::json(json!([{"sha": "def5678"}])).header(
+            "Link: <{base}repos/owner/repo/pulls/123/commits?per_page=100&page=2>; rel=\"next\"",
+        ),
+        pr_commits(),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])).header(
+            "Link: <{base}repos/owner/repo/commits/def5678/comments?per_page=100&page=2>; rel=\"next\"",
+        ),
+        Reply::json(json!([{"body": body}])),
+        Reply::json(json!([])),
+    ])
+    .await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 0);
+    assert_eq!(report.skipped, 3);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 8);
+    assert!(requests[1].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
+    assert!(
+        requests[5].starts_with("GET /repos/owner/repo/commits/def5678/comments?per_page=100 ")
+    );
+    assert!(
+        requests[6]
+            .starts_with("GET /repos/owner/repo/commits/def5678/comments?per_page=100&page=2 ")
+    );
+    assert!(
+        requests[7].starts_with("GET /repos/owner/repo/commits/abc1234/comments?per_page=100 ")
+    );
+    for request in requests.iter() {
+        assert!(request.starts_with("GET "));
+    }
 }

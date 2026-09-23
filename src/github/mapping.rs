@@ -6,7 +6,9 @@ use crate::context::{
     ReviewCommentLocation, ReviewCommentThread, ReviewContext, ReviewThreadComment,
 };
 
-use super::client::{IssueComment, PullRequest, PullRequestReview, ReviewComment, User};
+use super::client::{
+    CommitComment, IssueComment, PullRequest, PullRequestReview, ReviewComment, User,
+};
 use super::publish::CONVERSATION_MARKER;
 
 pub fn review_context(
@@ -14,12 +16,14 @@ pub fn review_context(
     mut comments: Vec<IssueComment>,
     mut reviews: Vec<PullRequestReview>,
     review_comments: Vec<ReviewComment>,
+    mut commit_comments: Vec<CommitComment>,
 ) -> ReviewContext {
     trace!(
-        "mapping GitHub review context: conversation_comments={} reviews={} review_comments={}",
+        "mapping GitHub review context: conversation_comments={} reviews={} review_comments={} commit_comments={}",
         comments.len(),
         reviews.len(),
-        review_comments.len()
+        review_comments.len(),
+        commit_comments.len()
     );
     comments.retain(|comment| {
         if is_peer_conversation(&comment.body) {
@@ -131,8 +135,24 @@ pub fn review_context(
     let inline_thread_count = inline_threads.len();
     threads.extend(inline_threads.into_iter().map(|(_, thread)| thread));
 
+    commit_comments
+        .sort_by(|left, right| (&left.created_at, left.id).cmp(&(&right.created_at, right.id)));
+    let commit_threads = commit_comments.len();
+    // Native commit comments have no reply IDs or reliable post-change line coordinates.
+    // Preserve each comment independently without inventing either relationship.
+    threads.extend(commit_comments.into_iter().map(|comment| {
+        ReviewCommentThread {
+            commit: Some(comment.commit_id),
+            location: comment
+                .path
+                .filter(|path| !path.is_empty())
+                .map(|path| ReviewCommentLocation { path, line: None }),
+            comments: vec![thread_comment(comment.user, comment.body)],
+        }
+    }));
+
     debug!(
-        "mapped GitHub review context: conversation_threads={conversation_threads} review_threads={review_threads} skipped_reviews={} inline_threads={inline_thread_count}",
+        "mapped GitHub review context: conversation_threads={conversation_threads} review_threads={review_threads} skipped_reviews={} inline_threads={inline_thread_count} commit_threads={commit_threads}",
         review_count - review_threads
     );
     ReviewContext {

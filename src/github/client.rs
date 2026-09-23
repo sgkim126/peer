@@ -75,6 +75,13 @@ impl GitHubClient {
             .list::<ReviewComment>(&format!("{prefix}/pulls/{number}/comments"))
             .await?;
         let commits = self.pull_request_commits(repository, number, &pull).await?;
+        let mut commit_comments = Vec::new();
+        for commit in &commits {
+            commit_comments.extend(
+                self.list::<CommitComment>(&format!("{prefix}/commits/{commit}/comments"))
+                    .await?,
+            );
+        }
         // A base change can alter commit membership without changing the head or count.
         let (current_pull, _) = self.get::<PullRequest>(pull_url).await?;
         if current_pull.base.sha != pull.base.sha
@@ -83,7 +90,8 @@ impl GitHubClient {
         {
             return Err(GitHubError::IncompleteCommits);
         }
-        let context = mapping::review_context(pull, comments, reviews, review_comments);
+        let context =
+            mapping::review_context(pull, comments, reviews, review_comments, commit_comments);
         debug!(
             "loaded GitHub review input: repository={repository} pull_request={number} commits={} threads={}",
             commits.len(),
@@ -392,6 +400,16 @@ pub struct ReviewComment {
     pub line: Option<NonZeroU32>,
     pub original_line: Option<NonZeroU32>,
     pub side: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommitComment {
+    pub id: u64,
+    pub created_at: String,
+    pub user: Option<User>,
+    pub body: String,
+    pub path: Option<String>,
+    pub commit_id: CommitHash,
 }
 
 #[cfg(test)]

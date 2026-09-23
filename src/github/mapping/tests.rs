@@ -43,6 +43,7 @@ fn with_inline(comments: Vec<Value>) -> ReviewContext {
         vec![],
         vec![],
         serde_json::from_value(json!(comments)).unwrap(),
+        vec![],
     )
 }
 
@@ -126,6 +127,7 @@ fn skips_marked_conversation_comments_and_preserves_other_context() {
         comments,
         vec![review(1, "COMMENTED", json!(marked))],
         serde_json::from_value(json!([root, inline(11, Some(10))])).unwrap(),
+        vec![],
     );
 
     assert_eq!(context.title.as_deref(), Some("Title"));
@@ -157,7 +159,7 @@ fn all_marked_conversation_comments_leave_no_threads() {
         "body": format!("Peer review\n\n{CONVERSATION_MARKER}"),
     }]))
     .unwrap();
-    let context = review_context(pull(), comments, vec![], vec![]);
+    let context = review_context(pull(), comments, vec![], vec![], vec![]);
     assert_eq!(context.comments, vec![]);
 }
 
@@ -179,6 +181,7 @@ fn includes_nonempty_submitted_reviews_and_retains_bots() {
             unsubmitted,
             deleted_author,
         ],
+        vec![],
         vec![],
     );
 
@@ -277,6 +280,7 @@ fn groups_comment_categories_and_matches_direct_context_files() {
         vec![issue],
         vec![review(1, "APPROVED", json!("Verified"))],
         serde_json::from_value(json!([inline(10, None), inline(11, Some(10))])).unwrap(),
+        serde_json::from_value(json!([native(10)])).unwrap(),
     );
     let directory = tempfile::tempdir().unwrap();
     let body = directory.path().join("body.md");
@@ -290,6 +294,9 @@ fn groups_comment_categories_and_matches_direct_context_files() {
         {"commit":"abc1234","location":{"path":"src/root.rs","line":42},"comments":[
             {"author":"reviewer[bot]","body":"Inline 10"},
             {"author":"reviewer[bot]","body":"Inline 11"}
+        ]},
+        {"commit":"abc1234","location":{"path":"src/root.rs"},"comments":[
+            {"author":"reviewer[bot]","body":"Commit comment 10"}
         ]}
     ]"#,
     )
@@ -315,4 +322,75 @@ fn rejects_zero_lines_at_the_api_boundary() {
     let mut zero_line = inline(1, None);
     zero_line["line"] = json!(0);
     assert_matches!(serde_json::from_value::<ReviewComment>(zero_line), Err(_));
+}
+
+fn native(id: u64) -> Value {
+    json!({
+        "id": id,
+        "created_at": "2026-01-01T00:00:00Z",
+        "user": {
+            "login": "reviewer[bot]"
+        }, "body": format!("Commit comment {id}"),
+        "path": "src/root.rs",
+        "commit_id": "abc1234",
+        "line": 14,
+        "position": 4,
+    })
+}
+
+fn with_native(comments: Vec<Value>) -> ReviewContext {
+    review_context(
+        pull(),
+        vec![],
+        vec![],
+        vec![],
+        serde_json::from_value(json!(comments)).unwrap(),
+    )
+}
+
+#[test]
+fn keeps_native_comments_independent_and_sorted_without_assuming_line_coordinates() {
+    let mut earlier = native(3);
+    earlier["created_at"] = json!("2025-01-01T00:00:00Z");
+    earlier["commit_id"] = json!("def5678");
+    let input = vec![native(2), earlier, native(1)];
+    let context = with_native(input.clone());
+    let mut reversed = input;
+    reversed.reverse();
+    assert_eq!(context, with_native(reversed));
+    assert_eq!(context.comments.len(), 3);
+    assert_eq!(
+        context.comments[0].commit.as_ref().unwrap().as_ref(),
+        "def5678"
+    );
+    for (thread, id) in context.comments.iter().zip([3, 1, 2]) {
+        assert_eq!(thread.comments.len(), 1);
+        assert_eq!(thread.comments[0].body, format!("Commit comment {id}"));
+        assert_eq!(thread.comments[0].author, "reviewer[bot]");
+        let location = thread.location.as_ref().unwrap();
+        assert_eq!(location.path, "src/root.rs");
+        assert_eq!(location.line, None);
+    }
+}
+
+#[test]
+fn retains_native_feedback_markers_and_handles_missing_authors_and_paths() {
+    for path in [Value::Null, json!("")] {
+        let mut comment = native(1);
+        comment["path"] = path;
+        comment["user"] = Value::Null;
+        // The conversation marker filters only PR issue comments, as before.
+        let body = format!(
+            "Feedback\n{}\n{CONVERSATION_MARKER}",
+            marker(&"a".repeat(64))
+        );
+        comment["body"] = json!(body);
+        let context = with_native(vec![comment]);
+        assert_eq!(context.comments.len(), 1);
+        let thread = &context.comments[0];
+        assert_eq!(thread.commit.as_ref().unwrap().as_ref(), "abc1234");
+        assert_eq!(thread.location, None);
+        assert_eq!(thread.comments[0].author, "unknown");
+        assert_eq!(thread.comments[0].body, body);
+    }
 }

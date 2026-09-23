@@ -17,7 +17,7 @@ fn confirmed(input: &RenderDocument) -> Reply {
 #[tokio::test]
 async fn missing_patches_fall_back_to_pr_file_comments() {
     let mut replies = before_inline();
-    replies[4] = Reply::json(json!([{
+    replies[5] = Reply::json(json!([{
         "filename": "src/main.rs"
     }]));
     replies.push(created());
@@ -42,7 +42,7 @@ async fn missing_patches_fall_back_to_pr_file_comments() {
 #[tokio::test]
 async fn old_paths_after_rename_fall_back_to_pr_file_comments_on_the_new_path() {
     let mut replies = before_inline();
-    replies[4] = Reply::json(json!([{
+    replies[5] = Reply::json(json!([{
         "filename": "src/new.rs",
         "previous_filename": "src/main.rs",
         "patch": "@@ -5 +5 @@\n-old\n+new"
@@ -77,8 +77,8 @@ async fn rejected_line_comments_fall_back_to_file_comments() {
         .await
         .unwrap();
     let requests = server.requests();
-    assert_eq!(request_body(&requests[6])["line"], 5);
-    assert_eq!(request_body(&requests[7])["subject_type"], "file");
+    assert_eq!(request_body(&requests[7])["line"], 5);
+    assert_eq!(request_body(&requests[8])["subject_type"], "file");
     assert_eq!(posted_bodies(&server)[0], posted_bodies(&server)[1]);
     assert_eq!(report.published, 1);
     assert_eq!(report.inline, 1);
@@ -95,8 +95,8 @@ async fn uncertain_line_is_checked_before_the_file_fallback() {
         .await
         .unwrap();
     let requests = server.requests();
-    assert!(requests[7].starts_with("GET /repos/owner/repo/pulls/123/comments?"));
-    assert_eq!(request_body(&requests[8])["subject_type"], "file");
+    assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123/comments?"));
+    assert_eq!(request_body(&requests[9])["subject_type"], "file");
     assert_eq!(report.inline, 1);
     assert_eq!(report.recovered, 0);
 }
@@ -113,9 +113,9 @@ async fn confirmed_file_fallback_does_not_create_a_conversation_comment() {
         .await
         .unwrap();
     let requests = server.requests();
-    assert_eq!(requests.len(), 9);
-    assert_eq!(request_body(&requests[7])["subject_type"], "file");
-    assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123/comments?"));
+    assert_eq!(requests.len(), 10);
+    assert_eq!(request_body(&requests[8])["subject_type"], "file");
+    assert!(requests[9].starts_with("GET /repos/owner/repo/pulls/123/comments?"));
     assert_eq!(report.inline, 1);
     assert_eq!(report.recovered, 1);
     assert_eq!(report.published, 1);
@@ -133,6 +133,6 @@ async fn failed_file_confirmation_stops_before_further_fallbacks() {
             .await,
         Err(GitHubError::Api { status: 403, .. })
     );
-    assert_eq!(server.requests().len(), 9);
+    assert_eq!(server.requests().len(), 10);
     assert_eq!(posted_bodies(&server).len(), 2);
 }
