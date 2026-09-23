@@ -80,47 +80,47 @@ async fn uncertain_inline_posts_are_reconciled_once_after_all_inline_posts() {
         .unwrap();
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 12);
-    assert!(requests[5].starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    assert_eq!(requests.len(), 13);
     assert!(requests[6].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[7].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[8].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[9].starts_with("POST /repos/owner/repo/pulls/123/comments "));
-    assert!(requests[10].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
-    assert!(requests[11].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[10].starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    assert!(requests[11].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert!(requests[12].starts_with("POST /repos/owner/repo/issues/123/comments "));
 
     assert!(
-        request_body(&requests[5])["body"]
+        request_body(&requests[6])["body"]
             .as_str()
             .unwrap()
             .contains("Confirmed inline")
     );
     assert!(
-        request_body(&requests[6])["body"]
+        request_body(&requests[7])["body"]
             .as_str()
             .unwrap()
             .contains("Unconfirmed inline")
     );
     assert!(
-        request_body(&requests[7])["body"]
+        request_body(&requests[8])["body"]
             .as_str()
             .unwrap()
             .contains("Rejected inline")
     );
     assert!(
-        request_body(&requests[8])["body"]
+        request_body(&requests[9])["body"]
             .as_str()
             .unwrap()
             .contains("Successful inline")
     );
     assert!(
-        request_body(&requests[9])["body"]
+        request_body(&requests[10])["body"]
             .as_str()
             .unwrap()
             .contains("Confirmed inline without URL")
     );
 
-    let params = request_body(&requests[11]);
+    let params = request_body(&requests[12]);
     let fallback = params["body"].as_str().unwrap();
     assert!(!fallback.contains("Confirmed inline"));
     assert!(!fallback.contains("Successful inline"));
@@ -326,12 +326,12 @@ async fn inline_recovery_checks_only_inline_comments_before_posting_a_fallback()
         .await
         .unwrap();
     let requests = server.requests();
-    assert_eq!(requests.len(), 8);
-    assert!(requests[1].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
-    assert!(requests[2].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
-    assert!(requests[5].starts_with("POST /repos/owner/repo/pulls/123/comments "));
-    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
-    assert!(requests[7].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert_eq!(requests.len(), 9);
+    assert!(requests[2].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
+    assert!(requests[3].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert!(requests[6].starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    assert!(requests[7].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert!(requests[8].starts_with("POST /repos/owner/repo/issues/123/comments "));
     assert_eq!(report.published, 1);
     assert_eq!(report.inline, 0);
     assert_eq!(report.recovered, 0);
@@ -355,11 +355,11 @@ async fn inline_recovery_finds_a_matching_comment_on_a_later_page() {
         .unwrap();
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 8);
-    assert!(requests[5].starts_with("POST /repos/owner/repo/pulls/123/comments "));
-    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert_eq!(requests.len(), 9);
+    assert!(requests[6].starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    assert!(requests[7].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
     assert!(
-        requests[7].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100&page=2 ")
+        requests[8].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100&page=2 ")
     );
     assert_eq!(report.published, 1);
     assert_eq!(report.inline, 1);
@@ -384,11 +384,11 @@ async fn failed_reconciliation_stops_before_any_fallback() {
         Err(GitHubError::Api { status: 403, .. })
     );
     let requests = server.requests();
-    assert_eq!(requests.len(), 9);
-    assert!(requests[5].starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    assert_eq!(requests.len(), 10);
     assert!(requests[6].starts_with("POST /repos/owner/repo/pulls/123/comments "));
     assert!(requests[7].starts_with("POST /repos/owner/repo/pulls/123/comments "));
-    assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert!(requests[8].starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    assert!(requests[9].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
 }
 
 #[tokio::test]
@@ -410,12 +410,12 @@ async fn an_uncertain_fallback_post_is_checked_with_fresh_feedback() {
         .await
         .unwrap();
     let requests = server.requests();
-    assert_eq!(requests.len(), 10);
-    assert!(requests[5].starts_with("POST /repos/owner/repo/pulls/123/comments "));
-    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
-    assert!(requests[7].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    assert!(requests[8].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
-    assert!(requests[9].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert_eq!(requests.len(), 11);
+    assert!(requests[6].starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    assert!(requests[7].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
+    assert!(requests[8].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert!(requests[9].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
+    assert!(requests[10].starts_with("GET /repos/owner/repo/pulls/123/comments?per_page=100 "));
     assert_eq!(report.published, 1);
     assert_eq!(report.recovered, 1);
     assert_eq!(report.inline, 0);

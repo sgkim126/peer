@@ -108,6 +108,16 @@ impl GitHubClient {
         if commits.len() != pull.commits || commits.last() != Some(&pull.head.sha) {
             return Err(GitHubError::IncompleteCommits);
         }
+        // Reject repeated pages.
+        if commits
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<HashSet<&str>>()
+            .len()
+            != commits.len()
+        {
+            return Err(GitHubError::IncompleteCommits);
+        }
         Ok(commits)
     }
 
