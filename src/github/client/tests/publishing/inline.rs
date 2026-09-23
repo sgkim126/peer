@@ -311,7 +311,7 @@ async fn question_without_related_commits_is_published_inline() {
 }
 
 #[tokio::test]
-async fn questions_on_unpositionable_lines_fall_back_to_a_conversation_comment() {
+async fn questions_outside_diff_lines_fall_back_to_file_comments() {
     for line in [3, 99] {
         let mut input = file_question(&["abc1234", "def5678"], "abc1234");
         input.questions[0].location.as_mut().unwrap().file.line = Some(line);
@@ -325,12 +325,13 @@ async fn questions_on_unpositionable_lines_fall_back_to_a_conversation_comment()
             .unwrap();
         let requests = server.requests();
         let request = requests.last().unwrap();
-        assert!(request.starts_with("POST /repos/owner/repo/issues/123/comments "));
+        assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
         let params = request_body(request);
         let body = params["body"].as_str().unwrap();
         assert!(body.contains("**question/rationale**"));
-        assert!(body.contains(CONVERSATION_MARKER));
-        assert_eq!(report.inline, 0);
+        assert!(!body.contains(CONVERSATION_MARKER));
+        assert_eq!(params["subject_type"], "file");
+        assert_eq!(report.inline, 1);
         assert_eq!(report.published, 1);
         assert_eq!(report.urls.len(), 1);
         assert_eq!(requests.len(), 7);
@@ -518,7 +519,7 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
 }
 
 #[tokio::test]
-async fn zero_line_falls_back_to_a_conversation_comment() {
+async fn zero_line_falls_back_to_a_file_comment() {
     let mut input = finding();
     input.findings[0].location.as_mut().unwrap().line = Some(0);
     let mut replies = before_inline();
@@ -529,19 +530,23 @@ async fn zero_line_falls_back_to_a_conversation_comment() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert_eq!(report.inline, 0);
+    assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 1);
     let requests = server.requests();
+    assert_eq!(
+        request_body(requests.last().unwrap())["subject_type"],
+        "file"
+    );
     assert!(
         requests
             .last()
             .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+            .starts_with("POST /repos/owner/repo/pulls/123/comments ")
     );
 }
 
 #[tokio::test]
-async fn line_outside_patch_falls_back_to_a_conversation_comment() {
+async fn line_outside_patch_falls_back_to_a_file_comment() {
     let mut input = finding();
     input.findings[0].location.as_mut().unwrap().line = Some(100);
     let mut replies = before_inline();
@@ -552,13 +557,17 @@ async fn line_outside_patch_falls_back_to_a_conversation_comment() {
         .publish(&repository(), number(), &input)
         .await
         .unwrap();
-    assert_eq!(report.inline, 0);
+    assert_eq!(report.inline, 1);
     assert_eq!(report.urls.len(), 1);
     let requests = server.requests();
+    assert_eq!(
+        request_body(requests.last().unwrap())["subject_type"],
+        "file"
+    );
     assert!(
         requests
             .last()
             .unwrap()
-            .starts_with("POST /repos/owner/repo/issues/123/comments ")
+            .starts_with("POST /repos/owner/repo/pulls/123/comments ")
     );
 }

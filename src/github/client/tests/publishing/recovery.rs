@@ -1,5 +1,12 @@
 use super::{inline::*, *};
 
+// File comments isolate the original recovery behavior from line-to-file fallback.
+fn finding() -> RenderDocument {
+    let mut input = super::finding();
+    input.findings[0].location.as_mut().unwrap().line = None;
+    input
+}
+
 fn failed(status: u16) -> Reply {
     let mut reply = created();
     reply.status = status;
@@ -22,7 +29,6 @@ fn inline_findings(messages: &[&str]) -> RenderDocument {
                 "severity": "high",
                 "message": message,
                 "file": "src/main.rs",
-                "line": 5,
             })
         })
         .collect::<Vec<_>>();

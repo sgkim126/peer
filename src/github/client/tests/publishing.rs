@@ -2,6 +2,7 @@ use super::*;
 use crate::github::publish::CONVERSATION_MARKER;
 use crate::render::{RenderDocument, github};
 
+mod file_fallback;
 mod inline;
 mod recovery;
 mod revalidation;
@@ -402,4 +403,13 @@ async fn duplicate_commits_prevent_feedback_lookup_and_publication() {
     assert_eq!(requests.len(), 2);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
     assert!(requests[1].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
+}
+
+fn posted_bodies(server: &Server) -> Vec<String> {
+    server
+        .requests()
+        .iter()
+        .filter(|request| request.starts_with("POST "))
+        .map(|request| request_body(request)["body"].as_str().unwrap().to_owned())
+        .collect()
 }

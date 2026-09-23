@@ -140,8 +140,23 @@ impl GitHubClient {
             commits: &commits,
             files: &files,
         };
-        self.publish_pr_comments(&target, &remaining, &mut fallback_fingerprints, &mut report)
-            .await?;
+        self.publish_pr_comments(
+            &target,
+            &remaining,
+            false,
+            &mut fallback_fingerprints,
+            &mut report,
+        )
+        .await?;
+        // Retry unresolved line locations as file comments after confirmation.
+        self.publish_pr_comments(
+            &target,
+            &remaining,
+            true,
+            &mut fallback_fingerprints,
+            &mut report,
+        )
+        .await?;
         let fallback = remaining
             .into_iter()
             .filter(|item| fallback_fingerprints.contains(&item.fingerprint))
@@ -190,14 +205,26 @@ impl GitHubClient {
         &self,
         target: &PrCommentTarget<'_>,
         remaining: &[&'a Feedback],
+        file_only: bool,
         fallback_fingerprints: &mut HashSet<&'a String>,
         report: &mut PublishReport,
     ) -> Result<(), GitHubError> {
         let mut uncertain = Vec::new();
         for &item in remaining {
+            if file_only && !fallback_fingerprints.contains(&item.fingerprint) {
+                continue;
+            }
+            let mut location = item.location.clone();
+            if file_only {
+                let Some(location) = location.as_mut().filter(|location| location.line.is_some())
+                else {
+                    continue;
+                };
+                location.line = None;
+            }
             let position = resolve_commit(item.commit.as_ref(), target.commits)
                 .filter(|commit| *commit == target.head)
-                .and(item.location.as_ref())
+                .and(location.as_ref())
                 .and_then(|location| comment_position(target.files, location));
             let Some(mut params) = position else {
                 fallback_fingerprints.insert(&item.fingerprint);
@@ -207,6 +234,7 @@ impl GitHubClient {
             params["body"] = json!(format!("{}\n\n{}", item.body, marker(&item.fingerprint)));
             match self.post::<PublishedComment>(&target.path, &params).await {
                 Ok(comment) => {
+                    fallback_fingerprints.remove(&item.fingerprint);
                     report.urls.push(comment.html_url);
                     report.published += 1;
                     report.inline += 1;
@@ -217,7 +245,7 @@ impl GitHubClient {
                         continue;
                     }
                     warn!(
-                        "Could not publish inline feedback at {}: {error}; collecting it in a conversation comment",
+                        "Could not publish inline feedback at {}: {error}; trying the next comment target",
                         params["path"]
                     );
                     fallback_fingerprints.insert(&item.fingerprint);
@@ -230,6 +258,7 @@ impl GitHubClient {
                 .await?;
             for (item, path, error) in uncertain {
                 if confirmed.fingerprints.contains(&item.fingerprint) {
+                    fallback_fingerprints.remove(&item.fingerprint);
                     if let Some(url) = confirmed.urls.get(&item.fingerprint) {
                         report.urls.push(url.clone());
                     }
@@ -238,7 +267,7 @@ impl GitHubClient {
                     report.recovered += 1;
                 } else {
                     warn!(
-                        "Could not publish inline feedback at {path}: {error}; collecting it in a conversation comment"
+                        "Could not publish inline feedback at {path}: {error}; trying the next comment target"
                     );
                     fallback_fingerprints.insert(&item.fingerprint);
                 }
