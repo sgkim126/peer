@@ -5,6 +5,7 @@ use crate::render::{RenderDocument, github};
 mod inline;
 mod recovery;
 mod revalidation;
+mod targets;
 
 fn finding() -> RenderDocument {
     serde_json::from_value(json!({
@@ -28,7 +29,13 @@ async fn empty_documents_do_not_create_comments() {
         "stages": []
     }))
     .unwrap();
-    let server = Server::start(vec![pull(), Reply::json(json!([])), Reply::json(json!([]))]).await;
+    let server = Server::start(vec![
+        pull(),
+        pr_commits(),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+    ])
+    .await;
     let report = server
         .client()
         .publish(&repository(), number(), &input)
@@ -41,7 +48,7 @@ async fn empty_documents_do_not_create_comments() {
             .to_string()
             .starts_with("Published 0 comment(s). 0 inline, 0 conversation.")
     );
-    assert_eq!(server.requests().len(), 3);
+    assert_eq!(server.requests().len(), 4);
 }
 
 fn created() -> Reply {
@@ -56,9 +63,14 @@ fn request_body(request: &str) -> Value {
     serde_json::from_str(request.split_once("\r\n\r\n").unwrap().1).unwrap()
 }
 
+fn pr_commits() -> Reply {
+    Reply::json(json!([{ "sha": "abc1234" }]))
+}
+
 fn before_publish() -> Vec<Reply> {
     vec![
         pull(),
+        pr_commits(),
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([])),
@@ -94,11 +106,11 @@ async fn publishes_rendered_input_to_the_selected_pull_request() {
         .unwrap();
 
     let requests = server.requests();
-    assert_eq!(requests.len(), 6);
+    assert_eq!(requests.len(), 7);
     assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
-    assert!(requests[4].starts_with("GET /repos/owner/repo/pulls/123 "));
-    assert!(requests[5].starts_with("POST /repos/owner/repo/issues/123/comments "));
-    let body = request_body(&requests[5])["body"]
+    assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests[6].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    let body = request_body(&requests[6])["body"]
         .as_str()
         .unwrap()
         .to_string();
@@ -143,7 +155,7 @@ async fn reports_comment_creation_failure_without_retrying() {
             .await,
         Err(GitHubError::Api { status: 403, .. })
     );
-    assert_eq!(server.requests().len(), 6);
+    assert_eq!(server.requests().len(), 7);
 }
 
 fn document() -> RenderDocument {
@@ -191,6 +203,7 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
     }
     let server = Server::start(vec![
         pull(),
+        pr_commits(),
         Reply::json(json!([{ "body": body }])),
         Reply::json(json!([])),
     ])
@@ -208,7 +221,7 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
             .to_string()
             .starts_with("Published 0 comment(s). 0 inline, 0 conversation.")
     );
-    assert_eq!(server.requests().len(), 3);
+    assert_eq!(server.requests().len(), 4);
 }
 
 #[tokio::test]
@@ -219,7 +232,14 @@ async fn finds_duplicates_on_later_pages_of_conversation_comments() {
         "Link: <{base}repos/owner/repo/issues/123/comments?per_page=100&page=2>; rel=\"next\"",
     );
     let duplicate = Reply::json(json!([{ "body": body }]));
-    let server = Server::start(vec![pull(), page, duplicate, Reply::json(json!([]))]).await;
+    let server = Server::start(vec![
+        pull(),
+        pr_commits(),
+        page,
+        duplicate,
+        Reply::json(json!([])),
+    ])
+    .await;
     let report = server
         .client()
         .publish(&repository(), number(), &input)
@@ -228,7 +248,7 @@ async fn finds_duplicates_on_later_pages_of_conversation_comments() {
     assert_eq!(report.skipped, 1);
     assert_eq!(report.urls, Vec::<String>::new());
     assert_eq!(report.published, 0);
-    assert_eq!(server.requests().len(), 4);
+    assert_eq!(server.requests().len(), 5);
 }
 
 #[tokio::test]
@@ -239,7 +259,14 @@ async fn finds_duplicates_on_later_pages_of_inline_comments() {
         "Link: <{base}repos/owner/repo/pulls/123/comments?per_page=100&page=2>; rel=\"next\"",
     );
     let duplicate = Reply::json(json!([{ "body": body }]));
-    let server = Server::start(vec![pull(), Reply::json(json!([])), page, duplicate]).await;
+    let server = Server::start(vec![
+        pull(),
+        pr_commits(),
+        Reply::json(json!([])),
+        page,
+        duplicate,
+    ])
+    .await;
     let report = server
         .client()
         .publish(&repository(), number(), &input)
@@ -248,7 +275,7 @@ async fn finds_duplicates_on_later_pages_of_inline_comments() {
     assert_eq!(report.skipped, 1);
     assert_eq!(report.urls, Vec::<String>::new());
     assert_eq!(report.published, 0);
-    assert_eq!(server.requests().len(), 4);
+    assert_eq!(server.requests().len(), 5);
 }
 
 #[tokio::test]
@@ -258,6 +285,7 @@ async fn only_new_items_are_included_while_statistics_cover_the_full_review() {
     input.findings[1].message = "Changed issue".into();
     let server = Server::start(vec![
         pull(),
+        pr_commits(),
         Reply::json(json!([{ "body": body }])),
         Reply::json(json!([])),
         created(),
@@ -294,22 +322,7 @@ async fn duplicates_within_one_input_are_published_once() {
 async fn failure_to_read_existing_conversation_comments_prevents_any_posts() {
     let mut failed = Reply::json(json!([]));
     failed.status = 500;
-    let server = Server::start(vec![pull(), failed]).await;
-    assert_matches!(
-        server
-            .client()
-            .publish(&repository(), number(), &finding())
-            .await,
-        Err(GitHubError::Api { status: 500, .. })
-    );
-    assert_eq!(server.requests().len(), 2);
-}
-
-#[tokio::test]
-async fn failure_to_read_existing_inline_comments_prevents_any_posts() {
-    let mut failed = Reply::json(json!([]));
-    failed.status = 500;
-    let server = Server::start(vec![pull(), Reply::json(json!([])), failed]).await;
+    let server = Server::start(vec![pull(), pr_commits(), failed]).await;
     assert_matches!(
         server
             .client()
@@ -318,4 +331,75 @@ async fn failure_to_read_existing_inline_comments_prevents_any_posts() {
         Err(GitHubError::Api { status: 500, .. })
     );
     assert_eq!(server.requests().len(), 3);
+}
+
+#[tokio::test]
+async fn failure_to_read_existing_inline_comments_prevents_any_posts() {
+    let mut failed = Reply::json(json!([]));
+    failed.status = 500;
+    let server = Server::start(vec![pull(), pr_commits(), Reply::json(json!([])), failed]).await;
+    assert_matches!(
+        server
+            .client()
+            .publish(&repository(), number(), &finding())
+            .await,
+        Err(GitHubError::Api { status: 500, .. })
+    );
+    assert_eq!(server.requests().len(), 4);
+}
+
+#[tokio::test]
+async fn incomplete_commit_list_prevents_feedback_lookup_and_publication() {
+    let mut initial: Value = serde_json::from_str(&pull().body).unwrap();
+    initial["commits"] = json!(2);
+    let server = Server::start(vec![Reply::json(initial), pr_commits()]).await;
+    assert_matches!(
+        server
+            .client()
+            .publish(&repository(), number(), &finding())
+            .await,
+        Err(GitHubError::IncompleteCommits)
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests[1].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
+}
+
+#[tokio::test]
+async fn mismatched_commit_list_head_prevents_feedback_lookup_and_publication() {
+    let server = Server::start(vec![pull(), Reply::json(json!([{ "sha": "def5678" }]))]).await;
+    assert_matches!(
+        server
+            .client()
+            .publish(&repository(), number(), &finding())
+            .await,
+        Err(GitHubError::IncompleteCommits)
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests[1].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
+}
+
+#[tokio::test]
+async fn duplicate_commits_prevent_feedback_lookup_and_publication() {
+    let mut initial: Value = serde_json::from_str(&pull().body).unwrap();
+    initial["commits"] = json!(2);
+    let server = Server::start(vec![
+        Reply::json(initial),
+        Reply::json(json!([{ "sha": "abc1234" }, { "sha": "abc1234" }])),
+    ])
+    .await;
+    assert_matches!(
+        server
+            .client()
+            .publish(&repository(), number(), &finding())
+            .await,
+        Err(GitHubError::IncompleteCommits)
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests[1].starts_with("GET /repos/owner/repo/pulls/123/commits?per_page=100 "));
 }

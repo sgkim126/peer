@@ -6,6 +6,7 @@ use log::warn;
 use serde::Deserialize;
 use serde_json::json;
 
+use crate::git::CommitHash;
 use crate::render::RenderDocument;
 
 use super::feedback::{PreparedReview, fingerprints, marker};
@@ -72,6 +73,7 @@ impl GitHubClient {
         input: &RenderDocument,
     ) -> Result<PublishReport, GitHubError> {
         let pull = self.pull_request(repository, number).await?;
+        let commits = self.pull_request_commits(repository, number, &pull).await?;
         let mut seen = self
             .existing_feedback(repository, number)
             .await?
@@ -126,9 +128,9 @@ impl GitHubClient {
         let mut fallback_fingerprints = HashSet::new();
         let mut uncertain = Vec::new();
         for &item in &remaining {
-            let position = item
-                .location
-                .as_ref()
+            let position = resolve_commit(item.commit.as_ref(), &commits)
+                .filter(|commit| *commit == &pull.head.sha)
+                .and(item.location.as_ref())
                 .and_then(|location| comment_position(&files, location));
             let Some(mut params) = position else {
                 fallback_fingerprints.insert(&item.fingerprint);
@@ -254,4 +256,15 @@ impl GitHubClient {
         }
         Ok(existing)
     }
+}
+
+/// Resolves a feedback target only when exactly one current PR commit matches.
+fn resolve_commit<'a>(
+    target: Option<&CommitHash>,
+    commits: &'a [CommitHash],
+) -> Option<&'a CommitHash> {
+    let target = target?;
+    let mut matches = commits.iter().filter(|commit| target.matches(commit));
+    let commit = matches.next()?;
+    matches.next().is_none().then_some(commit)
 }

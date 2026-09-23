@@ -14,7 +14,7 @@ async fn changed_base_prevents_publication() {
             .await,
         Err(GitHubError::PullRequestChanged)
     );
-    assert_eq!(server.requests().len(), 5);
+    assert_eq!(server.requests().len(), 6);
 }
 
 #[tokio::test]
@@ -31,7 +31,7 @@ async fn changed_head_prevents_publication() {
             .await,
         Err(GitHubError::PullRequestChanged)
     );
-    assert_eq!(server.requests().len(), 5);
+    assert_eq!(server.requests().len(), 6);
 }
 
 #[tokio::test]
@@ -40,7 +40,7 @@ async fn empty_files_with_changed_revision_prevent_publication() {
         let mut current: Value = serde_json::from_str(&pull().body).unwrap();
         current[revision]["sha"] = json!("fedcba9");
         let mut replies = before_inline();
-        replies[3] = Reply::json(json!([]));
+        replies[4] = Reply::json(json!([]));
         *replies.last_mut().unwrap() = Reply::json(current);
         let server = Server::start(replies).await;
         assert_matches!(
@@ -51,8 +51,8 @@ async fn empty_files_with_changed_revision_prevent_publication() {
             Err(GitHubError::PullRequestChanged)
         );
         let requests = server.requests();
-        assert_eq!(requests.len(), 5);
-        assert!(requests[4].starts_with("GET /repos/owner/repo/pulls/123 "));
+        assert_eq!(requests.len(), 6);
+        assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
         assert!(requests.iter().all(|request| request.starts_with("GET ")));
     }
 }
@@ -69,5 +69,5 @@ async fn failed_pr_revalidation_prevents_publication() {
             .await,
         Err(GitHubError::Api { status: 500, .. })
     );
-    assert_eq!(server.requests().len(), 5);
+    assert_eq!(server.requests().len(), 6);
 }

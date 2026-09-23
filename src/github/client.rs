@@ -74,16 +74,7 @@ impl GitHubClient {
         let review_comments = self
             .list::<ReviewComment>(&format!("{prefix}/pulls/{number}/comments"))
             .await?;
-        let commits: Vec<_> = self
-            .list::<CommitRef>(&format!("{prefix}/pulls/{number}/commits"))
-            .await?
-            .into_iter()
-            .map(|commit| commit.sha)
-            .collect();
-        // Reject truncated lists and commits inconsistent with the initial PR.
-        if commits.len() != pull.commits || commits.last() != Some(&pull.head.sha) {
-            return Err(GitHubError::IncompleteCommits);
-        }
+        let commits = self.pull_request_commits(repository, number, &pull).await?;
         // A base change can alter commit membership without changing the head or count.
         let (current_pull, _) = self.get::<PullRequest>(pull_url).await?;
         if current_pull.base.sha != pull.base.sha
@@ -99,6 +90,35 @@ impl GitHubClient {
             context.comments.len()
         );
         Ok(GitHubReviewInput { context, commits })
+    }
+
+    pub async fn pull_request_commits(
+        &self,
+        repository: &Repository,
+        number: NonZeroU64,
+        pull: &PullRequest,
+    ) -> Result<Vec<CommitHash>, GitHubError> {
+        let commits: Vec<_> = self
+            .list::<CommitRef>(&format!("repos/{repository}/pulls/{number}/commits"))
+            .await?
+            .into_iter()
+            .map(|commit| commit.sha)
+            .collect();
+        // Reject truncated lists and commits inconsistent with the initial PR.
+        if commits.len() != pull.commits || commits.last() != Some(&pull.head.sha) {
+            return Err(GitHubError::IncompleteCommits);
+        }
+        // Reject repeated pages.
+        if commits
+            .iter()
+            .map(AsRef::as_ref)
+            .collect::<HashSet<&str>>()
+            .len()
+            != commits.len()
+        {
+            return Err(GitHubError::IncompleteCommits);
+        }
+        Ok(commits)
     }
 
     pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitHubError> {
