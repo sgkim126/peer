@@ -9,6 +9,7 @@ use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
 mod commit_comments;
+mod commit_files;
 mod publishing;
 
 struct Reply {

@@ -10,6 +10,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use crate::context::ReviewContext;
 use crate::git::CommitHash;
 
+use super::position::ChangedFile;
 use super::{GitHubError, Repository, mapping};
 
 const API_URL: &str = "https://api.github.com/";
@@ -121,6 +122,31 @@ impl GitHubClient {
     ) -> Result<Vec<CommitComment>, GitHubError> {
         self.list::<CommitComment>(&format!("repos/{repository}/commits/{commit}/comments"))
             .await
+    }
+
+    #[cfg_attr(not(test), expect(dead_code))]
+    async fn commit_files(
+        &self,
+        repository: &Repository,
+        commit: &CommitHash,
+    ) -> Result<Vec<ChangedFile>, GitHubError> {
+        let mut url = self
+            .base
+            .join(&format!("repos/{repository}/commits/{commit}"))
+            .expect("valid commit path");
+        url.set_query(Some("per_page=100"));
+        let mut next = Some(url);
+        let mut seen = HashSet::new();
+        let mut files = Vec::new();
+        while let Some(url) = next {
+            if !seen.insert(url.clone()) {
+                return Err(GitHubError::InvalidPagination);
+            }
+            let (page, headers) = self.get::<CommitFiles>(url).await?;
+            files.extend(page.files);
+            next = next_page(&headers)?;
+        }
+        Ok(files)
     }
 
     pub async fn pull_request_commits(
@@ -439,6 +465,11 @@ pub struct CommitComment {
     pub body: String,
     pub path: Option<String>,
     pub commit_id: CommitHash,
+}
+
+#[derive(Deserialize)]
+struct CommitFiles {
+    files: Vec<ChangedFile>,
 }
 
 #[cfg(test)]
