@@ -65,9 +65,33 @@ impl GitLabClient {
         {
             return Err(GitLabError::IncompleteCommits);
         }
-        let discussions = self
+        let mut discussions = self
             .list::<Discussion>(&format!("{prefix}/discussions"))
             .await?;
+        let project_ids = [
+            Some(source.project_id),
+            source
+                .source_project_id
+                .filter(|project_id| *project_id != source.project_id),
+        ];
+        for commit in &commits {
+            for project_id in project_ids.iter().flatten() {
+                let mut commit_discussions = self
+                    .list::<Discussion>(&format!(
+                        "projects/{project_id}/repository/commits/{commit}/discussions"
+                    ))
+                    .await?;
+                // Commit notes omit commit_id, so preserve the requested SHA
+                // on every note, including replies whose root was deleted.
+                for note in commit_discussions
+                    .iter_mut()
+                    .flat_map(|discussion| &mut discussion.notes)
+                {
+                    note.commit_id.get_or_insert_with(|| commit.clone());
+                }
+                discussions.extend(commit_discussions);
+            }
+        }
         let current = self.merge_request(repository, number).await?;
         if current.source(number)? != source
             || current.source_branch != merge_request.source_branch

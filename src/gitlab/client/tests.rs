@@ -162,6 +162,8 @@ async fn loads_a_fork_merge_request_from_the_target_project() {
         Reply::json(merge_request()),
         commits(),
         discussions(),
+        discussions(),
+        discussions(),
         Reply::json(merge_request()),
     ])
     .await;
@@ -177,12 +179,20 @@ async fn loads_a_fork_merge_request_from_the_target_project() {
     assert_eq!(input.source.iid, 123);
     assert_eq!(input.commits, [CommitHash::new("abc1234").unwrap()]);
     let requests = server.requests();
-    assert_eq!(requests.len(), 4);
-    for request in &requests {
+    assert_eq!(requests.len(), 6);
+    for index in [0, 1, 2, 5] {
         assert!(
-            request
+            requests[index]
                 .starts_with("GET /api/v4/projects/group%2Fsubgroup%2Fproject/merge_requests/123")
         );
+    }
+    assert!(requests[3].starts_with(
+        "GET /api/v4/projects/5/repository/commits/abc1234/discussions?per_page=100 "
+    ));
+    assert!(requests[4].starts_with(
+        "GET /api/v4/projects/9/repository/commits/abc1234/discussions?per_page=100 "
+    ));
+    for request in &requests {
         assert!(request.contains("private-token: test-private-token\r\n"));
         assert!(!request.contains("authorization:"));
     }
@@ -197,6 +207,7 @@ async fn accepts_a_deleted_source_project_and_an_empty_description() {
         Reply::json(merge_request.clone()),
         commits(),
         discussions(),
+        Reply::json(json!([{"id": "native", "notes": [note(1)]}])),
         Reply::json(merge_request),
     ])
     .await;
@@ -207,6 +218,23 @@ async fn accepts_a_deleted_source_project_and_an_empty_description() {
         .unwrap();
     assert_eq!(input.source.source_project_id, None);
     assert_eq!(input.context.body.as_deref(), Some(""));
+    assert_eq!(input.context.comments.len(), 1);
+    assert_eq!(
+        input.context.comments[0]
+            .commit
+            .as_ref()
+            .map(CommitHash::as_ref),
+        Some("abc1234")
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 5);
+    assert!(requests[3].starts_with(
+        "GET /api/v4/projects/5/repository/commits/abc1234/discussions?per_page=100 "
+    ));
+    assert!(
+        requests[4]
+            .starts_with("GET /api/v4/projects/group%2Fsubgroup%2Fproject/merge_requests/123 ")
+    );
 }
 
 #[tokio::test]
@@ -217,6 +245,10 @@ async fn loads_every_commit_and_discussion_page_without_assuming_commit_order() 
         Reply::json(json!([{"id": "2345678"}])),
         Reply::json(json!([{"id": "first", "notes": [note(1)]}])).header("Link: <{base}projects/group%2Fsubgroup%2Fproject/merge_requests/123/discussions?per_page=100&page=2>; rel=\"next\""),
         Reply::json(json!([{"id": "second", "notes": [note(2)]}])),
+        discussions(),
+        discussions(),
+        discussions(),
+        discussions(),
         Reply::json(merge_request()),
     ]).await;
     let input = server
@@ -311,6 +343,8 @@ async fn revalidates_all_diff_refs_project_identity_and_branch_names() {
             Reply::json(merge_request()),
             commits(),
             discussions(),
+            discussions(),
+            discussions(),
             Reply::json(current),
         ])
         .await;
@@ -318,7 +352,11 @@ async fn revalidates_all_diff_refs_project_identity_and_branch_names() {
             server.client().review_input(&repository(), number()).await,
             Err(GitLabError::MergeRequestChanged)
         );
-        assert_eq!(server.requests().len(), 4, "{field}");
+        assert_eq!(server.requests().len(), 6, "{field}");
+        assert!(
+            server.requests()[5]
+                .starts_with("GET /api/v4/projects/group%2Fsubgroup%2Fproject/merge_requests/123 ")
+        );
     }
 }
 
@@ -390,6 +428,8 @@ async fn revalidation_failure_discards_the_input() {
         Reply::json(merge_request()),
         commits(),
         discussions(),
+        discussions(),
+        discussions(),
         Reply::json(json!({})).status(503),
     ])
     .await;
@@ -397,7 +437,10 @@ async fn revalidation_failure_discards_the_input() {
         server.client().review_input(&repository(), number()).await,
         Err(GitLabError::Api { status: 503, .. })
     );
+    assert_eq!(server.requests().len(), 6);
 }
+
+mod commit_comments;
 
 #[tokio::test]
 async fn rejects_pagination_links_to_another_origin() {
