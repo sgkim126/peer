@@ -13,6 +13,52 @@ pub struct ChangedFile {
     pub status: Option<String>,
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
+#[derive(Debug, PartialEq, Eq)]
+pub enum CommitCommentPosition {
+    New { path: String, line: NonZeroU32 },
+    Old { path: String },
+}
+
+/// Resolves a native commit comment's position using that commit's GitHub patch.
+///
+/// Positions count every patch row after the first hunk header, including later
+/// hunk headers and no-newline markers. Deleted lines retain their old path, but
+/// cannot identify a line in the commented commit.
+#[cfg_attr(not(test), expect(dead_code))]
+pub fn commit_comment_position(
+    files: &[ChangedFile],
+    path: &str,
+    position: u32,
+) -> Option<CommitCommentPosition> {
+    if position == 0 {
+        return None;
+    }
+    let file = changed_file(files, path)?;
+    let mut found = None;
+    visit_patch_lines(file.patch.as_deref()?, |index, line| {
+        if index == position {
+            found = Some(line);
+        }
+    })?;
+    match found? {
+        PatchLine::New(line) if file.status.as_deref() != Some("removed") => {
+            Some(CommitCommentPosition::New {
+                path: file.filename.clone(),
+                line,
+            })
+        }
+        PatchLine::Old => Some(CommitCommentPosition::Old {
+            path: file
+                .previous_filename
+                .as_ref()
+                .unwrap_or(&file.filename)
+                .clone(),
+        }),
+        PatchLine::New(_) => None,
+    }
+}
+
 /// Maps locations in the reviewed head to GitHub PR diff positions.
 ///
 /// The caller must verify that the diff is for the location's commit.
@@ -216,6 +262,136 @@ mod tests {
             "line": line,
             "side": "RIGHT"
         })
+    }
+
+    #[test]
+    fn commit_comments_resolve_added_lines() {
+        let files = [file("@@ -10,0 +11,2 @@\n+first\n+second")];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 2),
+            Some(CommitCommentPosition::New {
+                path: "src/main.rs".into(),
+                line: NonZeroU32::new(12).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_resolve_context_to_post_change_line_numbers() {
+        let files = [file("@@ -4,2 +4,3 @@\n context\n+added\n context")];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 3),
+            Some(CommitCommentPosition::New {
+                path: "src/main.rs".into(),
+                line: NonZeroU32::new(6).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_keep_deleted_lines_on_the_old_side() {
+        let files = [file("@@ -4,2 +4 @@\n-deleted\n context")];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 1),
+            Some(CommitCommentPosition::Old {
+                path: "src/main.rs".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comment_positions_include_later_hunk_headers() {
+        let files = [file("@@ -1 +1 @@\n-old\n+new\n@@ -20 +22 @@\n-old\n+new")];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 5),
+            Some(CommitCommentPosition::New {
+                path: "src/main.rs".into(),
+                line: NonZeroU32::new(22).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comment_positions_include_no_newline_markers() {
+        let files = [file(
+            "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file",
+        )];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 3),
+            Some(CommitCommentPosition::New {
+                path: "src/main.rs".into(),
+                line: NonZeroU32::new(1).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_cannot_point_to_hunk_headers() {
+        let files = [file("@@ -1 +1 @@\n-old\n+new\n@@ -20 +22 @@\n-old\n+new")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 3), None);
+    }
+
+    #[test]
+    fn commit_comments_cannot_point_to_no_newline_markers() {
+        let files = [file("@@ -0,0 +1 @@\n+new\n\\ No newline at end of file")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 2), None);
+    }
+
+    #[test]
+    fn commit_comments_resolve_old_paths_to_new_paths_after_rename() {
+        let changed = ChangedFile {
+            filename: "src/new.rs".into(),
+            previous_filename: Some("src/main.rs".into()),
+            ..file("@@ -1 +1 @@\n-old\n+new")
+        };
+        assert_eq!(
+            commit_comment_position(&[changed], "src/main.rs", 2),
+            Some(CommitCommentPosition::New {
+                path: "src/new.rs".into(),
+                line: NonZeroU32::new(1).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_use_previous_paths_for_deleted_lines_after_rename() {
+        let changed = ChangedFile {
+            previous_filename: Some("src/old.rs".into()),
+            ..file("@@ -1 +1 @@\n-old\n+new")
+        };
+        assert_eq!(
+            commit_comment_position(&[changed], "src/main.rs", 1),
+            Some(CommitCommentPosition::Old {
+                path: "src/old.rs".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_require_a_patch() {
+        let changed = ChangedFile {
+            filename: "src/main.rs".into(),
+            ..ChangedFile::default()
+        };
+        assert_eq!(commit_comment_position(&[changed], "src/main.rs", 1), None);
+    }
+
+    #[test]
+    fn commit_comments_reject_zero_positions() {
+        let files = [file("@@ -0,0 +1 @@\n+new")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 0), None);
+    }
+
+    #[test]
+    fn commit_comments_reject_positions_past_the_patch() {
+        let files = [file("@@ -0,0 +1 @@\n+new")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 2), None);
+    }
+
+    #[test]
+    fn commit_comments_reject_truncated_hunks_after_the_target_position() {
+        let files = [file("@@ -0,0 +1,2 @@\n+first")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 1), None);
     }
 
     #[test]
