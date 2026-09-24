@@ -150,3 +150,100 @@ async fn failed_revalidation_prevents_commit_fallback_without_pr_positions() {
         assert!(posted_bodies(&server).is_empty());
     }
 }
+
+fn before_conversation_fallback_after_file_loading_failure() -> (RenderDocument, Vec<Reply>) {
+    let (mut input, replies) = before_commit_fallback(true);
+    input.findings[0].commit = CommitHash::new("fedcba9").unwrap();
+    (input, replies)
+}
+
+#[tokio::test]
+async fn changed_head_prevents_conversation_fallback_after_file_loading_failure() {
+    let (input, mut replies) = before_conversation_fallback_after_file_loading_failure();
+    let mut current: Value = serde_json::from_str(&pull().body).unwrap();
+    current["head"]["sha"] = json!("def5678");
+    replies.push(Reply::json(current));
+    let server = Server::start(replies).await;
+
+    assert_matches!(
+        server
+            .client()
+            .publish(&repository(), number(), &input)
+            .await,
+        Err(GitHubError::PullRequestChanged)
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 7);
+    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert_eq!(posted_bodies(&server), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn changed_head_prevents_pending_summary_after_finding_deduplication() {
+    let (mut input, mut replies) = before_commit_fallback(false);
+    input.summary = Some(crate::review::ReviewSummary {
+        peer_version: "0.16.2".into(),
+    });
+    let review = crate::github::feedback::PreparedReview::new(&input, &repository());
+    replies[2] = Reply::json(json!([{
+        "body": crate::github::feedback::marker(&review.items[0].fingerprint)
+    }]));
+    let mut current: Value = serde_json::from_str(&pull().body).unwrap();
+    current["head"]["sha"] = json!("def5678");
+    replies.push(Reply::json(current));
+    let server = Server::start(replies).await;
+
+    assert_matches!(
+        server
+            .client()
+            .publish(&repository(), number(), &input)
+            .await,
+        Err(GitHubError::PullRequestChanged)
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 6);
+    assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert_eq!(posted_bodies(&server), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn failed_revalidation_prevents_conversation_fallback_after_file_loading_failure() {
+    let (input, mut replies) = before_conversation_fallback_after_file_loading_failure();
+    let mut failure = pull();
+    failure.status = 503;
+    replies.push(failure);
+    let server = Server::start(replies).await;
+
+    assert_matches!(
+        server
+            .client()
+            .publish(&repository(), number(), &input)
+            .await,
+        Err(GitHubError::Api { status: 503, .. })
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 7);
+    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert_eq!(posted_bodies(&server), Vec::<String>::new());
+}
+
+#[tokio::test]
+async fn unchanged_head_allows_conversation_fallback_after_file_loading_failure() {
+    let (input, mut replies) = before_conversation_fallback_after_file_loading_failure();
+    replies.extend([pull(), created()]);
+    let server = Server::start(replies).await;
+
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.inline, 0);
+    assert_eq!(report.commit_comments, 0);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 8);
+    assert!(requests[6].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests[7].starts_with("POST /repos/owner/repo/issues/123/comments "));
+    assert_eq!(posted_bodies(&server).len(), 1);
+}

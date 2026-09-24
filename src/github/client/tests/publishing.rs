@@ -461,6 +461,7 @@ async fn rerunning_after_summary_failure_posts_only_the_summary() {
         Reply::json(json!([{"body": bodies[0]}, {"body": bodies[1]}])),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        pull(),
         created(),
     ])
     .await;
@@ -501,6 +502,7 @@ async fn a_summary_only_review_creates_one_marked_comment() {
         Reply::json(json!([])),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        pull(),
         created(),
     ])
     .await;
@@ -512,6 +514,10 @@ async fn a_summary_only_review_creates_one_marked_comment() {
     let bodies = posted_bodies(&server);
     assert_eq!(report.published, 1);
     assert_eq!(bodies.len(), 1);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 7);
+    assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests[6].starts_with("POST /repos/owner/repo/issues/123/comments "));
     assert!(bodies[0].contains(CONVERSATION_MARKER));
     assert_eq!(crate::github::feedback::fingerprints(&bodies[0]).len(), 1);
 }
@@ -549,6 +555,7 @@ async fn individual_feedback_retries_only_the_unpublished_items() {
         Reply::json(json!([{"body": bodies[0]}])),
         Reply::json(json!([])),
         Reply::json(json!([])),
+        pull(),
         created(),
         created(),
     ])

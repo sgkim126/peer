@@ -222,7 +222,6 @@ async fn questions_and_recommendations_without_related_commits_use_conversation_
     }))
     .unwrap();
     let mut replies = before_commit();
-    replies.pop();
     replies.extend([created(), created()]);
     let server = Server::start(replies).await;
     let report = server
@@ -231,9 +230,10 @@ async fn questions_and_recommendations_without_related_commits_use_conversation_
         .await
         .unwrap();
     let requests = server.requests();
-    assert_eq!(requests.len(), 7);
+    assert_eq!(requests.len(), 8);
+    assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
     assert!(
-        requests[5..]
+        requests[6..]
             .iter()
             .all(|request| request.starts_with("POST /repos/owner/repo/issues/123/comments "))
     );

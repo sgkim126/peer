@@ -127,12 +127,8 @@ impl GitHubClient {
         } else {
             (Vec::new(), false)
         };
-        // Commit comments also depend on current PR membership, even without positions.
-        if files_loaded
-            || remaining
-                .iter()
-                .any(|item| resolve_commit(item.commit.as_ref(), &commits).is_some())
-        {
+        // Conversation feedback and summaries also depend on the current PR snapshot.
+        if files_loaded || !remaining.is_empty() || include_summary {
             let current = self.pull_request(repository, number).await?;
             if current.base.sha != pull.base.sha || current.head.sha != pull.head.sha {
                 return Err(GitHubError::PullRequestChanged);

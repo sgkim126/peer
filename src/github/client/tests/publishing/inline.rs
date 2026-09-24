@@ -502,6 +502,7 @@ async fn rerunning_after_partial_success_posts_only_the_missing_remainder() {
             "body": inline_body.as_str()
         }])),
         Reply::json(json!([])),
+        pull(),
         created(),
         created(),
     ])
