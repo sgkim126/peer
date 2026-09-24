@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -17,26 +19,7 @@ pub struct ChangedFile {
 /// `FileLocation` has no side, so deleted lines and old paths cannot identify
 /// head line numbers. File comments may still follow an old path after a rename.
 pub fn comment_position(files: &[ChangedFile], location: &FileLocation) -> Option<Value> {
-    if !valid_path(&location.file) {
-        return None;
-    }
-    let mut matches = files.iter().filter(|file| {
-        file.filename == location.file || file.previous_filename.as_deref() == Some(&location.file)
-    });
-    let file = matches.next()?;
-    if matches.next().is_some() {
-        return None;
-    }
-    if !valid_path(&file.filename) {
-        return None;
-    }
-    if file
-        .previous_filename
-        .as_deref()
-        .is_some_and(|path| !valid_path(path))
-    {
-        return None;
-    }
+    let file = changed_file(files, &location.file)?;
     let Some(line) = location.line else {
         return Some(json!({
             "path": file.filename,
@@ -52,12 +35,38 @@ pub fn comment_position(files: &[ChangedFile], location: &FileLocation) -> Optio
     if file.status.as_deref() == Some("removed") {
         return None;
     }
-    head_line(file.patch.as_deref()?, line)?;
+    if !is_new_line_in_patch(file.patch.as_deref()?, line) {
+        return None;
+    }
     Some(json!({
         "path": file.filename,
         "line": line,
         "side": "RIGHT"
     }))
+}
+
+fn changed_file<'a>(files: &'a [ChangedFile], path: &str) -> Option<&'a ChangedFile> {
+    if !valid_path(path) {
+        return None;
+    }
+    let mut matches = files
+        .iter()
+        .filter(|file| file.filename == path || file.previous_filename.as_deref() == Some(path));
+    let file = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    if !valid_path(&file.filename) {
+        return None;
+    }
+    if file
+        .previous_filename
+        .as_deref()
+        .is_some_and(|path| !valid_path(path))
+    {
+        return None;
+    }
+    Some(file)
 }
 
 fn valid_path(path: &str) -> bool {
@@ -118,13 +127,28 @@ fn range(value: &str) -> Option<(u64, u64)> {
     Some((start, end))
 }
 
-/// Accepts added or context lines only after validating the entire patch.
-fn head_line(patch: &str, line: u32) -> Option<()> {
-    let target = u64::from(line);
-    let mut hunk: Option<Hunk> = None;
+/// Returns whether `line` is an added or context line in a valid, complete patch.
+fn is_new_line_in_patch(patch: &str, line: u32) -> bool {
     let mut found = false;
+    let valid = visit_patch_lines(patch, |_, patch_line| {
+        found |= matches!(patch_line, PatchLine::New(number) if number.get() == line);
+    })
+    .is_some();
+    valid && found
+}
+
+enum PatchLine {
+    New(NonZeroU32),
+    Old,
+}
+
+/// Returns `Some(())` if the entire patch is valid and complete, or `None` if it
+/// is empty, malformed, or incomplete. Callbacks may run before validation
+/// fails, so callers must check the return value before using collected results.
+fn visit_patch_lines(patch: &str, mut visit: impl FnMut(u32, PatchLine)) -> Option<()> {
+    let mut hunk: Option<Hunk> = None;
     let mut previous_was_line = false;
-    for row in patch.lines() {
+    for (position, row) in patch.lines().enumerate() {
         if row.starts_with("@@") {
             let next = Hunk::parse(row)?;
             if let Some(previous) = &hunk
@@ -139,28 +163,32 @@ fn head_line(patch: &str, line: u32) -> Option<()> {
             continue;
         }
         let hunk = hunk.as_mut()?;
-        match row.as_bytes().first() {
+        let line = match row.as_bytes().first() {
             Some(b'+') if hunk.new < hunk.new_end => {
-                found |= hunk.new == target;
+                let line = NonZeroU32::new(hunk.new.try_into().ok()?)?;
                 hunk.new += 1;
+                PatchLine::New(line)
             }
             Some(b'-') if hunk.old < hunk.old_end => {
                 hunk.old += 1;
+                PatchLine::Old
             }
             Some(b' ') if hunk.old < hunk.old_end && hunk.new < hunk.new_end => {
-                found |= hunk.new == target;
+                let line = NonZeroU32::new(hunk.new.try_into().ok()?)?;
                 hunk.old += 1;
                 hunk.new += 1;
+                PatchLine::New(line)
             }
             Some(b'\\') if row == "\\ No newline at end of file" && previous_was_line => {
                 previous_was_line = false;
                 continue;
             }
             _ => return None,
-        }
+        };
+        visit(position.try_into().ok()?, line);
         previous_was_line = true;
     }
-    (hunk?.complete() && found).then_some(())
+    hunk?.complete().then_some(())
 }
 
 #[cfg(test)]
