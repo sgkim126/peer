@@ -10,7 +10,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use crate::context::ReviewContext;
 use crate::git::CommitHash;
 
-use super::position::ChangedFile;
+use super::position::{ChangedFile, CommitCommentPosition, commit_comment_position};
 use super::{GitHubError, Repository, mapping};
 
 const API_URL: &str = "https://api.github.com/";
@@ -120,11 +120,36 @@ impl GitHubClient {
         repository: &Repository,
         commit: &CommitHash,
     ) -> Result<Vec<CommitComment>, GitHubError> {
-        self.list::<CommitComment>(&format!("repos/{repository}/commits/{commit}/comments"))
-            .await
+        let mut comments = self
+            .list::<CommitComment>(&format!("repos/{repository}/commits/{commit}/comments"))
+            .await?;
+        if !comments.iter().any(|comment| {
+            comment.commit_id == *commit
+                && comment.path.as_ref().is_some_and(|path| !path.is_empty())
+                && comment.position.is_some_and(|position| position > 0)
+        }) {
+            return Ok(comments);
+        }
+        // Coordinates are optional context. A missing diff must not discard comments,
+        // and no coordinates are resolved until every file page has loaded.
+        match self.commit_files(repository, commit).await {
+            Ok(files) => {
+                for comment in &mut comments {
+                    if comment.commit_id == *commit
+                        && let Some(path) = &comment.path
+                        && let Some(position) = comment.position
+                    {
+                        comment.resolved_position = commit_comment_position(&files, path, position);
+                    }
+                }
+            }
+            Err(error) => debug!(
+                "GitHub commit comment coordinates unavailable: repository={repository} commit={commit} error={error}"
+            ),
+        }
+        Ok(comments)
     }
 
-    #[cfg_attr(not(test), expect(dead_code))]
     async fn commit_files(
         &self,
         repository: &Repository,
@@ -465,6 +490,10 @@ pub struct CommitComment {
     pub body: String,
     pub path: Option<String>,
     pub commit_id: CommitHash,
+    pub position: Option<u32>,
+    // The API's line can refer to a deleted line, so only trust patch-derived positions.
+    #[serde(skip)]
+    pub resolved_position: Option<CommitCommentPosition>,
 }
 
 #[derive(Deserialize)]

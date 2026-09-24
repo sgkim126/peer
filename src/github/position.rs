@@ -13,7 +13,6 @@ pub struct ChangedFile {
     pub status: Option<String>,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 #[derive(Debug, PartialEq, Eq)]
 pub enum CommitCommentPosition {
     New { path: String, line: NonZeroU32 },
@@ -25,7 +24,6 @@ pub enum CommitCommentPosition {
 /// Positions count every patch row after the first hunk header, including later
 /// hunk headers and no-newline markers. Deleted lines retain their old path, but
 /// cannot identify a line in the commented commit.
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn commit_comment_position(
     files: &[ChangedFile],
     path: &str,

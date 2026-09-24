@@ -697,8 +697,8 @@ fn commit_comment(id: u64, commit: &str) -> Value {
         },
         "path": "src/main.rs",
         "commit_id": commit,
-        "line": 14,
-        "position": 4,
+        "line": null,
+        "position": null,
     })
 }
 

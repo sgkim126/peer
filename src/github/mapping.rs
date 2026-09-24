@@ -9,6 +9,7 @@ use crate::context::{
 use super::client::{
     CommitComment, IssueComment, PullRequest, PullRequestReview, ReviewComment, User,
 };
+use super::position::CommitCommentPosition;
 use super::publish::CONVERSATION_MARKER;
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -146,17 +147,34 @@ pub fn review_context(
     }
 
     let commit_threads = commit_comments.len();
-    // Native commit comments have no reply IDs or reliable post-change line coordinates.
-    // Preserve each comment independently without inventing either relationship.
+    // Native commit comments have no reply IDs. Only patch-derived positions can
+    // distinguish a line on the commented commit from a deleted line.
     threads.extend(commit_comments.into_iter().map(|comment| {
-        (
-            (comment.created_at, ThreadKind::Commit, comment.id),
-            ReviewCommentThread {
-                commit: Some(comment.commit_id),
-                location: comment
+        let (commit, location) = match comment.resolved_position {
+            Some(CommitCommentPosition::New { path, line }) => (
+                Some(comment.commit_id),
+                Some(ReviewCommentLocation {
+                    path,
+                    line: Some(line),
+                }),
+            ),
+            // The old path may have been renamed or deleted from this commit.
+            Some(CommitCommentPosition::Old { path }) => {
+                (None, Some(ReviewCommentLocation { path, line: None }))
+            }
+            None => (
+                Some(comment.commit_id),
+                comment
                     .path
                     .filter(|path| !path.is_empty())
                     .map(|path| ReviewCommentLocation { path, line: None }),
+            ),
+        };
+        (
+            (comment.created_at, ThreadKind::Commit, comment.id),
+            ReviewCommentThread {
+                commit,
+                location,
                 comments: vec![thread_comment(comment.user, comment.body)],
             },
         )
