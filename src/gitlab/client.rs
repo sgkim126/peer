@@ -76,20 +76,7 @@ impl GitLabClient {
         ];
         for commit in &commits {
             for project_id in project_ids.iter().flatten() {
-                let mut commit_discussions = self
-                    .list::<Discussion>(&format!(
-                        "projects/{project_id}/repository/commits/{commit}/discussions"
-                    ))
-                    .await?;
-                // Commit notes omit commit_id, so preserve the requested SHA
-                // on every note, including replies whose root was deleted.
-                for note in commit_discussions
-                    .iter_mut()
-                    .flat_map(|discussion| &mut discussion.notes)
-                {
-                    note.commit_id.get_or_insert_with(|| commit.clone());
-                }
-                discussions.extend(commit_discussions);
+                discussions.extend(self.commit_discussions(*project_id, commit).await?);
             }
         }
         let current = self.merge_request(repository, number).await?;
@@ -149,6 +136,27 @@ impl GitLabClient {
             next = next_page(&headers)?;
         }
         Ok(items)
+    }
+
+    async fn commit_discussions(
+        &self,
+        project_id: u64,
+        commit: &CommitHash,
+    ) -> Result<Vec<Discussion>, GitLabError> {
+        let mut discussions = self
+            .list::<Discussion>(&format!(
+                "projects/{project_id}/repository/commits/{commit}/discussions"
+            ))
+            .await?;
+        // Commit notes omit commit_id, so preserve the requested SHA
+        // on every note, including replies whose root was deleted.
+        for note in discussions
+            .iter_mut()
+            .flat_map(|discussion| &mut discussion.notes)
+        {
+            note.commit_id.get_or_insert_with(|| commit.clone());
+        }
+        Ok(discussions)
     }
 
     pub async fn post<T: DeserializeOwned>(
