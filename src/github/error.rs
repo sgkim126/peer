@@ -15,6 +15,7 @@ pub enum GitHubError {
         endpoint: String,
         status: u16,
         rate_limited: bool,
+        permission_denied: bool,
     },
     Decode {
         endpoint: String,
@@ -68,13 +69,15 @@ impl fmt::Display for GitHubError {
                 endpoint,
                 status,
                 rate_limited,
+                permission_denied,
             } => {
                 let reason = if *rate_limited {
                     "API rate limit exceeded"
                 } else {
                     match status {
                         401 => "authentication failed; check GITHUB_TOKEN",
-                        403 => "access denied; check token permissions",
+                        403 if *permission_denied => "access denied; check token permissions",
+                        403 => "API request forbidden",
                         404 => "pull request or repository not found or inaccessible",
                         _ => "API request failed",
                     }

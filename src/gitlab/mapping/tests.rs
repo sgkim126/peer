@@ -46,6 +46,86 @@ fn groups_general_notes_and_replies_in_stable_order() {
 }
 
 #[test]
+fn combines_merge_request_threads_and_native_commit_discussions() {
+    let mut merge_request_note = note(1);
+    merge_request_note["created_at"] = json!("2026-01-02T00:00:00Z");
+    let mut standalone = note(2);
+    standalone["noteable_type"] = json!("Commit");
+    standalone["commit_id"] = json!("def5678");
+    let mut root = note(3);
+    root["type"] = json!("DiffNote");
+    root["noteable_type"] = json!("Commit");
+    root["commit_id"] = json!("def5678");
+    root["created_at"] = json!("2026-01-03T00:00:00Z");
+    root["position"] = position();
+    root["position"]["head_sha"] = json!("def5678");
+    let mut reply = note(4);
+    reply["type"] = json!("DiscussionNote");
+    reply["noteable_type"] = json!("Commit");
+    reply["commit_id"] = json!("def5678");
+    reply["created_at"] = json!("2026-01-04T00:00:00Z");
+    let mut system = note(5);
+    system["system"] = json!(true);
+    let mut summary = note(6);
+    summary["body"] = json!(format!("Review summary\n{CONVERSATION_MARKER}"));
+    summary["created_at"] = json!("2026-01-05T00:00:00Z");
+
+    let context = context(json!([
+        {
+            "id": "mr",
+            "individual_note": false,
+            "notes": [merge_request_note]
+        },
+        {
+            "id": "commit-thread",
+            "individual_note": false,
+            "notes": [reply, summary, root, system]
+        },
+        {
+            "id": "commit-note",
+            "individual_note": true,
+            "notes": [standalone]
+        },
+    ]));
+
+    assert_eq!(
+        serde_json::to_value(context.comments).unwrap(),
+        json!([
+            {
+                "commit": "def5678",
+                "comments": [{
+                    "author": "user-2",
+                    "body": "Comment 2"
+                }],
+            },
+            {
+                "comments": [{
+                    "author": "user-1",
+                    "body": "Comment 1"
+                }],
+            },
+            {
+                "commit": "def5678",
+                "location": {
+                    "path": "src/new.rs",
+                    "line": 10
+                },
+                "comments": [
+                    {
+                        "author": "user-3",
+                        "body": "Comment 3"
+                    },
+                    {
+                        "author": "user-4",
+                        "body": "Comment 4"
+                    },
+                ],
+            },
+        ])
+    );
+}
+
+#[test]
 fn excludes_system_internal_and_confidential_notes_without_discarding_public_replies() {
     let mut system = note(1);
     system["system"] = json!(true);

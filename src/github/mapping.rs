@@ -6,20 +6,33 @@ use crate::context::{
     ReviewCommentLocation, ReviewCommentThread, ReviewContext, ReviewThreadComment,
 };
 
-use super::client::{IssueComment, PullRequest, PullRequestReview, ReviewComment, User};
+use super::client::{
+    CommitComment, IssueComment, PullRequest, PullRequestReview, ReviewComment, User,
+};
+use super::position::CommitCommentPosition;
 use super::publish::CONVERSATION_MARKER;
+
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum ThreadKind {
+    Conversation,
+    Review,
+    Inline,
+    Commit,
+}
 
 pub fn review_context(
     pull: PullRequest,
     mut comments: Vec<IssueComment>,
-    mut reviews: Vec<PullRequestReview>,
+    reviews: Vec<PullRequestReview>,
     review_comments: Vec<ReviewComment>,
+    commit_comments: Vec<CommitComment>,
 ) -> ReviewContext {
     trace!(
-        "mapping GitHub review context: conversation_comments={} reviews={} review_comments={}",
+        "mapping GitHub review context: conversation_comments={} reviews={} review_comments={} commit_comments={}",
         comments.len(),
         reviews.len(),
-        review_comments.len()
+        review_comments.len(),
+        commit_comments.len()
     );
     comments.retain(|comment| {
         if is_peer_conversation(&comment.body) {
@@ -34,26 +47,28 @@ pub fn review_context(
     });
     let conversation_threads = comments.len();
     let review_count = reviews.len();
-    comments.sort_by(|left, right| (&left.created_at, left.id).cmp(&(&right.created_at, right.id)));
     let mut threads: Vec<_> = comments
         .into_iter()
-        .map(|comment| ReviewCommentThread {
-            commit: None,
-            location: None,
-            comments: vec![thread_comment(comment.user, comment.body)],
+        .map(|comment| {
+            (
+                (comment.created_at, ThreadKind::Conversation, comment.id),
+                ReviewCommentThread {
+                    commit: None,
+                    location: None,
+                    comments: vec![thread_comment(comment.user, comment.body)],
+                },
+            )
         })
         .collect();
 
-    reviews
-        .sort_by(|left, right| (&left.submitted_at, left.id).cmp(&(&right.submitted_at, right.id)));
     threads.extend(reviews.into_iter().filter_map(|review| {
-        if review.state == "PENDING" || review.submitted_at.is_none() {
+        let Some(submitted_at) = review.submitted_at.filter(|_| review.state != "PENDING") else {
             trace!(
                 "skipping GitHub review: review_id={} reason=unsubmitted",
                 review.id
             );
             return None;
-        }
+        };
         let Some(body) = review.body.filter(|body| !body.trim().is_empty()) else {
             trace!(
                 "skipping GitHub review: review_id={} reason=empty_body",
@@ -61,11 +76,14 @@ pub fn review_context(
             );
             return None;
         };
-        Some(ReviewCommentThread {
-            commit: review.commit_id,
-            location: None,
-            comments: vec![thread_comment(review.user, body)],
-        })
+        Some((
+            (submitted_at, ThreadKind::Review, review.id),
+            ReviewCommentThread {
+                commit: review.commit_id,
+                location: None,
+                comments: vec![thread_comment(review.user, body)],
+            },
+        ))
     }));
     let review_threads = threads.len() - conversation_threads;
 
@@ -78,7 +96,7 @@ pub fn review_context(
             .or_default()
             .push(comment);
     }
-    let mut inline_threads = Vec::with_capacity(groups.len());
+    let inline_thread_count = groups.len();
     for (root_id, mut comments) in groups {
         comments
             .sort_by(|left, right| (&left.created_at, left.id).cmp(&(&right.created_at, right.id)));
@@ -92,7 +110,7 @@ pub fn review_context(
                 );
                 &comments[0]
             });
-        let sort_key = (root.created_at.clone(), root_id);
+        let sort_key = (root.created_at.clone(), ThreadKind::Inline, root_id);
         let mut commit = root.commit_id.clone();
         let mut line = None;
         if root.side.as_deref() == Some("RIGHT") {
@@ -125,20 +143,53 @@ pub fn review_context(
             thread.comments.len(),
             thread.location.as_ref().and_then(|location| location.line)
         );
-        inline_threads.push((sort_key, thread));
+        threads.push((sort_key, thread));
     }
-    inline_threads.sort_by(|left, right| left.0.cmp(&right.0));
-    let inline_thread_count = inline_threads.len();
-    threads.extend(inline_threads.into_iter().map(|(_, thread)| thread));
+
+    let commit_threads = commit_comments.len();
+    // Native commit comments have no reply IDs. Only patch-derived positions can
+    // distinguish a line on the commented commit from a deleted line.
+    threads.extend(commit_comments.into_iter().map(|comment| {
+        let (commit, location) = match comment.resolved_position {
+            Some(CommitCommentPosition::New { path, line }) => (
+                Some(comment.commit_id),
+                Some(ReviewCommentLocation {
+                    path,
+                    line: Some(line),
+                }),
+            ),
+            // The old path may have been renamed or deleted from this commit.
+            Some(CommitCommentPosition::Old { path }) => {
+                (None, Some(ReviewCommentLocation { path, line: None }))
+            }
+            None => (
+                Some(comment.commit_id),
+                comment
+                    .path
+                    .filter(|path| !path.is_empty())
+                    .map(|path| ReviewCommentLocation { path, line: None }),
+            ),
+        };
+        (
+            (comment.created_at, ThreadKind::Commit, comment.id),
+            ReviewCommentThread {
+                commit,
+                location,
+                comments: vec![thread_comment(comment.user, comment.body)],
+            },
+        )
+    }));
+    // Preserve category and ID order when timestamps tie across API collections.
+    threads.sort_by(|left, right| left.0.cmp(&right.0));
 
     debug!(
-        "mapped GitHub review context: conversation_threads={conversation_threads} review_threads={review_threads} skipped_reviews={} inline_threads={inline_thread_count}",
+        "mapped GitHub review context: conversation_threads={conversation_threads} review_threads={review_threads} skipped_reviews={} inline_threads={inline_thread_count} commit_threads={commit_threads}",
         review_count - review_threads
     );
     ReviewContext {
         title: Some(pull.title),
         body: Some(pull.body.unwrap_or_default()),
-        comments: threads,
+        comments: threads.into_iter().map(|(_, thread)| thread).collect(),
     }
 }
 

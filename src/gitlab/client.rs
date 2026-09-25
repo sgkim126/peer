@@ -19,6 +19,11 @@ pub struct GitLabClient {
     base: Url,
 }
 
+struct Collection<T> {
+    items: Vec<T>,
+    project_accessible: bool,
+}
+
 impl GitLabClient {
     pub fn from_env() -> Result<Self, GitLabError> {
         Self::new(
@@ -65,9 +70,34 @@ impl GitLabClient {
         {
             return Err(GitLabError::IncompleteCommits);
         }
-        let discussions = self
+        let mut discussions = self
             .list::<Discussion>(&format!("{prefix}/discussions"))
             .await?;
+        let source_project_id = source
+            .source_project_id
+            .filter(|project_id| *project_id != source.project_id);
+        let mut source_project_accessible = true;
+        let mut first_source_request = true;
+        for commit in &commits {
+            discussions.extend(
+                self.commit_discussions(source.project_id, commit, false)
+                    .await?
+                    .items,
+            );
+            if let Some(project_id) = source_project_id
+                && source_project_accessible
+            {
+                // A token scoped to the target may not be able to read the fork.
+                // Only the first request can skip an inaccessible fork; later failures
+                // must abort the review so partially loaded comments are never used.
+                let comments = self
+                    .commit_discussions(project_id, commit, first_source_request)
+                    .await?;
+                first_source_request = false;
+                source_project_accessible = comments.project_accessible;
+                discussions.extend(comments.items);
+            }
+        }
         let current = self.merge_request(repository, number).await?;
         if current.source(number)? != source
             || current.source_branch != merge_request.source_branch
@@ -110,6 +140,16 @@ impl GitLabClient {
     }
 
     pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitLabError> {
+        self.list_with_access(path, false)
+            .await
+            .map(|collection| collection.items)
+    }
+
+    async fn list_with_access<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        skip_inaccessible_project: bool,
+    ) -> Result<Collection<T>, GitLabError> {
         let mut url = self.base.join(path).expect("valid GitLab API path");
         url.query_pairs_mut().append_pair("per_page", "100");
         let collection_path = url.path().to_string();
@@ -120,11 +160,54 @@ impl GitLabClient {
             if url.path() != collection_path || !seen.insert(url.clone()) {
                 return Err(GitLabError::InvalidPagination);
             }
-            let (page, headers) = self.request::<Vec<T>>(url, Method::GET, None).await?;
+            let (page, headers) = match self.request::<Vec<T>>(url, Method::GET, None).await {
+                Ok(page) => page,
+                Err(
+                    error @ GitLabError::Api {
+                        status: 403 | 404,
+                        rate_limited: false,
+                        ..
+                    },
+                ) if skip_inaccessible_project && seen.len() == 1 => {
+                    debug!("GitLab optional collection unavailable: path={path} error={error}");
+                    return Ok(Collection {
+                        items: Vec::new(),
+                        project_accessible: false,
+                    });
+                }
+                Err(error) => return Err(error),
+            };
             items.extend(page);
             next = next_page(&headers)?;
         }
-        Ok(items)
+        Ok(Collection {
+            items,
+            project_accessible: true,
+        })
+    }
+
+    async fn commit_discussions(
+        &self,
+        project_id: u64,
+        commit: &CommitHash,
+        skip_inaccessible_project: bool,
+    ) -> Result<Collection<Discussion>, GitLabError> {
+        let mut discussions = self
+            .list_with_access::<Discussion>(
+                &format!("projects/{project_id}/repository/commits/{commit}/discussions"),
+                skip_inaccessible_project,
+            )
+            .await?;
+        // Commit notes omit commit_id, so preserve the requested SHA
+        // on every note, including replies whose root was deleted.
+        for note in discussions
+            .items
+            .iter_mut()
+            .flat_map(|discussion| &mut discussion.notes)
+        {
+            note.commit_id.get_or_insert_with(|| commit.clone());
+        }
+        Ok(discussions)
     }
 
     pub async fn post<T: DeserializeOwned>(

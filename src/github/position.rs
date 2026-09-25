@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -11,32 +13,57 @@ pub struct ChangedFile {
     pub status: Option<String>,
 }
 
+#[derive(Debug, PartialEq, Eq)]
+pub enum CommitCommentPosition {
+    New { path: String, line: NonZeroU32 },
+    Old { path: String },
+}
+
+/// Resolves a native commit comment's position using that commit's GitHub patch.
+///
+/// Positions count every patch row after the first hunk header, including later
+/// hunk headers and no-newline markers. Deleted lines retain their old path, but
+/// cannot identify a line in the commented commit.
+pub fn commit_comment_position(
+    files: &[ChangedFile],
+    path: &str,
+    position: u32,
+) -> Option<CommitCommentPosition> {
+    if position == 0 {
+        return None;
+    }
+    let file = changed_file(files, path)?;
+    let mut found = None;
+    visit_patch_lines(file.patch.as_deref()?, |index, line| {
+        if index == position {
+            found = Some(line);
+        }
+    })?;
+    match found? {
+        PatchLine::New(line) if file.status.as_deref() != Some("removed") => {
+            Some(CommitCommentPosition::New {
+                path: file.filename.clone(),
+                line,
+            })
+        }
+        PatchLine::Old => Some(CommitCommentPosition::Old {
+            path: file
+                .previous_filename
+                .as_ref()
+                .unwrap_or(&file.filename)
+                .clone(),
+        }),
+        PatchLine::New(_) => None,
+    }
+}
+
 /// Maps locations in the reviewed head to GitHub PR diff positions.
 ///
 /// The caller must verify that the diff is for the location's commit.
 /// `FileLocation` has no side, so deleted lines and old paths cannot identify
 /// head line numbers. File comments may still follow an old path after a rename.
 pub fn comment_position(files: &[ChangedFile], location: &FileLocation) -> Option<Value> {
-    if !valid_path(&location.file) {
-        return None;
-    }
-    let mut matches = files.iter().filter(|file| {
-        file.filename == location.file || file.previous_filename.as_deref() == Some(&location.file)
-    });
-    let file = matches.next()?;
-    if matches.next().is_some() {
-        return None;
-    }
-    if !valid_path(&file.filename) {
-        return None;
-    }
-    if file
-        .previous_filename
-        .as_deref()
-        .is_some_and(|path| !valid_path(path))
-    {
-        return None;
-    }
+    let file = changed_file(files, &location.file)?;
     let Some(line) = location.line else {
         return Some(json!({
             "path": file.filename,
@@ -52,12 +79,38 @@ pub fn comment_position(files: &[ChangedFile], location: &FileLocation) -> Optio
     if file.status.as_deref() == Some("removed") {
         return None;
     }
-    head_line(file.patch.as_deref()?, line)?;
+    if !is_new_line_in_patch(file.patch.as_deref()?, line) {
+        return None;
+    }
     Some(json!({
         "path": file.filename,
         "line": line,
         "side": "RIGHT"
     }))
+}
+
+fn changed_file<'a>(files: &'a [ChangedFile], path: &str) -> Option<&'a ChangedFile> {
+    if !valid_path(path) {
+        return None;
+    }
+    let mut matches = files
+        .iter()
+        .filter(|file| file.filename == path || file.previous_filename.as_deref() == Some(path));
+    let file = matches.next()?;
+    if matches.next().is_some() {
+        return None;
+    }
+    if !valid_path(&file.filename) {
+        return None;
+    }
+    if file
+        .previous_filename
+        .as_deref()
+        .is_some_and(|path| !valid_path(path))
+    {
+        return None;
+    }
+    Some(file)
 }
 
 fn valid_path(path: &str) -> bool {
@@ -118,13 +171,28 @@ fn range(value: &str) -> Option<(u64, u64)> {
     Some((start, end))
 }
 
-/// Accepts added or context lines only after validating the entire patch.
-fn head_line(patch: &str, line: u32) -> Option<()> {
-    let target = u64::from(line);
-    let mut hunk: Option<Hunk> = None;
+/// Returns whether `line` is an added or context line in a valid, complete patch.
+fn is_new_line_in_patch(patch: &str, line: u32) -> bool {
     let mut found = false;
+    let valid = visit_patch_lines(patch, |_, patch_line| {
+        found |= matches!(patch_line, PatchLine::New(number) if number.get() == line);
+    })
+    .is_some();
+    valid && found
+}
+
+enum PatchLine {
+    New(NonZeroU32),
+    Old,
+}
+
+/// Returns `Some(())` if the entire patch is valid and complete, or `None` if it
+/// is empty, malformed, or incomplete. Callbacks may run before validation
+/// fails, so callers must check the return value before using collected results.
+fn visit_patch_lines(patch: &str, mut visit: impl FnMut(u32, PatchLine)) -> Option<()> {
+    let mut hunk: Option<Hunk> = None;
     let mut previous_was_line = false;
-    for row in patch.lines() {
+    for (position, row) in patch.lines().enumerate() {
         if row.starts_with("@@") {
             let next = Hunk::parse(row)?;
             if let Some(previous) = &hunk
@@ -139,28 +207,32 @@ fn head_line(patch: &str, line: u32) -> Option<()> {
             continue;
         }
         let hunk = hunk.as_mut()?;
-        match row.as_bytes().first() {
+        let line = match row.as_bytes().first() {
             Some(b'+') if hunk.new < hunk.new_end => {
-                found |= hunk.new == target;
+                let line = NonZeroU32::new(hunk.new.try_into().ok()?)?;
                 hunk.new += 1;
+                PatchLine::New(line)
             }
             Some(b'-') if hunk.old < hunk.old_end => {
                 hunk.old += 1;
+                PatchLine::Old
             }
             Some(b' ') if hunk.old < hunk.old_end && hunk.new < hunk.new_end => {
-                found |= hunk.new == target;
+                let line = NonZeroU32::new(hunk.new.try_into().ok()?)?;
                 hunk.old += 1;
                 hunk.new += 1;
+                PatchLine::New(line)
             }
             Some(b'\\') if row == "\\ No newline at end of file" && previous_was_line => {
                 previous_was_line = false;
                 continue;
             }
             _ => return None,
-        }
+        };
+        visit(position.try_into().ok()?, line);
         previous_was_line = true;
     }
-    (hunk?.complete() && found).then_some(())
+    hunk?.complete().then_some(())
 }
 
 #[cfg(test)]
@@ -188,6 +260,136 @@ mod tests {
             "line": line,
             "side": "RIGHT"
         })
+    }
+
+    #[test]
+    fn commit_comments_resolve_added_lines() {
+        let files = [file("@@ -10,0 +11,2 @@\n+first\n+second")];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 2),
+            Some(CommitCommentPosition::New {
+                path: "src/main.rs".into(),
+                line: NonZeroU32::new(12).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_resolve_context_to_post_change_line_numbers() {
+        let files = [file("@@ -4,2 +4,3 @@\n context\n+added\n context")];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 3),
+            Some(CommitCommentPosition::New {
+                path: "src/main.rs".into(),
+                line: NonZeroU32::new(6).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_keep_deleted_lines_on_the_old_side() {
+        let files = [file("@@ -4,2 +4 @@\n-deleted\n context")];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 1),
+            Some(CommitCommentPosition::Old {
+                path: "src/main.rs".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comment_positions_include_later_hunk_headers() {
+        let files = [file("@@ -1 +1 @@\n-old\n+new\n@@ -20 +22 @@\n-old\n+new")];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 5),
+            Some(CommitCommentPosition::New {
+                path: "src/main.rs".into(),
+                line: NonZeroU32::new(22).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comment_positions_include_no_newline_markers() {
+        let files = [file(
+            "@@ -1 +1 @@\n-old\n\\ No newline at end of file\n+new\n\\ No newline at end of file",
+        )];
+        assert_eq!(
+            commit_comment_position(&files, "src/main.rs", 3),
+            Some(CommitCommentPosition::New {
+                path: "src/main.rs".into(),
+                line: NonZeroU32::new(1).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_cannot_point_to_hunk_headers() {
+        let files = [file("@@ -1 +1 @@\n-old\n+new\n@@ -20 +22 @@\n-old\n+new")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 3), None);
+    }
+
+    #[test]
+    fn commit_comments_cannot_point_to_no_newline_markers() {
+        let files = [file("@@ -0,0 +1 @@\n+new\n\\ No newline at end of file")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 2), None);
+    }
+
+    #[test]
+    fn commit_comments_resolve_old_paths_to_new_paths_after_rename() {
+        let changed = ChangedFile {
+            filename: "src/new.rs".into(),
+            previous_filename: Some("src/main.rs".into()),
+            ..file("@@ -1 +1 @@\n-old\n+new")
+        };
+        assert_eq!(
+            commit_comment_position(&[changed], "src/main.rs", 2),
+            Some(CommitCommentPosition::New {
+                path: "src/new.rs".into(),
+                line: NonZeroU32::new(1).unwrap(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_use_previous_paths_for_deleted_lines_after_rename() {
+        let changed = ChangedFile {
+            previous_filename: Some("src/old.rs".into()),
+            ..file("@@ -1 +1 @@\n-old\n+new")
+        };
+        assert_eq!(
+            commit_comment_position(&[changed], "src/main.rs", 1),
+            Some(CommitCommentPosition::Old {
+                path: "src/old.rs".into(),
+            })
+        );
+    }
+
+    #[test]
+    fn commit_comments_require_a_patch() {
+        let changed = ChangedFile {
+            filename: "src/main.rs".into(),
+            ..ChangedFile::default()
+        };
+        assert_eq!(commit_comment_position(&[changed], "src/main.rs", 1), None);
+    }
+
+    #[test]
+    fn commit_comments_reject_zero_positions() {
+        let files = [file("@@ -0,0 +1 @@\n+new")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 0), None);
+    }
+
+    #[test]
+    fn commit_comments_reject_positions_past_the_patch() {
+        let files = [file("@@ -0,0 +1 @@\n+new")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 2), None);
+    }
+
+    #[test]
+    fn commit_comments_reject_truncated_hunks_after_the_target_position() {
+        let files = [file("@@ -0,0 +1,2 @@\n+first")];
+        assert_eq!(commit_comment_position(&files, "src/main.rs", 1), None);
     }
 
     #[test]

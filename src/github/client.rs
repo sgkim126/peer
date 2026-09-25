@@ -10,6 +10,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use crate::context::ReviewContext;
 use crate::git::CommitHash;
 
+use super::position::{ChangedFile, CommitCommentPosition, commit_comment_position};
 use super::{GitHubError, Repository, mapping};
 
 const API_URL: &str = "https://api.github.com/";
@@ -18,6 +19,16 @@ const API_VERSION: &str = "2026-03-10";
 pub struct GitHubClient {
     http: Client,
     base: Url,
+}
+
+struct Collection<T> {
+    items: Vec<T>,
+    repository_accessible: bool,
+}
+
+#[derive(Deserialize)]
+struct ApiErrorResponse {
+    message: String,
 }
 
 impl GitHubClient {
@@ -65,6 +76,12 @@ impl GitHubClient {
             .join(&format!("{prefix}/pulls/{number}"))
             .expect("valid PR path");
         let (pull, _) = self.get::<PullRequest>(pull_url.clone()).await?;
+        let source_repository = pull
+            .head
+            .repo
+            .as_ref()
+            .map(|repo| Repository::parse(&repo.full_name))
+            .transpose()?;
         let comments = self
             .list::<IssueComment>(&format!("{prefix}/issues/{number}/comments"))
             .await?;
@@ -75,21 +92,110 @@ impl GitHubClient {
             .list::<ReviewComment>(&format!("{prefix}/pulls/{number}/comments"))
             .await?;
         let commits = self.pull_request_commits(repository, number, &pull).await?;
+        let source = source_repository.as_ref().filter(|source| {
+            !source
+                .to_string()
+                .eq_ignore_ascii_case(&repository.to_string())
+        });
+        let mut source_repository_accessible = true;
+        let mut first_source_request = true;
+        let mut commit_comments = Vec::new();
+        for commit in &commits {
+            commit_comments.extend(self.commit_comments(repository, commit, false).await?.items);
+            if let Some(source) = source
+                && source_repository_accessible
+            {
+                // A token scoped to the target may not be able to read the fork.
+                // Only the first request can skip an inaccessible fork; later failures
+                // must abort the review so partially loaded comments are never used.
+                let comments = self
+                    .commit_comments(source, commit, first_source_request)
+                    .await?;
+                first_source_request = false;
+                source_repository_accessible = comments.repository_accessible;
+                commit_comments.extend(comments.items);
+            }
+        }
         // A base change can alter commit membership without changing the head or count.
         let (current_pull, _) = self.get::<PullRequest>(pull_url).await?;
         if current_pull.base.sha != pull.base.sha
             || current_pull.head.sha != pull.head.sha
+            || current_pull.head.repo != pull.head.repo
             || current_pull.commits != pull.commits
         {
             return Err(GitHubError::IncompleteCommits);
         }
-        let context = mapping::review_context(pull, comments, reviews, review_comments);
+        let context =
+            mapping::review_context(pull, comments, reviews, review_comments, commit_comments);
         debug!(
             "loaded GitHub review input: repository={repository} pull_request={number} commits={} threads={}",
             commits.len(),
             context.comments.len()
         );
         Ok(GitHubReviewInput { context, commits })
+    }
+
+    async fn commit_comments(
+        &self,
+        repository: &Repository,
+        commit: &CommitHash,
+        skip_inaccessible_repository: bool,
+    ) -> Result<Collection<CommitComment>, GitHubError> {
+        let mut comments = self
+            .list_with_access::<CommitComment>(
+                &format!("repos/{repository}/commits/{commit}/comments"),
+                skip_inaccessible_repository,
+            )
+            .await?;
+        if !comments.items.iter().any(|comment| {
+            comment.commit_id == *commit
+                && comment.path.as_ref().is_some_and(|path| !path.is_empty())
+                && comment.position.is_some_and(|position| position > 0)
+        }) {
+            return Ok(comments);
+        }
+        // Coordinates are optional context. A missing diff must not discard comments,
+        // and no coordinates are resolved until every file page has loaded.
+        match self.commit_files(repository, commit).await {
+            Ok(files) => {
+                for comment in &mut comments.items {
+                    if comment.commit_id == *commit
+                        && let Some(path) = &comment.path
+                        && let Some(position) = comment.position
+                    {
+                        comment.resolved_position = commit_comment_position(&files, path, position);
+                    }
+                }
+            }
+            Err(error) => debug!(
+                "GitHub commit comment coordinates unavailable: repository={repository} commit={commit} error={error}"
+            ),
+        }
+        Ok(comments)
+    }
+
+    async fn commit_files(
+        &self,
+        repository: &Repository,
+        commit: &CommitHash,
+    ) -> Result<Vec<ChangedFile>, GitHubError> {
+        let mut url = self
+            .base
+            .join(&format!("repos/{repository}/commits/{commit}"))
+            .expect("valid commit path");
+        url.set_query(Some("per_page=100"));
+        let mut next = Some(url);
+        let mut seen = HashSet::new();
+        let mut files = Vec::new();
+        while let Some(url) = next {
+            if !seen.insert(url.clone()) {
+                return Err(GitHubError::InvalidPagination);
+            }
+            let (page, headers) = self.get::<CommitFiles>(url).await?;
+            files.extend(page.files);
+            next = next_page(&headers)?;
+        }
+        Ok(files)
     }
 
     pub async fn pull_request_commits(
@@ -122,6 +228,14 @@ impl GitHubClient {
     }
 
     pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitHubError> {
+        Ok(self.list_with_access(path, false).await?.items)
+    }
+
+    async fn list_with_access<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        skip_inaccessible_repository: bool,
+    ) -> Result<Collection<T>, GitHubError> {
         let started = Instant::now();
         debug!("loading GitHub collection: endpoint={path}");
         let mut url = self.base.join(path).expect("valid GitHub API path");
@@ -142,13 +256,31 @@ impl GitHubClient {
                 "loading GitHub collection page: endpoint={path} page={}",
                 seen.len()
             );
-            let (page, headers) = self.get::<Vec<T>>(url).await.inspect_err(|_| {
+            let (page, headers) = match self.get::<Vec<T>>(url).await.inspect_err(|_| {
                 debug!(
                     "GitHub collection request failed: endpoint={path} page={} loaded_items={}",
                     seen.len(),
                     items.len()
                 );
-            })?;
+            }) {
+                Ok(page) => page,
+                Err(
+                    error @ (GitHubError::Api { status: 404, .. }
+                    | GitHubError::Api {
+                        status: 403,
+                        rate_limited: false,
+                        permission_denied: true,
+                        ..
+                    }),
+                ) if skip_inaccessible_repository && seen.len() == 1 => {
+                    debug!("GitHub optional collection unavailable: endpoint={path} error={error}");
+                    return Ok(Collection {
+                        items: Vec::new(),
+                        repository_accessible: false,
+                    });
+                }
+                Err(error) => return Err(error),
+            };
             let page_items = page.len();
             items.extend(page);
             next = next_page(&headers).inspect_err(|_| {
@@ -171,7 +303,10 @@ impl GitHubClient {
             items.len(),
             started.elapsed().as_millis()
         );
-        Ok(items)
+        Ok(Collection {
+            items,
+            repository_accessible: true,
+        })
     }
 
     async fn get<T: DeserializeOwned>(&self, url: Url) -> Result<(T, HeaderMap), GitHubError> {
@@ -242,17 +377,51 @@ impl GitHubClient {
         let status = response.status();
         trace!("received GitHub response: endpoint={endpoint} status={status}");
         if !status.is_success() {
-            let rate_limited = status.as_u16() == 429
+            let mut rate_limited = status.as_u16() == 429
                 || (status.as_u16() == 403
                     && (response
                         .headers()
                         .get("x-ratelimit-remaining")
                         .is_some_and(|value| value == "0")
                         || response.headers().contains_key("retry-after")));
+            let mut permission_denied = false;
+            if status.as_u16() == 403 && !rate_limited {
+                let sso_required = response
+                    .headers()
+                    .get("x-github-sso")
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| {
+                        value
+                            .split(';')
+                            .next()
+                            .is_some_and(|value| value.trim().eq_ignore_ascii_case("required"))
+                    });
+                // Secondary limits may only be identified in the response body.
+                // Preserve the known HTTP failure if that body cannot be read or decoded.
+                let message = response
+                    .json::<ApiErrorResponse>()
+                    .await
+                    .ok()
+                    .map(|error| error.message.trim().to_ascii_lowercase());
+                rate_limited = message.as_deref().is_some_and(|message| {
+                    message.contains("secondary rate limit")
+                        || message.starts_with("api rate limit exceeded")
+                });
+                permission_denied = !rate_limited
+                    && (sso_required
+                        || matches!(
+                            message.as_deref(),
+                            Some(
+                                "resource not accessible by integration"
+                                    | "resource not accessible by personal access token"
+                            )
+                        ));
+            }
             let error = GitHubError::Api {
                 endpoint,
                 status: status.as_u16(),
                 rate_limited,
+                permission_denied,
             };
             debug!("{error}; duration_ms={}", started.elapsed().as_millis());
             return Err(error);
@@ -348,6 +517,12 @@ pub struct PullRequest {
 #[derive(Debug, Deserialize)]
 pub struct CommitRef {
     pub sha: CommitHash,
+    pub repo: Option<RepositoryRef>,
+}
+
+#[derive(Debug, PartialEq, Eq, Deserialize)]
+pub struct RepositoryRef {
+    pub full_name: String,
 }
 
 #[derive(Debug)]
@@ -392,6 +567,25 @@ pub struct ReviewComment {
     pub line: Option<NonZeroU32>,
     pub original_line: Option<NonZeroU32>,
     pub side: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CommitComment {
+    pub id: u64,
+    pub created_at: String,
+    pub user: Option<User>,
+    pub body: String,
+    pub path: Option<String>,
+    pub commit_id: CommitHash,
+    pub position: Option<u32>,
+    // The API's line can refer to a deleted line, so only trust patch-derived positions.
+    #[serde(skip)]
+    pub resolved_position: Option<CommitCommentPosition>,
+}
+
+#[derive(Deserialize)]
+struct CommitFiles {
+    files: Vec<ChangedFile>,
 }
 
 #[cfg(test)]

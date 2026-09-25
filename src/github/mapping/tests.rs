@@ -12,9 +12,11 @@ fn pull() -> PullRequest {
         body: Some("Description".into()),
         base: super::super::client::CommitRef {
             sha: crate::git::CommitHash::new("0123456").unwrap(),
+            repo: None,
         },
         head: super::super::client::CommitRef {
             sha: crate::git::CommitHash::new("abc1234").unwrap(),
+            repo: None,
         },
         commits: 1,
     }
@@ -43,6 +45,7 @@ fn with_inline(comments: Vec<Value>) -> ReviewContext {
         vec![],
         vec![],
         serde_json::from_value(json!(comments)).unwrap(),
+        vec![],
     )
 }
 
@@ -126,6 +129,7 @@ fn skips_marked_conversation_comments_and_preserves_other_context() {
         comments,
         vec![review(1, "COMMENTED", json!(marked))],
         serde_json::from_value(json!([root, inline(11, Some(10))])).unwrap(),
+        vec![],
     );
 
     assert_eq!(context.title.as_deref(), Some("Title"));
@@ -157,7 +161,7 @@ fn all_marked_conversation_comments_leave_no_threads() {
         "body": format!("Peer review\n\n{CONVERSATION_MARKER}"),
     }]))
     .unwrap();
-    let context = review_context(pull(), comments, vec![], vec![]);
+    let context = review_context(pull(), comments, vec![], vec![], vec![]);
     assert_eq!(context.comments, vec![]);
 }
 
@@ -179,6 +183,7 @@ fn includes_nonempty_submitted_reviews_and_retains_bots() {
             unsubmitted,
             deleted_author,
         ],
+        vec![],
         vec![],
     );
 
@@ -268,7 +273,7 @@ fn pairs_right_side_lines_with_the_matching_commit() {
 }
 
 #[test]
-fn groups_comment_categories_and_matches_direct_context_files() {
+fn orders_comment_categories_chronologically_and_matches_direct_context_files() {
     let issue = serde_json::from_value(json!({
         "id": 100, "created_at": "2026-02-01T00:00:00Z", "user": {"login": "author"}, "body": "Rationale",
     })).unwrap();
@@ -277,6 +282,7 @@ fn groups_comment_categories_and_matches_direct_context_files() {
         vec![issue],
         vec![review(1, "APPROVED", json!("Verified"))],
         serde_json::from_value(json!([inline(10, None), inline(11, Some(10))])).unwrap(),
+        serde_json::from_value(json!([native(10)])).unwrap(),
     );
     let directory = tempfile::tempdir().unwrap();
     let body = directory.path().join("body.md");
@@ -285,18 +291,83 @@ fn groups_comment_categories_and_matches_direct_context_files() {
     std::fs::write(
         &comments,
         r#"[
-        {"comments":[{"author":"author","body":"Rationale"}]},
         {"commit":"abc1234","comments":[{"author":"reviewer[bot]","body":"Verified"}]},
         {"commit":"abc1234","location":{"path":"src/root.rs","line":42},"comments":[
             {"author":"reviewer[bot]","body":"Inline 10"},
             {"author":"reviewer[bot]","body":"Inline 11"}
-        ]}
+        ]},
+        {"commit":"abc1234","location":{"path":"src/root.rs"},"comments":[
+            {"author":"reviewer[bot]","body":"Commit comment 10"}
+        ]},
+        {"comments":[{"author":"author","body":"Rationale"}]}
     ]"#,
     )
     .unwrap();
     assert_eq!(
         context,
         ReviewContext::load(Some("Title".into()), Some(&body), Some(&comments)).unwrap()
+    );
+}
+
+#[test]
+fn interleaves_all_comment_categories_by_thread_start_and_keeps_replies_grouped() {
+    let at = |mut comment: Value, day| {
+        comment["created_at"] = json!(format!("2026-01-{day:02}T00:00:00Z"));
+        comment
+    };
+    let mut inputs = [
+        vec![
+            json!({"id": 2, "created_at": "2026-01-06T00:00:00Z", "body": "Later rationale"}),
+            json!({"id": 1, "created_at": "2026-01-02T00:00:00Z", "body": "Earlier rationale"}),
+        ],
+        vec![
+            json!({"id": 2, "submitted_at": "2026-01-08T00:00:00Z", "state": "APPROVED", "body": "Later review"}),
+            json!({"id": 1, "submitted_at": "2026-01-04T00:00:00Z", "state": "COMMENTED", "body": "Earlier review"}),
+        ],
+        vec![
+            at(inline(22, Some(20)), 10),
+            at(inline(11, Some(10)), 9),
+            at(inline(21, Some(20)), 7),
+            at(inline(10, None), 3),
+        ],
+        vec![at(native(2), 5), at(native(1), 1)],
+    ];
+    let map = |inputs: &[Vec<Value>; 4]| {
+        review_context(
+            pull(),
+            serde_json::from_value(json!(inputs[0])).unwrap(),
+            serde_json::from_value(json!(inputs[1])).unwrap(),
+            serde_json::from_value(json!(inputs[2])).unwrap(),
+            serde_json::from_value(json!(inputs[3])).unwrap(),
+        )
+    };
+    let context = map(&inputs);
+    for input in &mut inputs {
+        input.reverse();
+    }
+    assert_eq!(context, map(&inputs));
+    assert_eq!(
+        context
+            .comments
+            .iter()
+            .map(|thread| {
+                thread
+                    .comments
+                    .iter()
+                    .map(|comment| comment.body.as_str())
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>(),
+        [
+            vec!["Commit comment 1"],
+            vec!["Earlier rationale"],
+            vec!["Inline 10", "Inline 11"],
+            vec!["Earlier review"],
+            vec!["Commit comment 2"],
+            vec!["Later rationale"],
+            vec!["Inline 21", "Inline 22"],
+            vec!["Later review"],
+        ]
     );
 }
 
@@ -315,4 +386,73 @@ fn rejects_zero_lines_at_the_api_boundary() {
     let mut zero_line = inline(1, None);
     zero_line["line"] = json!(0);
     assert_matches!(serde_json::from_value::<ReviewComment>(zero_line), Err(_));
+}
+
+fn native(id: u64) -> Value {
+    json!({
+        "id": id,
+        "created_at": "2026-01-01T00:00:00Z",
+        "user": {
+            "login": "reviewer[bot]"
+        }, "body": format!("Commit comment {id}"),
+        "path": "src/root.rs",
+        "commit_id": "abc1234",
+        "line": 14,
+        "position": 4,
+    })
+}
+
+fn with_native(comments: Vec<Value>) -> ReviewContext {
+    review_context(
+        pull(),
+        vec![],
+        vec![],
+        vec![],
+        serde_json::from_value(json!(comments)).unwrap(),
+    )
+}
+
+#[test]
+fn keeps_native_comments_independent_and_sorted_without_assuming_line_coordinates() {
+    let mut earlier = native(3);
+    earlier["created_at"] = json!("2025-01-01T00:00:00Z");
+    earlier["commit_id"] = json!("def5678");
+    let input = vec![native(2), earlier, native(1)];
+    let context = with_native(input.clone());
+    let mut reversed = input;
+    reversed.reverse();
+    assert_eq!(context, with_native(reversed));
+    assert_eq!(context.comments.len(), 3);
+    assert_eq!(
+        context.comments[0].commit.as_ref().unwrap().as_ref(),
+        "def5678"
+    );
+    for (thread, id) in context.comments.iter().zip([3, 1, 2]) {
+        assert_eq!(thread.comments.len(), 1);
+        assert_eq!(thread.comments[0].body, format!("Commit comment {id}"));
+        assert_eq!(thread.comments[0].author, "reviewer[bot]");
+        let location = thread.location.as_ref().unwrap();
+        assert_eq!(location.path, "src/root.rs");
+        assert_eq!(location.line, None);
+    }
+}
+
+#[test]
+fn retains_native_feedback_markers_and_handles_missing_authors_and_paths() {
+    let mut comment = native(1);
+    comment["path"] = Value::Null;
+    comment["user"] = Value::Null;
+    // The conversation marker filters only PR issue comments, as before.
+    let body = format!(
+        "Feedback\n{}\n{CONVERSATION_MARKER}",
+        marker(&"a".repeat(64))
+    );
+    comment["body"] = json!(body);
+    let context = with_native(vec![comment]);
+    assert_eq!(context.comments.len(), 1);
+    let thread = &context.comments[0];
+    assert_eq!(thread.commit.as_ref().unwrap().as_ref(), "abc1234");
+    assert_eq!(thread.location, None);
+    assert_eq!(thread.comments[0].author, "unknown");
+    assert_eq!(thread.comments[0].body, body);
 }
