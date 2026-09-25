@@ -467,6 +467,129 @@ async fn distinguishes_rate_limits_from_other_forbidden_responses() {
     );
 }
 
+async fn assert_rate_limited_response(reply: Reply) {
+    let status = reply.status;
+    let server = Server::start(vec![reply]).await;
+    let error = server
+        .client()
+        .review_input(&repository(), number())
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitHubError::Api {
+            status: actual,
+            rate_limited: true,
+            permission_denied: false,
+            ..
+        } if actual == status
+    );
+    assert!(error.to_string().contains("API rate limit exceeded"));
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn recognizes_secondary_rate_limit_message_with_remaining_quota() {
+    let mut reply = Reply::json(json!({
+        "message": "You have exceeded a SECONDARY RATE LIMIT. Please wait before retrying."
+    }))
+    .header("X-RateLimit-Remaining: 42");
+    reply.status = 403;
+
+    assert_rate_limited_response(reply).await;
+}
+
+#[tokio::test]
+async fn recognizes_primary_rate_limit_message_without_rate_limit_headers() {
+    let mut reply = Reply::json(json!({"message": "API rate limit exceeded for 127.0.0.1."}));
+    reply.status = 403;
+
+    assert_rate_limited_response(reply).await;
+}
+
+#[tokio::test]
+async fn recognizes_too_many_requests_despite_malformed_error_body() {
+    let mut reply = Reply::json(json!({}));
+    reply.status = 429;
+    reply.body = "not json".into();
+
+    assert_rate_limited_response(reply).await;
+}
+
+#[tokio::test]
+async fn too_many_requests_status_takes_precedence_over_permission_message() {
+    let mut reply = Reply::json(json!({"message": "Resource not accessible by integration"}));
+    reply.status = 429;
+
+    assert_rate_limited_response(reply).await;
+}
+
+#[tokio::test]
+async fn recognizes_exhausted_quota_despite_malformed_error_body() {
+    let mut reply = Reply::json(json!({})).header("X-RateLimit-Remaining: 0");
+    reply.status = 403;
+    reply.body = "not json".into();
+
+    assert_rate_limited_response(reply).await;
+}
+
+#[tokio::test]
+async fn exhausted_quota_takes_precedence_over_permission_message() {
+    let mut reply = Reply::json(json!({"message": "Resource not accessible by integration"}))
+        .header("X-RateLimit-Remaining: 0");
+    reply.status = 403;
+
+    assert_rate_limited_response(reply).await;
+}
+
+#[tokio::test]
+async fn recognizes_retry_after_despite_malformed_error_body() {
+    let mut reply = Reply::json(json!({})).header("Retry-After: 60");
+    reply.status = 403;
+    reply.body = "not json".into();
+
+    assert_rate_limited_response(reply).await;
+}
+
+#[tokio::test]
+async fn retry_after_takes_precedence_over_permission_message() {
+    let mut reply = Reply::json(json!({"message": "Resource not accessible by integration"}))
+        .header("Retry-After: 60");
+    reply.status = 403;
+
+    assert_rate_limited_response(reply).await;
+}
+
+#[tokio::test]
+async fn malformed_forbidden_post_response_remains_a_definitive_api_failure() {
+    let mut reply = Reply::json(json!({}));
+    reply.status = 403;
+    reply.body = "not json".into();
+    let server = Server::start(vec![reply]).await;
+    let error = server
+        .client()
+        .post::<Value>(
+            "repos/owner/repo/issues/123/comments",
+            &json!({"body": "Comment"}),
+        )
+        .await
+        .unwrap_err();
+
+    assert_matches!(
+        error,
+        GitHubError::Api {
+            status: 403,
+            rate_limited: false,
+            permission_denied: false,
+            ..
+        }
+    );
+    assert!(!error.may_have_published());
+    assert!(error.to_string().contains("API request forbidden"));
+    assert_eq!(server.requests().len(), 1);
+}
+
 #[tokio::test]
 async fn a_later_page_failure_discards_the_whole_context() {
     let mut failure = Reply::json(json!({}));

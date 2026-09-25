@@ -21,6 +21,11 @@ pub struct GitHubClient {
     base: Url,
 }
 
+#[derive(Deserialize)]
+struct ApiErrorResponse {
+    message: String,
+}
+
 impl GitHubClient {
     pub fn from_env() -> Result<Self, GitHubError> {
         let token = std::env::var("GITHUB_TOKEN")?;
@@ -324,17 +329,51 @@ impl GitHubClient {
         let status = response.status();
         trace!("received GitHub response: endpoint={endpoint} status={status}");
         if !status.is_success() {
-            let rate_limited = status.as_u16() == 429
+            let mut rate_limited = status.as_u16() == 429
                 || (status.as_u16() == 403
                     && (response
                         .headers()
                         .get("x-ratelimit-remaining")
                         .is_some_and(|value| value == "0")
                         || response.headers().contains_key("retry-after")));
+            let mut permission_denied = false;
+            if status.as_u16() == 403 && !rate_limited {
+                let sso_required = response
+                    .headers()
+                    .get("x-github-sso")
+                    .and_then(|value| value.to_str().ok())
+                    .is_some_and(|value| {
+                        value
+                            .split(';')
+                            .next()
+                            .is_some_and(|value| value.trim().eq_ignore_ascii_case("required"))
+                    });
+                // Secondary limits may only be identified in the response body.
+                // Preserve the known HTTP failure if that body cannot be read or decoded.
+                let message = response
+                    .json::<ApiErrorResponse>()
+                    .await
+                    .ok()
+                    .map(|error| error.message.trim().to_ascii_lowercase());
+                rate_limited = message.as_deref().is_some_and(|message| {
+                    message.contains("secondary rate limit")
+                        || message.starts_with("api rate limit exceeded")
+                });
+                permission_denied = !rate_limited
+                    && (sso_required
+                        || matches!(
+                            message.as_deref(),
+                            Some(
+                                "resource not accessible by integration"
+                                    | "resource not accessible by personal access token"
+                            )
+                        ));
+            }
             let error = GitHubError::Api {
                 endpoint,
                 status: status.as_u16(),
                 rate_limited,
+                permission_denied,
             };
             debug!("{error}; duration_ms={}", started.elapsed().as_millis());
             return Err(error);
