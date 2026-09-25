@@ -1,6 +1,7 @@
 use super::*;
 
 mod locations;
+mod source_access;
 
 fn pull_with_source(source: Option<&str>, head: &str, commits: usize) -> Value {
     json!({
