@@ -251,7 +251,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rejects_absoulte_path() {
+    async fn rejects_absolute_path() {
         let extractor = Extractor::new(std::path::PathBuf::from("/unused"));
         assert_matches!(
             extractor
