@@ -16,6 +16,7 @@ pub async fn handler(
     provider: Option<String>,
     model: Option<String>,
     repo: Option<String>,
+    gitlab: bool,
 ) -> Result<PathBuf, PeerError> {
     let cwd = std::env::current_dir().map_err(|e| PeerError::InvalidConfig {
         message: "cannot determine current directory".into(),
@@ -36,6 +37,7 @@ pub async fn handler(
         provider.as_deref(),
         model.as_deref(),
         repo.as_deref(),
+        gitlab,
     )?;
     let peer_dir = cwd.join(".peer");
     if let Err(e) = std::fs::create_dir(&peer_dir) {
@@ -71,6 +73,7 @@ fn render_config(
     provider: Option<&str>,
     model: Option<&str>,
     repo: Option<&str>,
+    gitlab: bool,
 ) -> Result<String, PeerError> {
     let mut config = template
         .parse::<DocumentMut>()
@@ -79,10 +82,22 @@ fn render_config(
             source: Box::new(source),
         })?;
 
+    let (repo_section, repo_example) = if gitlab {
+        (
+            "gitlab",
+            "# repo = \"group/subgroup/project\" # Set it to use --gitlab on GitLab.com.",
+        )
+    } else {
+        (
+            "github",
+            "# repo = \"owner/repository\" # Set it to use --github.",
+        )
+    };
+
     for (section, key, value) in [
         ("llm", "default_provider", provider),
         ("llm", "default_model", model),
-        ("github", "repo", repo),
+        (repo_section, "repo", repo),
     ] {
         if let Some(value) = value {
             let item = &mut config[section][key];
@@ -95,25 +110,30 @@ fn render_config(
     }
 
     if repo.is_some() {
-        RemoveRepoExample.visit_document_mut(&mut config);
+        RemoveRepoExample {
+            example: repo_example,
+        }
+        .visit_document_mut(&mut config);
     }
 
     Ok(config.to_string())
 }
 
-struct RemoveRepoExample;
+struct RemoveRepoExample {
+    example: &'static str,
+}
 
 impl RemoveRepoExample {
-    fn from_comments(comments: &str) -> String {
+    fn remove_from_comments(&self, comments: &str) -> String {
         comments
             .split_inclusive('\n')
-            .filter(|line| line.trim() != "# repo = \"owner/repository\" # Set it to use --github.")
+            .filter(|line| line.trim() != self.example)
             .collect()
     }
 
-    fn from_prefix(decor: &mut Decor) {
+    fn remove_from_prefix(&self, decor: &mut Decor) {
         if let Some(prefix) = decor.prefix().and_then(|prefix| prefix.as_str()) {
-            decor.set_prefix(Self::from_comments(prefix));
+            decor.set_prefix(self.remove_from_comments(prefix));
         }
     }
 }
@@ -123,18 +143,18 @@ impl RemoveRepoExample {
 impl VisitMut for RemoveRepoExample {
     fn visit_document_mut(&mut self, document: &mut DocumentMut) {
         if let Some(trailing) = document.trailing().as_str() {
-            document.set_trailing(Self::from_comments(trailing));
+            document.set_trailing(self.remove_from_comments(trailing));
         }
         visit_mut::visit_document_mut(self, document);
     }
 
     fn visit_table_mut(&mut self, table: &mut Table) {
-        Self::from_prefix(table.decor_mut());
+        self.remove_from_prefix(table.decor_mut());
         visit_mut::visit_table_mut(self, table);
     }
 
     fn visit_table_like_kv_mut(&mut self, mut key: KeyMut<'_>, item: &mut Item) {
-        Self::from_prefix(key.leaf_decor_mut());
+        self.remove_from_prefix(key.leaf_decor_mut());
         visit_mut::visit_table_like_kv_mut(self, key, item);
     }
 }

@@ -21,9 +21,17 @@ pub enum Command {
         #[arg(long)]
         model: Option<String>,
 
-        /// Set github.repo in the generated config.
-        #[arg(long, value_name = "OWNER/NAME")]
+        /// Set the selected service's repository in the generated config (defaults to GitHub).
+        #[arg(long, value_name = "NAMESPACE/PROJECT")]
         repo: Option<String>,
+
+        /// Set github.repo with --repo (default).
+        #[arg(long, conflicts_with = "gitlab", requires = "repo")]
+        github: bool,
+
+        /// Set gitlab.repo with --repo.
+        #[arg(long, conflicts_with = "github", requires = "repo")]
+        gitlab: bool,
     },
 
     /// Remove cached values.
@@ -138,6 +146,8 @@ mod tests {
                 provider: None,
                 model: None,
                 repo: None,
+                github: false,
+                gitlab: false,
             }
         );
     }
@@ -161,7 +171,29 @@ mod tests {
                 provider: Some("custom".into()),
                 model: Some("namespace/model".into()),
                 repo: Some("owner/repository".into()),
+                github: false,
+                gitlab: false,
             }
+        );
+    }
+
+    #[test]
+    fn init_github_requires_repo() {
+        let error = Cli::try_parse_from(["peer", "init", "--github"]).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
+        );
+    }
+
+    #[test]
+    fn init_gitlab_requires_repo() {
+        let error = Cli::try_parse_from(["peer", "init", "--gitlab"]).unwrap_err();
+
+        assert_eq!(
+            error.kind(),
+            clap::error::ErrorKind::MissingRequiredArgument
         );
     }
 

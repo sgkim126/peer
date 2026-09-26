@@ -1,22 +1,7 @@
 use super::render_config;
 
 #[test]
-fn repository_override_only_sets_github_and_preserves_gitlab_guidance() {
-    let rendered = render_config(
-        crate::config::DEFAULT_CONFIG_TOML,
-        None,
-        None,
-        Some("owner/repo"),
-    )
-    .unwrap();
-    let config: crate::config::Config = toml::from_str(&rendered).unwrap();
-    assert_eq!(config.github.repo.as_deref(), Some("owner/repo"));
-    assert_eq!(config.gitlab.repo, None);
-    assert!(rendered.contains("# repo = \"group/subgroup/project\""));
-}
-
-#[test]
-fn overrides_follow_toml_keys_and_preserve_surrounding_formatting() {
+fn overrides_preserve_toml_formatting_and_other_settings() {
     let template = r#"version = 2 # keep version comment
 
 [stages.knowledge]
@@ -30,6 +15,9 @@ max_iterations = 4
 ["github"] # keep repository settings comment
 'repo'  = "old/repository" # keep repository comment
 
+["gitlab"] # keep other repository settings comment
+repo = "keep/repository" # keep other repository comment
+
 # Keep review guidance.
 [review]
 max_commits = 12
@@ -40,6 +28,7 @@ max_commits = 12
         Some("custom-provider"),
         Some("namespace/new-model"),
         Some("new/repository"),
+        false,
     )
     .unwrap();
 
@@ -53,27 +42,40 @@ max_commits = 12
 }
 
 #[test]
-fn repository_override_removes_only_the_example_from_comment_metadata() {
-    const EXAMPLE: &str = "# repo = \"owner/repository\" # Set it to use --github.";
-
-    for suffix in [
+fn repository_override_removes_example_before_next_table() {
+    assert_repository_example_removed(
         "[llm]\ndefault_provider = \"custom\"\ndefault_model = \"model\"\n",
-        "repo = \"old/repository\"\n",
-        "",
-    ] {
-        let template = format!(
-            "version = 2\n[github]\n# Keep repository guidance.\n{EXAMPLE}\n# Keep following guidance.\n{suffix}"
-        );
-        let rendered = render_config(&template, None, None, Some("new/repository")).unwrap();
+    );
+}
 
-        let mut expected: toml::Value = toml::from_str(&template).unwrap();
-        expected["github"]
-            .as_table_mut()
-            .unwrap()
-            .insert("repo".into(), "new/repository".into());
-        assert_eq!(toml::from_str::<toml::Value>(&rendered).unwrap(), expected);
-        assert!(!rendered.contains(EXAMPLE), "rendered config: {rendered}");
-        assert!(rendered.contains("# Keep repository guidance.\n"));
-        assert!(rendered.contains("# Keep following guidance.\n"));
-    }
+#[test]
+fn repository_override_removes_example_before_next_key() {
+    assert_repository_example_removed("repo = \"old/repository\"\n");
+}
+
+#[test]
+fn repository_override_removes_trailing_example() {
+    assert_repository_example_removed("");
+}
+
+fn assert_repository_example_removed(suffix: &str) {
+    const EXAMPLE: &str = "# repo = \"owner/repository\" # Set it to use --github.";
+    let template = format!(
+        "version = 2\nexample_text = '''\n{EXAMPLE}\n'''\n[github]\n# Keep repository guidance.\n{EXAMPLE}\n# Keep following guidance.\n{suffix}"
+    );
+    let rendered = render_config(&template, None, None, Some("new/repository"), false).unwrap();
+
+    let mut expected: toml::Value = toml::from_str(&template).unwrap();
+    expected["github"]
+        .as_table_mut()
+        .unwrap()
+        .insert("repo".into(), "new/repository".into());
+    assert_eq!(toml::from_str::<toml::Value>(&rendered).unwrap(), expected);
+    assert_eq!(
+        rendered.matches(EXAMPLE).count(),
+        1,
+        "rendered config: {rendered}"
+    );
+    assert!(rendered.contains("# Keep repository guidance.\n"));
+    assert!(rendered.contains("# Keep following guidance.\n"));
 }
