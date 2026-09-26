@@ -85,6 +85,18 @@ export MISTRAL_API_KEY="..."
 peer review main..HEAD
 ```
 
+To configure a repository during initialization, pass `--repo`. It sets
+`github.repo` by default; use `--github` explicitly or `--gitlab` to set
+`gitlab.repo` instead:
+
+```bash
+peer init --repo owner/repository
+peer init --github --repo owner/repository
+peer init --gitlab --repo group/subgroup/project
+```
+
+The `--github` and `--gitlab` flags each require `--repo` and cannot be used together.
+
 A single revision such as `HEAD` reviews one commit.
 A two-dot range such as `main..HEAD` reviews the complete change before reviewing each commit for quality and security problems.
 
@@ -108,7 +120,7 @@ peer render --format gitlab < review.json
 
 `--repo group/subgroup/project` overrides that setting for a review.
 The MR's commits and base must already be available in the local Git
-repository. `peer init --repo` continues to configure GitHub only.
+repository.
 GitLab rendering also accepts `--repo` and works without a token or network access.
 
 ## Documentation

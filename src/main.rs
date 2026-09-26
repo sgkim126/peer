@@ -37,7 +37,9 @@ async fn main() -> ExitCode {
             provider,
             model,
             repo,
-        } => match init::handler(provider, model, repo).await {
+            github: _,
+            gitlab,
+        } => match init::handler(provider, model, repo, gitlab).await {
             Ok(path) => {
                 println!("initialized peer in {}", path.display());
                 ExitCode::SUCCESS

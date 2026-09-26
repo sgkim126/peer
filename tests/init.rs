@@ -32,15 +32,24 @@ fn assert_init_overrides(
     provider: Option<&str>,
     model: Option<&str>,
     repo: Option<&str>,
+    selector: Option<&str>,
 ) -> String {
     let (mut cmd, tmp) = peer_in_tmp();
     git_init(tmp.path());
     cmd.arg("init");
+    if let Some(selector) = selector {
+        cmd.arg(selector);
+    }
+    let repository_section = if selector == Some("--gitlab") {
+        "gitlab"
+    } else {
+        "github"
+    };
     let mut expected: toml::Value = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
     for (flag, section, key, value) in [
         ("--provider", "llm", "default_provider", provider),
         ("--model", "llm", "default_model", model),
-        ("--repo", "github", "repo", repo),
+        ("--repo", repository_section, "repo", repo),
     ] {
         if let Some(value) = value {
             cmd.args([flag, value]);
@@ -85,8 +94,9 @@ fn assert_init_overrides_preserve_comments(
     provider: Option<&str>,
     model: Option<&str>,
     repo: Option<&str>,
+    selector: Option<&str>,
 ) {
-    let content = assert_init_overrides(provider, model, repo);
+    let content = assert_init_overrides(provider, model, repo, selector);
     let comments_and_sections = |text: &str| {
         text.lines()
             .filter(|line| line.starts_with('#') || line.starts_with('['))
@@ -95,8 +105,12 @@ fn assert_init_overrides_preserve_comments(
     };
     let mut expected_comments_and_sections = comments_and_sections(DEFAULT_CONFIG_TOML);
     if repo.is_some() {
-        expected_comments_and_sections
-            .retain(|line| line != "# repo = \"owner/repository\" # Set it to use --github.");
+        let repository_example = if selector == Some("--gitlab") {
+            "# repo = \"group/subgroup/project\" # Set it to use --gitlab on GitLab.com."
+        } else {
+            "# repo = \"owner/repository\" # Set it to use --github."
+        };
+        expected_comments_and_sections.retain(|line| line != repository_example);
     }
     assert_eq!(
         comments_and_sections(&content),
@@ -156,8 +170,10 @@ fn init_succeeds_in_git_repo() {
         String::from_utf8_lossy(&out.stderr)
     );
 
-    let config_path = tmp.path().join(".peer").join("config.toml");
-    assert!(config_path.exists());
+    assert_eq!(
+        std::fs::read_to_string(tmp.path().join(".peer").join("config.toml")).unwrap(),
+        DEFAULT_CONFIG_TOML
+    );
     assert_eq!(
         std::fs::read_to_string(tmp.path().join(".peer").join(".gitignore")).unwrap(),
         "cache/\n"
@@ -170,58 +186,83 @@ fn init_fails_when_peer_already_exists_without_overrides() {
 }
 
 #[test]
-fn init_fails_when_peer_already_exists_with_overrides() {
+fn init_fails_when_peer_already_exists_with_gitlab_overrides() {
     assert_init_fails_when_peer_already_exists(&[
         "--provider",
         "openai",
         "--model",
         "model",
         "--repo",
-        "owner/repo",
+        "group/subgroup/project",
+        "--gitlab",
     ]);
 }
 
 #[test]
-fn init_without_options_preserves_the_bundled_config() {
-    let (mut cmd, tmp) = peer_in_tmp();
-    git_init(tmp.path());
-    cmd.arg("init").output().unwrap().assert_success();
-
-    let content = std::fs::read_to_string(tmp.path().join(".peer").join("config.toml")).unwrap();
-    assert_eq!(content, DEFAULT_CONFIG_TOML);
-}
-
-#[test]
 fn init_applies_provider_override() {
-    assert_init_overrides_preserve_comments(Some("custom"), None, None);
+    assert_init_overrides_preserve_comments(Some("custom"), None, None, None);
 }
 
 #[test]
 fn init_applies_model_override() {
-    assert_init_overrides_preserve_comments(None, Some("namespace/new-model"), None);
+    assert_init_overrides_preserve_comments(None, Some("namespace/new-model"), None, None);
 }
 
 #[test]
-fn init_applies_repo_override() {
-    assert_init_overrides_preserve_comments(None, None, Some("Org.Name/project_name-1"));
+fn init_applies_repo_override_to_github_by_default() {
+    assert_init_overrides_preserve_comments(None, None, Some("Org.Name/project_name-1"), None);
 }
 
 #[test]
-fn init_applies_all_overrides_together() {
+fn init_applies_repo_override_to_explicit_github() {
+    assert_init_overrides_preserve_comments(
+        None,
+        None,
+        Some("Org.Name/project_name-1"),
+        Some("--github"),
+    );
+}
+
+#[test]
+fn init_applies_repo_override_to_gitlab() {
+    assert_init_overrides_preserve_comments(
+        None,
+        None,
+        Some("group/subgroup/project"),
+        Some("--gitlab"),
+    );
+}
+
+#[test]
+fn init_applies_all_overrides_with_default_github() {
     assert_init_overrides_preserve_comments(
         Some("openai"),
         Some("gpt-5.6-terra"),
         Some("owner/repository"),
+        None,
     );
 }
 
 #[test]
 fn init_stores_empty_overrides_without_falling_back_to_defaults() {
-    assert_init_overrides(Some(""), Some(""), Some(""));
+    assert_init_overrides(Some(""), Some(""), Some(""), None);
 }
 
 #[test]
 fn init_serializes_quotes_and_backslashes_as_valid_toml() {
     let value = "quotes: \"'\" backslash: \\";
-    assert_init_overrides(Some(value), Some(value), Some(value));
+    assert_init_overrides(Some(value), Some(value), Some(value), None);
+}
+
+#[test]
+fn init_rejects_github_and_gitlab_before_creating_peer() {
+    let (mut cmd, tmp) = peer_in_tmp();
+    git_init(tmp.path());
+    let out = cmd
+        .args(["init", "--github", "--gitlab", "--repo", "owner/repository"])
+        .output()
+        .unwrap();
+
+    assert_eq!(out.status.code(), Some(2));
+    assert!(!tmp.path().join(".peer").exists());
 }
