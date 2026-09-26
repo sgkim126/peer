@@ -299,10 +299,13 @@ mod tests {
     }
 
     #[test]
-    fn deletion_does_not_alias_a_head_line_with_the_same_number() {
+    fn deletion_only_hunks_do_not_have_head_lines() {
         let files = [file("@@ -4,2 +3,0 @@\n-first\n-second")];
         assert_matches!(comment_position(&files, &location(Some(4)), &refs()), None);
+    }
 
+    #[test]
+    fn deletion_does_not_alias_a_head_line_with_the_same_number() {
         let files = [file("@@ -4,2 +4 @@\n-deleted\n context")];
         let position = comment_position(&files, &location(Some(4)), &refs()).unwrap();
         assert_eq!(position["old_line"], 5);

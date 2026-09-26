@@ -1091,7 +1091,7 @@ async fn rate_limited_inline_posts_stop_without_fallback() {
 }
 
 #[tokio::test]
-async fn unavailable_diff_falls_back_but_diff_authentication_errors_stop() {
+async fn oversized_diffs_fall_back_to_file_threads() {
     let mut replies = before_inline();
     replies[5] = Reply::json(json!([{
         "old_path": "src/main.rs", "new_path": "src/main.rs", "too_large": true,
@@ -1111,7 +1111,10 @@ async fn unavailable_diff_falls_back_but_diff_authentication_errors_stop() {
     );
 
     assert_eq!(server.posts()[0].1["position"]["position_type"], "file");
+}
 
+#[tokio::test]
+async fn diff_authentication_errors_stop_before_writes() {
     let mut replies = before_inline();
     replies.truncate(6);
     replies[5] = Reply::failure(403, json!({ "message": "forbidden" }));
@@ -1320,6 +1323,10 @@ async fn rejects_oversized_feedback_before_writes() {
 #[test]
 fn note_size_limit_counts_unicode_characters() {
     assert_matches!(check_body(&"한".repeat(MAX_NOTE_CHARACTERS)), Ok(()));
+}
+
+#[test]
+fn rejects_a_note_one_character_over_the_limit() {
     assert_matches!(check_body(&"한".repeat(MAX_NOTE_CHARACTERS + 1)), Err(_));
 }
 

@@ -236,7 +236,7 @@ fn old_side_rename_positions_keep_the_old_path_without_a_head_line() {
 }
 
 #[test]
-fn file_image_and_incomplete_positions_do_not_invent_line_locations() {
+fn image_and_incomplete_positions_do_not_invent_line_locations() {
     for field in ["position_type", "head_sha", "new_path"] {
         let mut root = note(1);
         let mut incomplete = position();
@@ -253,6 +253,10 @@ fn file_image_and_incomplete_positions_do_not_invent_line_locations() {
             "{field}"
         );
     }
+}
+
+#[test]
+fn file_positions_do_not_invent_line_locations() {
     let mut root = note(1);
     root["position"] = json!({"position_type": "file", "new_path": "src/new.rs"});
     assert_eq!(

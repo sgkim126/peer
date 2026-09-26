@@ -896,6 +896,10 @@ mod tests {
             validate_relative_path(Path::new("../outside.jsonl")),
             Err(PiRunError::UnsafeSessionPath(_))
         );
+    }
+
+    #[test]
+    fn accepts_a_session_path_within_the_cache() {
         assert_matches!(
             validate_relative_path(Path::new("pi-sessions/session.jsonl")),
             Ok(_)
