@@ -198,14 +198,18 @@ mod tests {
     }
 
     #[test]
-    fn reports_missing_input_files() {
-        let body_error =
-            ReviewContext::load(None, Some(Path::new("missing-review-body.md")), None).unwrap_err();
-        assert_matches!(body_error, ReviewContextError::ReadBody { .. });
+    fn reports_a_missing_body_file() {
+        assert_matches!(
+            ReviewContext::load(None, Some(Path::new("missing-review-body.md")), None),
+            Err(ReviewContextError::ReadBody { .. })
+        );
+    }
 
-        let comments_error =
-            ReviewContext::load(None, None, Some(Path::new("missing-review-comments.json")))
-                .unwrap_err();
-        assert_matches!(comments_error, ReviewContextError::ReadComments { .. });
+    #[test]
+    fn reports_a_missing_comments_file() {
+        assert_matches!(
+            ReviewContext::load(None, None, Some(Path::new("missing-review-comments.json"))),
+            Err(ReviewContextError::ReadComments { .. })
+        );
     }
 }
