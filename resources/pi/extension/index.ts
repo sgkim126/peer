@@ -67,17 +67,10 @@ export default function peerExtension(pi: ExtensionAPI) {
             if (completedTurns >= envelope.config.max_turns) {
                 throw new Error("peer run has reached its configured turn limit");
             }
-            pi.sendMessage(
+            // Reapply the configured system prompt through before_agent_start on every run.
+            pi.sendUserMessage(
+                "Continue the current task. Use a terminal tool to submit the final outcome.",
                 {
-                    customType: "peer.continue",
-                    content: "Continue the current task. Use a terminal tool to submit the final outcome.",
-                    display: false,
-                    details: {
-                        digest,
-                    },
-                },
-                {
-                    triggerTurn: true,
                     deliverAs: "steer",
                 },
             );
