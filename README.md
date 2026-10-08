@@ -54,17 +54,17 @@ Running `peer` requires the following tools:
 | --- | --- |
 | Git | 2.30.0 or later |
 | Node.js | 22.19.0 or later |
-| Pi | Exactly 0.85.1 |
+| Pi | Exactly 1.1.0 |
 
 You also need network access to the selected model provider and credentials for that provider.
 
 Install [Node.js 22.19.0 or later](https://nodejs.org/en/download), then install the required version of Pi with npm:
 
 ```bash
-npm install --global --ignore-scripts @earendil-works/pi-coding-agent@0.85.1
+npm install --global --ignore-scripts @earendil-works/pi-coding-agent@1.1.0
 ```
 
-See the [Pi quickstart](https://github.com/earendil-works/pi/blob/v0.85.1/packages/coding-agent/docs/quickstart.md) for other installation and authentication options.
+See the [Pi quickstart](https://github.com/earendil-works/pi/blob/v1.1.0/packages/coding-agent/docs/quickstart.md) for other installation and authentication options.
 
 The release binary and the bundled GitHub Action currently support Linux x86-64.
 

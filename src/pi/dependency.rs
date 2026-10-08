@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use tokio::process::Command;
 
-pub const SUPPORTED_PI_VERSION: &str = "0.85.1";
+pub const SUPPORTED_PI_VERSION: &str = "1.1.0";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PiDependency {

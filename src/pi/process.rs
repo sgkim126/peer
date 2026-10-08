@@ -65,6 +65,8 @@ fn build_command(options: &PiProcessOptions) -> Command {
         .arg("--no-builtin-tools")
         .arg("--no-extensions")
         .arg("-e")
+        .arg("builtin:llama.cpp")
+        .arg("-e")
         .arg(&options.extension)
         .arg("--no-skills")
         .arg("--no-prompt-templates")
@@ -124,6 +126,35 @@ mod tests {
         assert_eq!(
             command.as_std().get_current_dir(),
             Some(options.cwd.as_path())
+        );
+    }
+
+    #[test]
+    fn preserves_llama_cpp_while_disabling_automatic_extensions() {
+        let options = PiProcessOptions {
+            executable: Path::new("pi").to_path_buf(),
+            cwd: Path::new("/tmp/repo").to_path_buf(),
+            session_dir: Path::new("/tmp/sessions").to_path_buf(),
+            extension: Path::new("/tmp/extension.ts").to_path_buf(),
+            agent_dir: Path::new("/tmp/agent").to_path_buf(),
+            tool_socket: Path::new("/tmp/peer-tools.sock").to_path_buf(),
+        };
+
+        let command = build_command(&options);
+        let args = command.as_std().get_args().collect::<Vec<_>>();
+
+        assert!(args.contains(&std::ffi::OsStr::new("--no-extensions")));
+        assert!(args.contains(&std::ffi::OsStr::new("--no-builtin-tools")));
+        let extensions = args
+            .windows(2)
+            .filter_map(|pair| (pair[0] == "-e").then_some(pair[1]))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            extensions,
+            [
+                std::ffi::OsStr::new("builtin:llama.cpp"),
+                options.extension.as_os_str(),
+            ]
         );
     }
 
