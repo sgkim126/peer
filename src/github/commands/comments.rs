@@ -22,7 +22,6 @@ pub struct ListCommitCommentsInput<'a> {
     pub skip_inaccessible: bool,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_issue_comments(
     client: &GhClient,
     input: PullRequestInput<'_>,
@@ -30,7 +29,6 @@ pub async fn list_issue_comments(
     api::list(client, &format!("{}/comments", input.issue_path())).await
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_reviews(
     client: &GhClient,
     input: PullRequestInput<'_>,
@@ -38,7 +36,6 @@ pub async fn list_reviews(
     api::list(client, &format!("{}/reviews", input.path())).await
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_review_comments(
     client: &GhClient,
     input: PullRequestInput<'_>,
@@ -46,7 +43,6 @@ pub async fn list_review_comments(
     api::list(client, &format!("{}/comments", input.path())).await
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_commit_comments(
     client: &GhClient,
     input: ListCommitCommentsInput<'_>,

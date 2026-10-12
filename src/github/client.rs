@@ -2,15 +2,15 @@ use std::collections::HashSet;
 use std::num::NonZeroU64;
 
 use log::debug;
-use serde::{Deserialize, de::DeserializeOwned};
+use serde::de::DeserializeOwned;
 
 use crate::context::ReviewContext;
 use crate::gh::GhClient;
 use crate::git::CommitHash;
 
 use super::commands::{
-    self, Collection, CommitComment, IssueComment, PullRequest, PullRequestInput,
-    PullRequestReview, ReviewComment,
+    self, Collection, CommitComment, CommitInput, ListCommitCommentsInput, PullRequest,
+    PullRequestInput,
 };
 use super::position::{ChangedFile, commit_comment_position};
 use super::{GitHubError, Repository, mapping};
@@ -44,18 +44,9 @@ impl GitHubClient {
             .as_ref()
             .map(|repo| Repository::parse(&repo.full_name))
             .transpose()?;
-        let prefix = format!("repos/{repository}");
-        let comments =
-            commands::list::<IssueComment>(&self.gh, &format!("{prefix}/issues/{number}/comments"))
-                .await?;
-        let reviews = commands::list::<PullRequestReview>(
-            &self.gh,
-            &format!("{prefix}/pulls/{number}/reviews"),
-        )
-        .await?;
-        let review_comments =
-            commands::list::<ReviewComment>(&self.gh, &format!("{prefix}/pulls/{number}/comments"))
-                .await?;
+        let comments = commands::list_issue_comments(&self.gh, input).await?;
+        let reviews = commands::list_reviews(&self.gh, input).await?;
+        let review_comments = commands::list_review_comments(&self.gh, input).await?;
         let commits = self.pull_request_commits(repository, number, &pull).await?;
         let source = source_repository.as_ref().filter(|source| {
             !source
@@ -106,11 +97,13 @@ impl GitHubClient {
         commit: &CommitHash,
         skip_inaccessible_repository: bool,
     ) -> Result<Collection<CommitComment>, GitHubError> {
-        let mut comments = commands::pages(
+        let mut comments = commands::list_commit_comments(
             &self.gh,
-            &format!("repos/{repository}/commits/{commit}/comments"),
-            skip_inaccessible_repository,
-            |page: Vec<CommitComment>| page,
+            ListCommitCommentsInput {
+                repository,
+                commit,
+                skip_inaccessible: skip_inaccessible_repository,
+            },
         )
         .await?;
         if !comments.items.iter().any(|comment| {
@@ -145,14 +138,7 @@ impl GitHubClient {
         repository: &Repository,
         commit: &CommitHash,
     ) -> Result<Vec<ChangedFile>, GitHubError> {
-        Ok(commands::pages(
-            &self.gh,
-            &format!("repos/{repository}/commits/{commit}"),
-            false,
-            |page: CommitFiles| page.files,
-        )
-        .await?
-        .items)
+        Ok(commands::get_commit_files(&self.gh, CommitInput { repository, commit }).await?)
     }
 
     pub async fn pull_request_commits(
@@ -205,11 +191,6 @@ impl GitHubClient {
 pub struct GitHubReviewInput {
     pub context: ReviewContext,
     pub commits: Vec<CommitHash>,
-}
-
-#[derive(Deserialize)]
-struct CommitFiles {
-    files: Vec<ChangedFile>,
 }
 
 #[cfg(test)]

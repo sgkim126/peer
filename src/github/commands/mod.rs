@@ -5,13 +5,11 @@ mod error;
 mod pull_request;
 mod types;
 
-pub use api::{Collection, list, pages, post};
-#[cfg_attr(not(test), expect(unused_imports))]
+pub use api::{Collection, post};
 pub use comments::{
     FeedbackComment, ListCommitCommentsInput, list_commit_comments, list_conversation_feedback,
     list_issue_comments, list_review_comments, list_review_feedback, list_reviews,
 };
-#[cfg_attr(not(test), expect(unused_imports))]
 pub use commit::{CommitInput, get_commit_files};
 pub use error::CommandError;
 pub use pull_request::{PullRequestInput, get_pull_request, list_pr_commits, list_pr_files};

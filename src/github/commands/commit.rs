@@ -8,19 +8,16 @@ use crate::github::position::ChangedFile;
 use super::{CommandError, api};
 
 #[derive(Clone, Copy)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct CommitInput<'a> {
     pub repository: &'a Repository,
     pub commit: &'a CommitHash,
 }
 
 #[derive(Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 struct CommitFiles {
     files: Vec<ChangedFile>,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn get_commit_files(
     client: &GhClient,
     input: CommitInput<'_>,
