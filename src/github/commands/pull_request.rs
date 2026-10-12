@@ -7,14 +7,12 @@ use crate::github::position::ChangedFile;
 use super::{CommandError, CommitRef, PullRequest, api};
 
 #[derive(Clone, Copy)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PullRequestInput<'a> {
     pub repository: &'a Repository,
     pub number: NonZeroU64,
 }
 
 impl PullRequestInput<'_> {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn path(self) -> String {
         format!("repos/{}/pulls/{}", self.repository, self.number)
     }
@@ -24,7 +22,6 @@ impl PullRequestInput<'_> {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn get_pull_request(
     client: &GhClient,
     input: PullRequestInput<'_>,
@@ -32,7 +29,6 @@ pub async fn get_pull_request(
     api::get(client, &input.path()).await
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_pr_commits(
     client: &GhClient,
     input: PullRequestInput<'_>,
@@ -40,7 +36,6 @@ pub async fn list_pr_commits(
     api::list(client, &format!("{}/commits", input.path())).await
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_pr_files(
     client: &GhClient,
     input: PullRequestInput<'_>,

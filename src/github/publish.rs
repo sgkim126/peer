@@ -10,6 +10,7 @@ use crate::feedback::Feedback;
 use crate::git::CommitHash;
 use crate::render::RenderDocument;
 
+use super::commands::{self, FeedbackComment, PullRequestInput};
 use super::feedback::{PreparedReview, fingerprints, marker};
 use super::position::{ChangedFile, comment_position};
 use super::{GitHubClient, GitHubError, Repository};
@@ -54,12 +55,6 @@ pub struct PublishedComment {
     pub html_url: String,
 }
 
-#[derive(Deserialize)]
-struct CommentBody {
-    body: String,
-    html_url: Option<String>,
-}
-
 #[derive(Default)]
 struct ExistingFeedback {
     fingerprints: HashSet<String>,
@@ -68,6 +63,7 @@ struct ExistingFeedback {
 
 struct PrCommentTarget<'a> {
     path: String,
+    pull: PullRequestInput<'a>,
     head: &'a CommitHash,
     commits: &'a [CommitHash],
     files: &'a [ChangedFile],
@@ -112,10 +108,7 @@ impl GitHubClient {
                 }
             });
         let (files, files_loaded) = if remaining.iter().any(|item| item.location.is_some()) {
-            match self
-                .list::<ChangedFile>(&format!("repos/{repository}/pulls/{number}/files"))
-                .await
-            {
+            match commands::list_pr_files(&self.gh, PullRequestInput { repository, number }).await {
                 Ok(files) => (files, true),
                 Err(error) => {
                     warn!(
@@ -136,6 +129,7 @@ impl GitHubClient {
         let mut fallback_fingerprints = HashSet::new();
         let target = PrCommentTarget {
             path: format!("repos/{repository}/pulls/{number}/comments"),
+            pull: PullRequestInput { repository, number },
             head: &pull.head.sha,
             commits: &commits,
             files: &files,
@@ -266,9 +260,8 @@ impl GitHubClient {
             }
         }
         if !uncertain.is_empty() {
-            let confirmed = self
-                .feedback_from_comments(std::slice::from_ref(&target.path))
-                .await?;
+            let comments = commands::list_review_feedback(&self.gh, target.pull).await?;
+            let confirmed = ExistingFeedback::from_comments(comments);
             for (item, path, error) in uncertain {
                 if confirmed.fingerprints.contains(&item.fingerprint) {
                     fallback_fingerprints.remove(&item.fingerprint);
@@ -294,29 +287,25 @@ impl GitHubClient {
         repository: &Repository,
         number: NonZeroU64,
     ) -> Result<ExistingFeedback, GitHubError> {
-        self.feedback_from_comments(&[
-            format!("repos/{repository}/issues/{number}/comments"),
-            format!("repos/{repository}/pulls/{number}/comments"),
-        ])
-        .await
+        let input = PullRequestInput { repository, number };
+        let mut comments = commands::list_conversation_feedback(&self.gh, input).await?;
+        comments.extend(commands::list_review_feedback(&self.gh, input).await?);
+        Ok(ExistingFeedback::from_comments(comments))
     }
+}
 
-    async fn feedback_from_comments(
-        &self,
-        paths: &[String],
-    ) -> Result<ExistingFeedback, GitHubError> {
+impl ExistingFeedback {
+    fn from_comments(comments: Vec<FeedbackComment>) -> Self {
         let mut existing = ExistingFeedback::default();
-        for path in paths {
-            for comment in self.list::<CommentBody>(path).await? {
-                for fingerprint in fingerprints(&comment.body) {
-                    if let Some(url) = &comment.html_url {
-                        existing.urls.insert(fingerprint.clone(), url.clone());
-                    }
-                    existing.fingerprints.insert(fingerprint);
+        for comment in comments {
+            for fingerprint in fingerprints(&comment.body) {
+                if let Some(url) = &comment.url {
+                    existing.urls.insert(fingerprint.clone(), url.clone());
                 }
+                existing.fingerprints.insert(fingerprint);
             }
         }
-        Ok(existing)
+        existing
     }
 }
 

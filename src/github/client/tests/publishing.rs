@@ -254,7 +254,8 @@ async fn finds_duplicates_on_later_pages_of_conversation_comments() {
     assert_eq!(report.skipped, 1);
     assert_eq!(report.urls, Vec::<String>::new());
     assert_eq!(report.published, 0);
-    assert_eq!(server.requests().len(), 5);
+    // gh pr view retrieves both conversation pages in one command.
+    assert_eq!(server.requests().len(), 4);
 }
 
 #[tokio::test]
@@ -332,7 +333,7 @@ async fn failure_to_read_existing_conversation_comments_prevents_any_posts() {
             .client()
             .publish(&repository(), number(), &finding())
             .await,
-        Err(GitHubError::Api { status: 500, .. })
+        Err(GitHubError::Command(_))
     );
     assert_eq!(server.requests().len(), 3);
 }

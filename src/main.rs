@@ -136,7 +136,7 @@ async fn main() -> ExitCode {
                         .filter(|value| !value.trim().is_empty())
                         .ok_or(github::GitHubError::MissingRepository)?;
                     let repository = github::Repository::parse(repository)?;
-                    github::GitHubClient::from_env()?
+                    github::GitHubClient::default()
                         .review_input(&repository, number)
                         .await
                 }
@@ -375,7 +375,7 @@ async fn main() -> ExitCode {
                         repo.as_deref()
                             .expect("GitHub rendering requires a repository"),
                     )?;
-                    github::GitHubClient::from_env()?
+                    github::GitHubClient::default()
                         .publish(&repository, number, &input)
                         .await
                 }

@@ -1,16 +1,16 @@
 use super::*;
 
 use std::assert_matches;
-use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde_json::{Value, json};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
 
 mod commit_comments;
 mod commit_files;
+mod fake_gh;
 mod publishing;
+
+use fake_gh::Server;
 
 struct Reply {
     status: u16,
@@ -32,94 +32,6 @@ impl Reply {
     fn header(mut self, value: &str) -> Self {
         self.headers.push(value.to_string());
         self
-    }
-}
-
-struct Server {
-    base: Url,
-    requests: Arc<Mutex<Vec<String>>>,
-    task: JoinHandle<()>,
-}
-
-impl Server {
-    async fn start(replies: Vec<Reply>) -> Self {
-        Self::start_with(|_| replies).await
-    }
-
-    async fn start_with(replies: impl FnOnce(&Url) -> Vec<Reply>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-        let replies = replies(&base);
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let received = requests.clone();
-        let address = base.to_string();
-        let task = tokio::spawn(async move {
-            for reply in replies {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                let mut buffer = [0; 1024];
-                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                    let count = stream.read(&mut buffer).await.unwrap();
-                    if count == 0 {
-                        break;
-                    }
-                    request.extend_from_slice(&buffer[..count]);
-                }
-                let header_end = request
-                    .windows(4)
-                    .position(|bytes| bytes == b"\r\n\r\n")
-                    .unwrap()
-                    + 4;
-                let content_length = String::from_utf8_lossy(&request[..header_end])
-                    .lines()
-                    .filter_map(|line| line.split_once(':'))
-                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                    .map(|(_, value)| value.trim().parse::<usize>().unwrap())
-                    .unwrap_or(0);
-                while request.len() < header_end + content_length {
-                    let count = stream.read(&mut buffer).await.unwrap();
-                    assert_ne!(count, 0, "request body ended early");
-                    request.extend_from_slice(&buffer[..count]);
-                }
-                received
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8(request).unwrap());
-                tokio::time::sleep(reply.delay).await;
-                let extra = reply
-                    .headers
-                    .iter()
-                    .map(|header| format!("{}\r\n", header.replace("{base}", &address)))
-                    .collect::<String>();
-                let response = format!(
-                    "HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}",
-                    reply.status,
-                    reply.body.len(),
-                    extra,
-                    reply.body
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
-        Self {
-            base,
-            requests,
-            task,
-        }
-    }
-
-    fn client(&self) -> GitHubClient {
-        GitHubClient::new("test-token", self.base.clone(), Duration::from_secs(2)).unwrap()
-    }
-
-    fn requests(&self) -> Vec<String> {
-        self.requests.lock().unwrap().clone()
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.task.abort();
     }
 }
 
@@ -360,10 +272,8 @@ async fn paginates_comments_and_matches_direct_input() {
     assert!(requests[7].starts_with("GET /repos/owner/repo/pulls/123 "));
     for request in requests {
         let request = request.to_ascii_lowercase();
-        assert!(request.contains("authorization: bearer test-token\r\n"));
         assert!(request.contains("accept: application/vnd.github+json\r\n"));
-        assert!(request.contains(&format!("x-github-api-version: {API_VERSION}\r\n")));
-        assert!(request.contains(concat!("user-agent: peer/", env!("CARGO_PKG_VERSION"))));
+        assert!(request.contains("x-github-api-version: 2026-03-10\r\n"));
     }
 }
 
@@ -447,7 +357,6 @@ async fn reports_http_failures_without_retrying_or_loading_comments() {
         assert_matches!(error, Err(GitHubError::Api { status: actual, .. }) if actual == status);
         let error = error.unwrap_err();
         assert!(error.to_string().contains(&format!("HTTP {status}")));
-        assert!(!format!("{error:?}").contains("test-token"));
         assert_eq!(server.requests().len(), 1);
     }
 }
@@ -562,35 +471,6 @@ async fn retry_after_takes_precedence_over_permission_message() {
 }
 
 #[tokio::test]
-async fn malformed_forbidden_post_response_remains_a_definitive_api_failure() {
-    let mut reply = Reply::json(json!({}));
-    reply.status = 403;
-    reply.body = "not json".into();
-    let server = Server::start(vec![reply]).await;
-    let error = server
-        .client()
-        .post::<Value>(
-            "repos/owner/repo/issues/123/comments",
-            &json!({"body": "Comment"}),
-        )
-        .await
-        .unwrap_err();
-
-    assert_matches!(
-        error,
-        GitHubError::Api {
-            status: 403,
-            rate_limited: false,
-            permission_denied: false,
-            ..
-        }
-    );
-    assert!(!error.may_have_published());
-    assert!(error.to_string().contains("API request forbidden"));
-    assert_eq!(server.requests().len(), 1);
-}
-
-#[tokio::test]
 async fn a_later_page_failure_discards_the_whole_context() {
     let mut failure = Reply::json(json!({}));
     failure.status = 500;
@@ -634,10 +514,10 @@ async fn times_out_without_returning_partial_context() {
     let mut reply = pull();
     reply.delay = Duration::from_secs(1);
     let server = Server::start(vec![reply]).await;
-    let client =
-        GitHubClient::new("test-token", server.base.clone(), Duration::from_millis(50)).unwrap();
+    let client = server.client_with_timeout(Duration::from_millis(50));
     let error = client.review_input(&repository(), number()).await;
-    assert_matches!(error, Err(GitHubError::Request { ref source, .. }) if source.is_timeout());
+    assert_matches!(error, Err(GitHubError::Command(_)));
+    assert!(error.unwrap_err().to_string().contains("timed out"));
 }
 
 #[tokio::test]
@@ -704,7 +584,7 @@ async fn rejects_cyclic_pagination() {
 }
 
 #[tokio::test]
-async fn does_not_follow_redirects() {
+async fn rejects_a_redirect_status_reported_by_gh() {
     let mut reply = Reply::json(json!({})).header("Location: https://example.com/next");
     reply.status = 302;
     let server = Server::start(vec![reply]).await;
@@ -713,22 +593,6 @@ async fn does_not_follow_redirects() {
         Err(GitHubError::Api { status: 302, .. })
     );
     assert_eq!(server.requests().len(), 1);
-}
-
-#[test]
-fn validates_and_redacts_tokens() {
-    for token in ["", " \n\t"] {
-        assert_matches!(authorization(token), Err(GitHubError::MissingToken));
-    }
-    for token in ["token\nsecret", " token", "token ", "한글"] {
-        let error = authorization(token);
-        assert_matches!(error, Err(GitHubError::InvalidToken));
-        let error = error.unwrap_err();
-        assert!(!format!("{error:?}").contains(token));
-    }
-    let header = authorization("test-secret").unwrap();
-    assert!(header.is_sensitive());
-    assert!(!format!("{header:?}").contains("test-secret"));
 }
 
 #[tokio::test]

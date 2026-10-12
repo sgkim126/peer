@@ -3,7 +3,6 @@ use std::fmt;
 use crate::gh::GhRunError;
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum CommandError {
     Run(GhRunError),
     Api {
@@ -24,7 +23,6 @@ pub enum CommandError {
 }
 
 impl CommandError {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn may_have_published(&self) -> bool {
         match self {
             Self::Run(error) => error.may_have_run(),

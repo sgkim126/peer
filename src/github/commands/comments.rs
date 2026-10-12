@@ -5,14 +5,12 @@ use crate::gh::{GhClient, GhInvocation};
 use super::{CommandError, PullRequestInput, api};
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct FeedbackComment {
     pub body: String,
     #[serde(rename = "html_url")]
     pub url: Option<String>,
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_review_feedback(
     client: &GhClient,
     input: PullRequestInput<'_>,
@@ -20,7 +18,6 @@ pub async fn list_review_feedback(
     api::list(client, &format!("{}/comments", input.path())).await
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list_conversation_feedback(
     client: &GhClient,
     input: PullRequestInput<'_>,

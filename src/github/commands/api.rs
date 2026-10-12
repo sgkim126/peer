@@ -11,7 +11,6 @@ const API_URL: &str = "https://api.github.com/";
 const API_VERSION: &str = "2026-03-10";
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct Collection<T> {
     pub items: Vec<T>,
     pub repository_accessible: bool,
@@ -39,7 +38,6 @@ pub async fn get<T: DeserializeOwned>(client: &GhClient, path: &str) -> Result<T
         .map(|(value, _)| value)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn post<T: DeserializeOwned>(
     client: &GhClient,
     path: &str,

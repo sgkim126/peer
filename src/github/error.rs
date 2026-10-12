@@ -1,16 +1,12 @@
-use std::{env::VarError, fmt};
+use std::fmt;
+
+use super::commands::CommandError;
 
 #[derive(Debug)]
 pub enum GitHubError {
     MissingRepository,
     InvalidRepository,
-    MissingToken,
-    InvalidToken,
-    Client(reqwest::Error),
-    Request {
-        endpoint: String,
-        source: reqwest::Error,
-    },
+    Command(CommandError),
     Api {
         endpoint: String,
         status: u16,
@@ -19,7 +15,7 @@ pub enum GitHubError {
     },
     Decode {
         endpoint: String,
-        source: reqwest::Error,
+        source: serde_json::Error,
     },
     InvalidPagination,
     IncompleteCommits,
@@ -29,15 +25,15 @@ pub enum GitHubError {
 impl GitHubError {
     /// The server may have accepted a POST even though its response was lost.
     pub fn may_have_published(&self) -> bool {
-        matches!(
-            self,
-            Self::Request { .. }
-                | Self::Decode { .. }
-                | Self::Api {
-                    status: 408 | 500..=599,
-                    ..
-                }
-        )
+        match self {
+            Self::Command(error) => error.may_have_published(),
+            Self::Decode { .. }
+            | Self::Api {
+                status: 408 | 500..=599,
+                ..
+            } => true,
+            _ => false,
+        }
     }
 }
 
@@ -51,20 +47,7 @@ impl fmt::Display for GitHubError {
                 )
             }
             Self::InvalidRepository => write!(f, "GitHub repository must use the form owner/name"),
-            Self::MissingToken => write!(
-                f,
-                "GitHub access requires a non-empty GITHUB_TOKEN environment variable"
-            ),
-            Self::InvalidToken => write!(f, "GITHUB_TOKEN is not a valid HTTP bearer token"),
-            Self::Client(_) => write!(f, "failed to configure the GitHub HTTP client"),
-            Self::Request { endpoint, source } => {
-                let reason = if source.is_timeout() {
-                    "timed out"
-                } else {
-                    "failed"
-                };
-                write!(f, "GitHub request {reason}: {endpoint}")
-            }
+            Self::Command(error) => error.fmt(f),
             Self::Api {
                 endpoint,
                 status,
@@ -75,7 +58,7 @@ impl fmt::Display for GitHubError {
                     "API rate limit exceeded"
                 } else {
                     match status {
-                        401 => "authentication failed; check GITHUB_TOKEN",
+                        401 => "authentication failed; check gh auth status",
                         403 if *permission_denied => "access denied; check token permissions",
                         403 => "API request forbidden",
                         404 => "pull request or repository not found or inaccessible",
@@ -103,10 +86,7 @@ impl std::error::Error for GitHubError {
         match self {
             Self::MissingRepository => None,
             Self::InvalidRepository => None,
-            Self::MissingToken => None,
-            Self::InvalidToken => None,
-            Self::Client(source) => Some(source),
-            Self::Request { source, .. } => Some(source),
+            Self::Command(source) => Some(source),
             Self::Api { .. } => None,
             Self::Decode { source, .. } => Some(source),
             Self::InvalidPagination => None,
@@ -116,17 +96,23 @@ impl std::error::Error for GitHubError {
     }
 }
 
-impl From<VarError> for GitHubError {
-    fn from(error: VarError) -> Self {
+impl From<CommandError> for GitHubError {
+    fn from(error: CommandError) -> Self {
         match error {
-            VarError::NotPresent => Self::MissingToken,
-            VarError::NotUnicode(_) => Self::InvalidToken,
+            CommandError::Api {
+                endpoint,
+                status,
+                rate_limited,
+                permission_denied,
+            } => Self::Api {
+                endpoint,
+                status,
+                rate_limited,
+                permission_denied,
+            },
+            CommandError::Decode { endpoint, source } => Self::Decode { endpoint, source },
+            CommandError::InvalidPagination => Self::InvalidPagination,
+            error => Self::Command(error),
         }
-    }
-}
-
-impl From<reqwest::Error> for GitHubError {
-    fn from(error: reqwest::Error) -> Self {
-        Self::Client(error)
     }
 }
