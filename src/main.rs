@@ -5,6 +5,7 @@ mod context;
 mod error;
 mod extract;
 mod feedback;
+mod gh;
 mod git;
 mod github;
 mod gitlab;
