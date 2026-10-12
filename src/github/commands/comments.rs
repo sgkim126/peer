@@ -1,6 +1,6 @@
-use std::num::NonZeroU64;
+use std::num::{NonZeroU32, NonZeroU64};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::gh::{GhClient, GhInvocation};
@@ -35,6 +35,32 @@ pub struct CreateConversationCommentInput<'a> {
     pub repository: &'a Repository,
     pub number: NonZeroU64,
     pub body: &'a str,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+#[cfg_attr(not(test), expect(dead_code))]
+pub enum ReviewCommentTarget {
+    Line { path: String, line: NonZeroU32 },
+    File { path: String },
+}
+
+impl ReviewCommentTarget {
+    #[cfg_attr(not(test), expect(dead_code))]
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Line { path, .. } => path,
+            Self::File { path } => path,
+        }
+    }
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub struct CreateReviewCommentInput<'a> {
+    pub repository: &'a Repository,
+    pub number: NonZeroU64,
+    pub commit_id: &'a CommitHash,
+    pub body: &'a str,
+    pub target: &'a ReviewCommentTarget,
 }
 
 pub async fn list_issue_comments(
@@ -158,4 +184,42 @@ pub async fn create_conversation_comment(
         return Err(invalid());
     }
     Ok(PublishedComment { url: text.into() })
+}
+
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn create_review_comment(
+    client: &GhClient,
+    input: CreateReviewCommentInput<'_>,
+) -> Result<PublishedComment, CommandError> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        body: &'a str,
+        commit_id: &'a CommitHash,
+        path: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        line: Option<NonZeroU32>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        side: Option<&'static str>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        subject_type: Option<&'static str>,
+    }
+
+    let (line, side, subject_type) = match input.target {
+        ReviewCommentTarget::Line { line, .. } => (Some(*line), Some("RIGHT"), None),
+        ReviewCommentTarget::File { .. } => (None, None, Some("file")),
+    };
+    let body = Body {
+        body: input.body,
+        commit_id: input.commit_id,
+        path: input.target.path(),
+        line,
+        side,
+        subject_type,
+    };
+    api::post(
+        client,
+        &format!("repos/{}/pulls/{}/comments", input.repository, input.number),
+        &body,
+    )
+    .await
 }

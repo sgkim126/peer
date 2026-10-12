@@ -6,10 +6,12 @@ mod pull_request;
 mod types;
 
 pub use api::{Collection, post};
+#[cfg_attr(not(test), expect(unused_imports))]
 pub use comments::{
-    CreateConversationCommentInput, FeedbackComment, ListCommitCommentsInput, PublishedComment,
-    create_conversation_comment, list_commit_comments, list_conversation_feedback,
-    list_issue_comments, list_review_comments, list_review_feedback, list_reviews,
+    CreateConversationCommentInput, CreateReviewCommentInput, FeedbackComment,
+    ListCommitCommentsInput, PublishedComment, ReviewCommentTarget, create_conversation_comment,
+    create_review_comment, list_commit_comments, list_conversation_feedback, list_issue_comments,
+    list_review_comments, list_review_feedback, list_reviews,
 };
 pub use commit::{CommitInput, get_commit_files};
 pub use error::CommandError;
