@@ -1,5 +1,7 @@
 use std::process::{Command, Output};
 
+mod support;
+
 fn project(repository: Option<&str>) -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     let peer = directory.path().join(".peer");
@@ -22,8 +24,8 @@ fn command(directory: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_peer"));
     command
         .current_dir(directory.path())
-        .env_remove("GITHUB_TOKEN")
         .env("RUST_LOG", "debug");
+    support::configure_gh(&mut command, directory.path(), true);
     command.arg("review");
     command
 }
@@ -155,6 +157,28 @@ fn github_rejects_missing_token_before_reviewing() {
 }
 
 #[test]
+fn github_requires_gh_before_loading_project_configuration() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = command(&directory);
+    support::configure_gh(&mut command, directory.path(), false);
+    let output = command.args(["--github", "123"]).output().unwrap();
+    assert_error(output, "--github requires GitHub CLI (gh)");
+    assert!(!directory.path().join(".peer").exists());
+}
+
+#[test]
+fn gitlab_review_does_not_check_gh_availability() {
+    let directory = project(None);
+    let output = command(&directory)
+        .env_remove("GITLAB_TOKEN")
+        .args(["--gitlab", "123", "--repo", "owner/repo"])
+        .output()
+        .unwrap();
+    assert_error(output, "GitLab access requires a non-empty GITLAB_TOKEN");
+    assert!(!directory.path().join("gh-calls").exists());
+}
+
+#[test]
 fn github_rejects_empty_token_before_reviewing() {
     let directory = project(Some("owner/repo"));
     assert_error(
@@ -213,6 +237,7 @@ fn direct_input_does_not_require_github_configuration_or_credentials() {
         .unwrap();
     // Reaching the existing target validator proves context loading completed.
     assert_error(output, "main...HEAD is not a two-dot range");
+    assert!(!directory.path().join("gh-calls").exists());
 }
 
 #[test]
@@ -234,6 +259,7 @@ fn direct_input_ignores_empty_github_repository_without_credentials() {
         .unwrap();
     // Reaching the existing target validator proves context loading completed.
     assert_error(output, "main...HEAD is not a two-dot range");
+    assert!(!directory.path().join("gh-calls").exists());
 }
 
 #[test]
@@ -255,6 +281,7 @@ fn direct_input_ignores_invalid_github_repository_without_credentials() {
         .unwrap();
     // Reaching the existing target validator proves context loading completed.
     assert_error(output, "main...HEAD is not a two-dot range");
+    assert!(!directory.path().join("gh-calls").exists());
 }
 
 #[test]
@@ -271,12 +298,11 @@ fn repository_flag_requires_github_before_configuration_is_read() {
 }
 
 #[test]
-fn github_target_conflict_fails_before_configuration_is_read() {
+fn github_target_conflict_fails_before_gh_and_configuration_checks() {
     let directory = tempfile::tempdir().unwrap();
-    let output = command(&directory)
-        .args(["HEAD", "--github", "123"])
-        .output()
-        .unwrap();
+    let mut command = command(&directory);
+    support::configure_gh(&mut command, directory.path(), false);
+    let output = command.args(["HEAD", "--github", "123"]).output().unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
 }

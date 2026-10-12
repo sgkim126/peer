@@ -107,6 +107,17 @@ pub enum Command {
     },
 }
 
+impl Command {
+    pub fn requires_gh(&self) -> bool {
+        match self {
+            Self::Init { github, .. } => *github,
+            Self::Review { github, .. } => github.is_some(),
+            Self::Render { github, .. } => github.is_some(),
+            Self::Prune { .. } => false,
+        }
+    }
+}
+
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq)]
 pub enum OutputFormat {
     Terminal,

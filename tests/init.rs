@@ -1,7 +1,10 @@
+use std::assert_matches;
 use std::path::Path;
 use std::process::Command;
 
 use tempfile::TempDir;
+
+mod support;
 
 const DEFAULT_CONFIG_TOML: &str = include_str!("../resources/default_config.toml");
 
@@ -9,6 +12,7 @@ const DEFAULT_CONFIG_TOML: &str = include_str!("../resources/default_config.toml
 fn peer_in(tmp: &TempDir) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_peer"));
     cmd.current_dir(tmp.path());
+    support::configure_gh(&mut cmd, tmp.path(), true);
     cmd
 }
 
@@ -60,6 +64,12 @@ fn assert_init_overrides(
         }
     }
     cmd.output().unwrap().assert_success();
+    let calls = tmp.path().join("gh-calls");
+    if selector == Some("--github") {
+        assert_eq!(std::fs::read_to_string(calls).unwrap(), "--version\n");
+    } else {
+        assert!(!calls.exists(), "init unexpectedly executed gh");
+    }
 
     let content = std::fs::read_to_string(tmp.path().join(".peer/config.toml")).unwrap();
     let actual: toml::Value = toml::from_str(&content).unwrap();
@@ -265,4 +275,25 @@ fn init_rejects_github_and_gitlab_before_creating_peer() {
 
     assert_eq!(out.status.code(), Some(2));
     assert!(!tmp.path().join(".peer").exists());
+    assert!(!tmp.path().join("gh-calls").exists());
+}
+
+#[test]
+fn init_with_explicit_github_requires_gh_before_creating_peer() {
+    let (mut command, directory) = peer_in_tmp();
+    git_init(directory.path());
+    support::configure_gh(&mut command, directory.path(), false);
+    let output = command
+        .args(["init", "--github", "--repo", "owner/repo"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_matches!(output.stdout[..], []);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--github requires GitHub CLI (gh)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("PATH"), "{stderr}");
+    assert!(!directory.path().join(".peer").exists());
 }

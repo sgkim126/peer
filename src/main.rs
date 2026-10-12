@@ -33,6 +33,13 @@ async fn main() -> ExitCode {
     init_logging();
     let cli = Cli::parse();
 
+    if cli.command.requires_gh()
+        && let Err(error) = gh::GhClient::default().check_available().await
+    {
+        eprintln!("--github requires GitHub CLI (gh): {error}");
+        return ExitCode::FAILURE;
+    }
+
     match cli.command {
         Command::Init {
             provider,
