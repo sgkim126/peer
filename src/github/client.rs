@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::num::NonZeroU64;
 
 use log::debug;
-use serde::de::DeserializeOwned;
 
 use crate::context::ReviewContext;
 use crate::gh::GhClient;
@@ -168,14 +167,6 @@ impl GitHubClient {
             return Err(GitHubError::IncompleteCommits);
         }
         Ok(commits)
-    }
-
-    pub async fn post<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &serde_json::Value,
-    ) -> Result<T, GitHubError> {
-        Ok(commands::post(&self.gh, path, body).await?)
     }
 
     pub async fn pull_request(

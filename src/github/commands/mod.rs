@@ -5,8 +5,7 @@ mod error;
 mod pull_request;
 mod types;
 
-pub use api::{Collection, post};
-#[cfg_attr(not(test), expect(unused_imports))]
+pub use api::Collection;
 pub use comments::{
     CreateConversationCommentInput, CreateReviewCommentInput, FeedbackComment,
     ListCommitCommentsInput, PublishedComment, ReviewCommentTarget, create_conversation_comment,

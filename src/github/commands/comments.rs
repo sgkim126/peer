@@ -38,14 +38,12 @@ pub struct CreateConversationCommentInput<'a> {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub enum ReviewCommentTarget {
     Line { path: String, line: NonZeroU32 },
     File { path: String },
 }
 
 impl ReviewCommentTarget {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn path(&self) -> &str {
         match self {
             Self::Line { path, .. } => path,
@@ -54,7 +52,6 @@ impl ReviewCommentTarget {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct CreateReviewCommentInput<'a> {
     pub repository: &'a Repository,
     pub number: NonZeroU64,
@@ -186,7 +183,6 @@ pub async fn create_conversation_comment(
     Ok(PublishedComment { url: text.into() })
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn create_review_comment(
     client: &GhClient,
     input: CreateReviewCommentInput<'_>,

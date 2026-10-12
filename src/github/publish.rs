@@ -3,14 +3,14 @@ use std::fmt;
 use std::num::NonZeroU64;
 
 use log::warn;
-use serde_json::json;
 
 use crate::feedback::Feedback;
 use crate::git::CommitHash;
 use crate::render::RenderDocument;
 
 use super::commands::{
-    self, CreateConversationCommentInput, FeedbackComment, PublishedComment, PullRequestInput,
+    self, CreateConversationCommentInput, CreateReviewCommentInput, FeedbackComment,
+    PublishedComment, PullRequestInput,
 };
 use super::feedback::{PreparedReview, fingerprints, marker};
 use super::position::{ChangedFile, comment_position};
@@ -58,7 +58,6 @@ struct ExistingFeedback {
 }
 
 struct PrCommentTarget<'a> {
-    path: String,
     pull: PullRequestInput<'a>,
     head: &'a CommitHash,
     commits: &'a [CommitHash],
@@ -124,7 +123,6 @@ impl GitHubClient {
         }
         let mut fallback_fingerprints = HashSet::new();
         let target = PrCommentTarget {
-            path: format!("repos/{repository}/pulls/{number}/comments"),
             pull: PullRequestInput { repository, number },
             head: &pull.head.sha,
             commits: &commits,
@@ -231,27 +229,38 @@ impl GitHubClient {
                 .filter(|commit| *commit == target.head)
                 .and(location.as_ref())
                 .and_then(|location| comment_position(target.files, location));
-            let Some(mut params) = position else {
+            let Some(position) = position else {
                 fallback_fingerprints.insert(&item.fingerprint);
                 continue;
             };
-            params["commit_id"] = json!(target.head);
-            params["body"] = json!(format!("{}\n\n{}", item.body, marker(&item.fingerprint)));
-            match self.post::<PublishedComment>(&target.path, &params).await {
-                Ok(comment) => {
+            let body = format!("{}\n\n{}", item.body, marker(&item.fingerprint));
+            match commands::create_review_comment(
+                &self.gh,
+                CreateReviewCommentInput {
+                    repository: target.pull.repository,
+                    number: target.pull.number,
+                    commit_id: target.head,
+                    body: &body,
+                    target: &position,
+                },
+            )
+            .await
+            .map_err(GitHubError::from)
+            {
+                Ok(PublishedComment { url }) => {
                     fallback_fingerprints.remove(&item.fingerprint);
-                    report.urls.push(comment.url);
+                    report.urls.push(url);
                     report.published += 1;
                     report.inline += 1;
                 }
                 Err(error) => {
                     if error.may_have_published() {
-                        uncertain.push((item, params["path"].take(), error));
+                        uncertain.push((item, position.path().to_owned(), error));
                         continue;
                     }
                     warn!(
                         "Could not publish inline feedback at {}: {error}; trying the next comment target",
-                        params["path"]
+                        position.path()
                     );
                     fallback_fingerprints.insert(&item.fingerprint);
                 }
