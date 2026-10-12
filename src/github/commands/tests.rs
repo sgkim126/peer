@@ -97,4 +97,11 @@ exit "$(cat "$task_dir/status-$task_index")"
     fn stdin(&self, index: usize) -> Vec<u8> {
         fs::read(self.dir.path().join(format!("stdin-{index}"))).unwrap()
     }
+
+    fn requests(&self) -> usize {
+        fs::read_to_string(self.dir.path().join("index"))
+            .unwrap()
+            .parse()
+            .unwrap()
+    }
 }
