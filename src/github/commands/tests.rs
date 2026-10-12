@@ -12,6 +12,7 @@ use crate::github::Repository;
 use super::*;
 
 mod api;
+mod create_conversation_comment;
 mod get_commit_files;
 mod get_pull_request;
 mod list_commit_comments;
