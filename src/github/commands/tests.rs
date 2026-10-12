@@ -12,11 +12,16 @@ use crate::github::Repository;
 use super::*;
 
 mod api;
+mod get_commit_files;
 mod get_pull_request;
+mod list_commit_comments;
 mod list_conversation_feedback;
+mod list_issue_comments;
 mod list_pr_commits;
 mod list_pr_files;
+mod list_review_comments;
 mod list_review_feedback;
+mod list_reviews;
 
 struct Reply {
     stdout: Vec<u8>,
@@ -90,7 +95,8 @@ exit "$(cat "$task_dir/status-$task_index")"
         }
         Self {
             dir,
-            client: GhClient::new(executable, Duration::from_secs(2)),
+            // These tests check command behavior, so allow for parallel process load.
+            client: GhClient::new(executable, Duration::from_secs(30)),
         }
     }
 

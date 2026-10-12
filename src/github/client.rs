@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU64;
 
 use log::debug;
 use serde::{Deserialize, de::DeserializeOwned};
@@ -8,8 +8,11 @@ use crate::context::ReviewContext;
 use crate::gh::GhClient;
 use crate::git::CommitHash;
 
-use super::commands::{self, Collection, PullRequest, PullRequestInput};
-use super::position::{ChangedFile, CommitCommentPosition, commit_comment_position};
+use super::commands::{
+    self, Collection, CommitComment, IssueComment, PullRequest, PullRequestInput,
+    PullRequestReview, ReviewComment,
+};
+use super::position::{ChangedFile, commit_comment_position};
 use super::{GitHubError, Repository, mapping};
 
 pub struct GitHubClient {
@@ -202,58 +205,6 @@ impl GitHubClient {
 pub struct GitHubReviewInput {
     pub context: ReviewContext,
     pub commits: Vec<CommitHash>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct User {
-    pub login: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct IssueComment {
-    pub id: u64,
-    pub created_at: String,
-    pub user: Option<User>,
-    pub body: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PullRequestReview {
-    pub id: u64,
-    pub submitted_at: Option<String>,
-    pub state: String,
-    pub user: Option<User>,
-    pub body: Option<String>,
-    pub commit_id: Option<CommitHash>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct ReviewComment {
-    pub id: u64,
-    pub in_reply_to_id: Option<u64>,
-    pub created_at: String,
-    pub user: Option<User>,
-    pub body: String,
-    pub path: String,
-    pub commit_id: CommitHash,
-    pub original_commit_id: Option<CommitHash>,
-    pub line: Option<NonZeroU32>,
-    pub original_line: Option<NonZeroU32>,
-    pub side: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommitComment {
-    pub id: u64,
-    pub created_at: String,
-    pub user: Option<User>,
-    pub body: String,
-    pub path: Option<String>,
-    pub commit_id: CommitHash,
-    pub position: Option<u32>,
-    // The API's line can refer to a deleted line, so only trust patch-derived positions.
-    #[serde(skip)]
-    pub resolved_position: Option<CommitCommentPosition>,
 }
 
 #[derive(Deserialize)]

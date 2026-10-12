@@ -17,6 +17,10 @@ impl PullRequestInput<'_> {
         format!("repos/{}/pulls/{}", self.repository, self.number)
     }
 
+    pub fn issue_path(self) -> String {
+        format!("repos/{}/issues/{}", self.repository, self.number)
+    }
+
     pub fn repo_arg(self) -> String {
         format!("github.com/{}", self.repository)
     }

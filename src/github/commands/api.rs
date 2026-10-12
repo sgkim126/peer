@@ -31,7 +31,6 @@ impl Response<'_> {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn get<T: DeserializeOwned>(client: &GhClient, path: &str) -> Result<T, CommandError> {
     request(client, &endpoint(path)?, "GET", None, false)
         .await
@@ -175,7 +174,6 @@ async fn request<T: DeserializeOwned>(
     Ok((value, next))
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub fn nonzero(output: GhOutput) -> CommandError {
     CommandError::Run(GhRunError::NonZeroExit {
         status: output.status.code(),

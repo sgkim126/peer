@@ -109,7 +109,9 @@ impl Server {
     }
 
     pub fn client(&self) -> GitHubClient {
-        self.client_with_timeout(Duration::from_secs(2))
+        // Leave room for process startup under parallel test load. Timeout tests
+        // set their own deadline through client_with_timeout.
+        self.client_with_timeout(Duration::from_secs(30))
     }
 
     pub fn client_with_timeout(&self, timeout: Duration) -> GitHubClient {

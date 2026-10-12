@@ -6,8 +6,9 @@ use crate::context::{
     ReviewCommentLocation, ReviewCommentThread, ReviewContext, ReviewThreadComment,
 };
 
-use super::client::{CommitComment, IssueComment, PullRequestReview, ReviewComment, User};
-use super::commands::PullRequest;
+use super::commands::{
+    CommitComment, IssueComment, PullRequest, PullRequestReview, ReviewComment, User,
+};
 use super::position::CommitCommentPosition;
 use super::publish::CONVERSATION_MARKER;
 

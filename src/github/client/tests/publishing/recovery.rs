@@ -308,13 +308,13 @@ async fn a_timed_out_inline_post_is_confirmed_from_the_server() {
     let input = finding();
     let body = published_body(&input).await;
     let mut delayed = created();
-    delayed.delay = Duration::from_secs(3);
+    delayed.delay = Duration::from_secs(15);
     let mut replies = before_inline();
     replies.extend([delayed, known_comment(&body)]);
     let server = Server::start(replies).await;
     // Allow process startup and fixture I/O under parallel test load; only the
     // deliberately delayed POST should reach the timeout.
-    let client = server.client_with_timeout(Duration::from_secs(2));
+    let client = server.client_with_timeout(Duration::from_secs(10));
     let report = client
         .publish(&repository(), number(), &input)
         .await
