@@ -10,6 +10,7 @@ use serde::{Deserialize, de::DeserializeOwned};
 use crate::context::ReviewContext;
 use crate::git::CommitHash;
 
+use super::commands::{CommitRef, PullRequest};
 use super::position::{ChangedFile, CommitCommentPosition, commit_comment_position};
 use super::{GitHubError, Repository, mapping};
 
@@ -503,26 +504,6 @@ fn next_page(headers: &HeaderMap) -> Result<Option<Url>, GitHubError> {
         }
     }
     Ok(next)
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PullRequest {
-    pub title: String,
-    pub body: Option<String>,
-    pub base: CommitRef,
-    pub head: CommitRef,
-    pub commits: usize,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommitRef {
-    pub sha: CommitHash,
-    pub repo: Option<RepositoryRef>,
-}
-
-#[derive(Debug, PartialEq, Eq, Deserialize)]
-pub struct RepositoryRef {
-    pub full_name: String,
 }
 
 #[derive(Debug)]

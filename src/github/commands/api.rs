@@ -51,7 +51,6 @@ pub async fn post<T: DeserializeOwned>(
         .map(|(value, _)| value)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list<T: DeserializeOwned>(
     client: &GhClient,
     path: &str,
@@ -59,7 +58,6 @@ pub async fn list<T: DeserializeOwned>(
     Ok(pages(client, path, false, |page: Vec<T>| page).await?.items)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn pages<P: DeserializeOwned, T>(
     client: &GhClient,
     path: &str,
@@ -184,6 +182,16 @@ pub fn nonzero(output: GhOutput) -> CommandError {
     CommandError::Run(GhRunError::NonZeroExit {
         status: output.status.code(),
         stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+    })
+}
+
+pub fn decode<T: DeserializeOwned>(output: GhOutput, command: &str) -> Result<T, CommandError> {
+    if !output.status.success() {
+        return Err(nonzero(output));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|source| CommandError::Decode {
+        endpoint: command.to_owned(),
+        source,
     })
 }
 

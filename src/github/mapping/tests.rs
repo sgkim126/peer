@@ -10,11 +10,11 @@ fn pull() -> PullRequest {
     PullRequest {
         title: "Title".into(),
         body: Some("Description".into()),
-        base: super::super::client::CommitRef {
+        base: super::super::commands::CommitRef {
             sha: crate::git::CommitHash::new("0123456").unwrap(),
             repo: None,
         },
-        head: super::super::client::CommitRef {
+        head: super::super::commands::CommitRef {
             sha: crate::git::CommitHash::new("abc1234").unwrap(),
             repo: None,
         },

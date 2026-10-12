@@ -1,14 +1,22 @@
 use std::fs;
+use std::num::NonZeroU64;
 use std::os::unix::fs::PermissionsExt;
 use std::time::Duration;
 
 use serde_json::Value;
 
 use crate::gh::GhClient;
+use crate::git::CommitHash;
+use crate::github::Repository;
 
 use super::*;
 
 mod api;
+mod get_pull_request;
+mod list_conversation_feedback;
+mod list_pr_commits;
+mod list_pr_files;
+mod list_review_feedback;
 
 struct Reply {
     stdout: Vec<u8>,
@@ -103,5 +111,24 @@ exit "$(cat "$task_dir/status-$task_index")"
             .unwrap()
             .parse()
             .unwrap()
+    }
+}
+
+fn repository() -> Repository {
+    Repository::parse("owner/repo").unwrap()
+}
+
+fn number() -> NonZeroU64 {
+    NonZeroU64::new(123).unwrap()
+}
+
+fn commit() -> CommitHash {
+    serde_json::from_value(serde_json::json!("abc1234")).unwrap()
+}
+
+fn input(repository: &Repository) -> PullRequestInput<'_> {
+    PullRequestInput {
+        repository,
+        number: number(),
     }
 }
