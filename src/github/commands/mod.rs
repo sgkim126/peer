@@ -6,7 +6,6 @@ mod pull_request;
 mod types;
 
 pub use api::{Collection, post};
-#[cfg_attr(not(test), expect(unused_imports))]
 pub use comments::{
     CreateConversationCommentInput, FeedbackComment, ListCommitCommentsInput, PublishedComment,
     create_conversation_comment, list_commit_comments, list_conversation_feedback,

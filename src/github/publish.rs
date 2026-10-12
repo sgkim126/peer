@@ -3,14 +3,15 @@ use std::fmt;
 use std::num::NonZeroU64;
 
 use log::warn;
-use serde::Deserialize;
 use serde_json::json;
 
 use crate::feedback::Feedback;
 use crate::git::CommitHash;
 use crate::render::RenderDocument;
 
-use super::commands::{self, FeedbackComment, PullRequestInput};
+use super::commands::{
+    self, CreateConversationCommentInput, FeedbackComment, PublishedComment, PullRequestInput,
+};
 use super::feedback::{PreparedReview, fingerprints, marker};
 use super::position::{ChangedFile, comment_position};
 use super::{GitHubClient, GitHubError, Repository};
@@ -48,11 +49,6 @@ impl fmt::Display for PublishReport {
         }
         Ok(())
     }
-}
-
-#[derive(Deserialize)]
-pub struct PublishedComment {
-    pub html_url: String,
 }
 
 #[derive(Default)]
@@ -171,17 +167,19 @@ impl GitHubClient {
             } else {
                 body
             };
-            match self
-                .post::<PublishedComment>(
-                    &format!("repos/{repository}/issues/{number}/comments"),
-                    &json!({
-                        "body": body
-                    }),
-                )
-                .await
+            match commands::create_conversation_comment(
+                &self.gh,
+                CreateConversationCommentInput {
+                    repository,
+                    number,
+                    body: &body,
+                },
+            )
+            .await
+            .map_err(GitHubError::from)
             {
-                Ok(comment) => {
-                    report.urls.push(comment.html_url);
+                Ok(PublishedComment { url }) => {
+                    report.urls.push(url);
                     report.published += 1;
                 }
                 Err(error) => {
@@ -242,7 +240,7 @@ impl GitHubClient {
             match self.post::<PublishedComment>(&target.path, &params).await {
                 Ok(comment) => {
                     fallback_fingerprints.remove(&item.fingerprint);
-                    report.urls.push(comment.html_url);
+                    report.urls.push(comment.url);
                     report.published += 1;
                     report.inline += 1;
                 }

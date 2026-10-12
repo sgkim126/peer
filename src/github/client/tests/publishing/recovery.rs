@@ -471,6 +471,74 @@ async fn an_uncertain_feedback_post_with_every_marker_is_confirmed() {
 }
 
 #[tokio::test]
+async fn an_invalid_conversation_comment_url_is_confirmed_from_the_server() {
+    let input = finding();
+    let body = published_body(&input).await;
+    let mut replies = before_publish();
+    replies.extend([
+        Reply::json(json!({ "html_url": "not a comment URL" })),
+        known_comment(&body),
+        Reply::json(json!([])),
+    ]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+
+    assert_eq!(report.published, 1);
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.inline, 0);
+    assert_eq!(
+        report.urls,
+        ["https://github.com/owner/repo/pull/123#confirmed"]
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 9);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.starts_with("POST "))
+            .count(),
+        1
+    );
+    assert!(requests[7].starts_with("GET /repos/owner/repo/issues/123/comments?per_page=100 "));
+}
+
+#[tokio::test]
+async fn a_timed_out_conversation_post_is_confirmed_from_the_server() {
+    let input = finding();
+    let body = published_body(&input).await;
+    let mut delayed = created();
+    delayed.delay = Duration::from_secs(15);
+    let mut replies = before_publish();
+    replies.extend([delayed, known_comment(&body), Reply::json(json!([]))]);
+    let server = Server::start(replies).await;
+    let client = server.client_with_timeout(Duration::from_secs(10));
+    let report = client
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+
+    assert_eq!(report.published, 1);
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.inline, 0);
+    assert_eq!(
+        report.urls,
+        ["https://github.com/owner/repo/pull/123#confirmed"]
+    );
+    assert_eq!(
+        server
+            .requests()
+            .iter()
+            .filter(|request| request.starts_with("POST "))
+            .count(),
+        1
+    );
+}
+
+#[tokio::test]
 async fn an_uncertain_feedback_post_with_a_missing_url_is_counted_once_after_confirmation() {
     let mut input = document();
     input.summary = None;
@@ -522,7 +590,10 @@ async fn an_uncertain_feedback_post_with_a_null_url_is_counted_once_after_confir
     input.findings.truncate(1);
     let body = published_body(&input).await;
     assert_eq!(crate::github::feedback::fingerprints(&body).len(), 1);
-    let comment = json!({ "body": body, "html_url": null });
+    let comment = json!({
+        "body": body,
+        "html_url": null
+    });
     let mut replies = before_publish();
     replies.extend([
         failed(500),
@@ -579,7 +650,7 @@ async fn an_uncertain_feedback_post_without_markers_returns_the_original_error()
             .client()
             .publish(&repository(), number(), &input)
             .await,
-        Err(GitHubError::Api { status: 500, .. })
+        Err(GitHubError::Command(_))
     );
     assert_eq!(
         server

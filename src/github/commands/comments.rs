@@ -20,7 +20,6 @@ pub struct FeedbackComment {
 }
 
 #[derive(Debug, Deserialize)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct PublishedComment {
     #[serde(rename = "html_url")]
     pub url: String,
@@ -122,7 +121,6 @@ pub async fn list_conversation_feedback(
         .collect())
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn create_conversation_comment(
     client: &GhClient,
     input: CreateConversationCommentInput<'_>,

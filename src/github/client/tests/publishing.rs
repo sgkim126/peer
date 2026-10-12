@@ -152,16 +152,24 @@ async fn reports_comment_creation_failure_without_retrying() {
     let mut reply = created();
     reply.status = 403;
     let mut replies = before_publish();
-    replies.push(reply);
+    replies.extend([reply, Reply::json(json!([])), Reply::json(json!([]))]);
     let server = Server::start(replies).await;
     assert_matches!(
         server
             .client()
             .publish(&repository(), number(), &finding())
             .await,
-        Err(GitHubError::Api { status: 403, .. })
+        Err(GitHubError::Command(_))
     );
-    assert_eq!(server.requests().len(), 7);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 9);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.starts_with("POST "))
+            .count(),
+        1
+    );
 }
 
 fn document() -> RenderDocument {
@@ -424,7 +432,13 @@ async fn rerunning_after_summary_failure_posts_only_the_summary() {
     let mut replies = before_publish();
     let mut rejected = created();
     rejected.status = 403;
-    replies.extend([created(), created(), rejected]);
+    replies.extend([
+        created(),
+        created(),
+        rejected,
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+    ]);
     let first = Server::start(replies).await;
     assert!(
         first
