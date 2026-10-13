@@ -24,20 +24,11 @@ impl fmt::Debug for GlabInvocation {
     }
 }
 
+#[derive(Debug)]
 pub struct GlabOutput {
     pub status: ExitStatus,
     pub stdout: Vec<u8>,
     pub stderr: Vec<u8>,
-}
-
-impl fmt::Debug for GlabOutput {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.debug_struct("GlabOutput")
-            .field("status", &self.status)
-            .field("stdout", &self.stdout)
-            .field("stderr", &self.stderr)
-            .finish()
-    }
 }
 
 #[derive(Debug)]
@@ -50,7 +41,6 @@ pub enum GlabRunError {
 
 impl GlabRunError {
     /// A failed invocation may already have performed a remote mutation.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn may_have_run(&self) -> bool {
         !matches!(self, Self::Spawn(_))
     }
