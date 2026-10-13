@@ -1,3 +1,6 @@
+use std::assert_matches;
+mod support;
+
 use std::process::{Command, Output};
 
 fn project(repository: Option<&str>) -> tempfile::TempDir {
@@ -22,15 +25,15 @@ fn command(directory: &tempfile::TempDir) -> Command {
     let mut command = Command::new(env!("CARGO_BIN_EXE_peer"));
     command
         .current_dir(directory.path())
-        .env_remove("GITLAB_TOKEN")
         .env("RUST_LOG", "debug");
+    support::configure_glab(&mut command, directory.path(), true);
     command.arg("review");
     command
 }
 
 fn assert_error(output: Output, message: &str) {
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_matches!(output.stdout[..], []);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains(message), "unexpected stderr: {stderr}");
 }
@@ -271,17 +274,6 @@ fn repository_flag_requires_gitlab_before_configuration_is_read() {
 }
 
 #[test]
-fn gitlab_target_conflict_fails_before_configuration_is_read() {
-    let directory = tempfile::tempdir().unwrap();
-    let output = command(&directory)
-        .args(["HEAD", "--gitlab", "123"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
-}
-
-#[test]
 fn gitlab_title_conflict_fails_before_configuration_is_read() {
     let directory = tempfile::tempdir().unwrap();
     let output = command(&directory)
@@ -312,4 +304,25 @@ fn gitlab_comments_file_conflict_fails_before_configuration_is_read() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
+}
+
+#[test]
+fn gitlab_target_conflict_fails_before_glab_and_configuration_checks() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = command(&directory);
+    support::configure_glab(&mut command, directory.path(), false);
+    let output = command.args(["HEAD", "--gitlab", "123"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
+}
+
+#[test]
+fn gitlab_requires_glab_before_loading_project_configuration() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = command(&directory);
+    support::configure_glab(&mut command, directory.path(), false);
+    let output = command.args(["--gitlab", "123"]).output().unwrap();
+    assert_error(output, "--gitlab requires GitLab CLI (glab)");
+    assert!(!directory.path().join(".peer").exists());
+    assert!(!directory.path().join("glab-calls").exists());
 }

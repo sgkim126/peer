@@ -169,7 +169,9 @@ fn github_requires_gh_before_loading_project_configuration() {
 #[test]
 fn gitlab_review_does_not_check_gh_availability() {
     let directory = project(None);
-    let output = command(&directory)
+    let mut command = command(&directory);
+    support::configure_glab(&mut command, directory.path(), true);
+    let output = command
         .env_remove("GITLAB_TOKEN")
         .args(["--gitlab", "123", "--repo", "owner/repo"])
         .output()

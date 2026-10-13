@@ -13,6 +13,7 @@ fn peer_in(tmp: &TempDir) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_peer"));
     cmd.current_dir(tmp.path());
     support::configure_gh(&mut cmd, tmp.path(), true);
+    support::configure_glab(&mut cmd, tmp.path(), true);
     cmd
 }
 
@@ -69,6 +70,13 @@ fn assert_init_overrides(
         assert_eq!(std::fs::read_to_string(calls).unwrap(), "--version\n");
     } else {
         assert!(!calls.exists(), "init unexpectedly executed gh");
+    }
+
+    let calls = tmp.path().join("glab-calls");
+    if selector == Some("--gitlab") {
+        assert_eq!(std::fs::read_to_string(calls).unwrap(), "--version\n");
+    } else {
+        assert!(!calls.exists(), "init unexpectedly executed glab");
     }
 
     let content = std::fs::read_to_string(tmp.path().join(".peer/config.toml")).unwrap();
@@ -166,6 +174,7 @@ fn init_fails_when_git_is_unavailable() {
         String::from_utf8_lossy(&out.stderr),
     );
     assert!(!tmp.path().join(".peer").exists());
+    assert!(!tmp.path().join("glab-calls").exists());
 }
 
 #[test]
@@ -276,6 +285,7 @@ fn init_rejects_github_and_gitlab_before_creating_peer() {
     assert_eq!(out.status.code(), Some(2));
     assert!(!tmp.path().join(".peer").exists());
     assert!(!tmp.path().join("gh-calls").exists());
+    assert!(!tmp.path().join("glab-calls").exists());
 }
 
 #[test]
@@ -292,6 +302,26 @@ fn init_with_explicit_github_requires_gh_before_creating_peer() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("--github requires GitHub CLI (gh)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("PATH"), "{stderr}");
+    assert!(!directory.path().join(".peer").exists());
+}
+
+#[test]
+fn init_with_explicit_gitlab_requires_glab_before_creating_peer() {
+    let (mut command, directory) = peer_in_tmp();
+    git_init(directory.path());
+    support::configure_glab(&mut command, directory.path(), false);
+    let output = command
+        .args(["init", "--gitlab", "--repo", "owner/repo"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_matches!(output.stdout[..], []);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--gitlab requires GitLab CLI (glab)"),
         "{stderr}"
     );
     assert!(stderr.contains("PATH"), "{stderr}");

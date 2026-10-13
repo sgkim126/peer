@@ -1,13 +1,17 @@
+use std::assert_matches;
+mod support;
+
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
 fn render(arguments: &[&str], input: &str) -> Output {
     let directory = tempfile::tempdir().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_peer"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_peer"));
+    support::configure_glab(&mut command, directory.path(), true);
+    let mut child = command
         .arg("render")
         .args(arguments)
         .current_dir(directory.path())
-        .env_remove("GITLAB_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -147,4 +151,44 @@ fn publishing_services_are_mutually_exclusive_before_configuration() {
     let output = render(&["--gitlab", "123", "--github", "456"], "invalid");
     assert_eq!(output.status.code(), Some(2));
     assert!(String::from_utf8_lossy(&output.stderr).contains("cannot be used with"));
+}
+
+#[test]
+fn publishing_requires_glab_before_reading_stdin_or_configuration() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_peer"));
+    support::configure_glab(&mut command, directory.path(), false);
+    let mut child = command
+        .args(["render", "--gitlab", "123"])
+        .current_dir(directory.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Keep stdin open: returning proves the availability check precedes reading it.
+    let stdin = child.stdin.take().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("render waited for stdin before checking glab availability");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert_matches!(output.stdout[..], []);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--gitlab requires GitLab CLI (glab)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("PATH"), "{stderr}");
+    assert!(!directory.path().join(".peer").exists());
 }

@@ -41,6 +41,13 @@ async fn main() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
+    if cli.command.requires_glab()
+        && let Err(error) = glab::GlabClient::default().check_available().await
+    {
+        eprintln!("--gitlab requires GitLab CLI (glab): {error}");
+        return ExitCode::FAILURE;
+    }
+
     match cli.command {
         Command::Init {
             provider,

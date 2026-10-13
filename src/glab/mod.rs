@@ -113,7 +113,6 @@ impl GlabClient {
     }
 
     /// Check installation without accessing the network or requiring authentication.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub async fn check_available(&self) -> Result<(), GlabRunError> {
         let output = self
             .run(&GlabInvocation {
