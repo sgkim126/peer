@@ -1,13 +1,17 @@
+use std::assert_matches;
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
 
+mod support;
+
 fn render(arguments: &[&str], input: &str) -> Output {
     let directory = tempfile::tempdir().unwrap();
-    let mut child = Command::new(env!("CARGO_BIN_EXE_peer"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_peer"));
+    support::configure_gh(&mut command, directory.path(), true);
+    let mut child = command
         .arg("render")
         .args(arguments)
         .current_dir(directory.path())
-        .env_remove("GITHUB_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -44,7 +48,7 @@ fn publishing_requires_a_token_without_discovering_project_configuration() {
         FINDING,
     );
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_matches!(output.stdout[..], []);
     assert!(
         String::from_utf8_lossy(&output.stderr)
             .contains("GitHub access requires a non-empty GITHUB_TOKEN")
@@ -120,4 +124,44 @@ fn publishing_with_default_format_requires_a_token() {
         String::from_utf8_lossy(&output.stderr)
             .contains("GitHub access requires a non-empty GITHUB_TOKEN")
     );
+}
+
+#[test]
+fn publishing_requires_gh_before_reading_stdin_or_configuration() {
+    let directory = tempfile::tempdir().unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_peer"));
+    support::configure_gh(&mut command, directory.path(), false);
+    let mut child = command
+        .args(["render", "--github", "123"])
+        .current_dir(directory.path())
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    // Keep stdin open: returning proves the availability check precedes reading it.
+    let stdin = child.stdin.take().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            break;
+        }
+        if std::time::Instant::now() >= deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            panic!("render waited for stdin before checking gh availability");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("--github requires GitHub CLI (gh)"),
+        "{stderr}"
+    );
+    assert!(stderr.contains("PATH"), "{stderr}");
+    assert!(!directory.path().join(".peer").exists());
 }

@@ -2,6 +2,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+mod support;
+
 const FINDING: &str = r#"{
     "ordered_commits": ["abc1234"],
     "findings": [{"commit":"abc1234","severity":"high","message":"Check this."}],
@@ -31,18 +33,24 @@ fn malformed_project() -> tempfile::TempDir {
 }
 
 fn render(directory: &Path, arguments: &[&str], input: &str) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_peer"))
+    let fixture = tempfile::tempdir().unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_peer"));
+    let calls = support::configure_gh(&mut command, fixture.path(), true);
+    let mut child = command
         .arg("render")
         .args(arguments)
         .current_dir(directory)
-        .env_remove("GITHUB_TOKEN")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
     let _ = child.stdin.take().unwrap().write_all(input.as_bytes());
-    child.wait_with_output().unwrap()
+    let output = child.wait_with_output().unwrap();
+    if !arguments.contains(&"--github") {
+        assert!(!calls.exists(), "render-only unexpectedly executed gh");
+    }
+    output
 }
 
 fn assert_rendered(output: Output, expected: &str) {
