@@ -1,9 +1,10 @@
 use std::num::NonZeroU32;
 
 use serde::Deserialize;
-use serde_json::{Value, json};
 
 use crate::stage::FileLocation;
+
+use super::commands::ReviewCommentTarget;
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ChangedFile {
@@ -62,13 +63,15 @@ pub fn commit_comment_position(
 /// The caller must verify that the diff is for the location's commit.
 /// `FileLocation` has no side, so deleted lines and old paths cannot identify
 /// head line numbers. File comments may still follow an old path after a rename.
-pub fn comment_position(files: &[ChangedFile], location: &FileLocation) -> Option<Value> {
+pub fn comment_position(
+    files: &[ChangedFile],
+    location: &FileLocation,
+) -> Option<ReviewCommentTarget> {
     let file = changed_file(files, &location.file)?;
     let Some(line) = location.line else {
-        return Some(json!({
-            "path": file.filename,
-            "subject_type": "file"
-        }));
+        return Some(ReviewCommentTarget::File {
+            path: file.filename.clone(),
+        });
     };
     if line == 0 {
         return None;
@@ -82,11 +85,10 @@ pub fn comment_position(files: &[ChangedFile], location: &FileLocation) -> Optio
     if !is_new_line_in_patch(file.patch.as_deref()?, line) {
         return None;
     }
-    Some(json!({
-        "path": file.filename,
-        "line": line,
-        "side": "RIGHT"
-    }))
+    Some(ReviewCommentTarget::Line {
+        path: file.filename.clone(),
+        line: NonZeroU32::new(line)?,
+    })
 }
 
 fn changed_file<'a>(files: &'a [ChangedFile], path: &str) -> Option<&'a ChangedFile> {
@@ -239,6 +241,8 @@ fn visit_patch_lines(patch: &str, mut visit: impl FnMut(u32, PatchLine)) -> Opti
 mod tests {
     use super::*;
 
+    use serde_json::json;
+
     fn file(patch: &str) -> ChangedFile {
         ChangedFile {
             filename: "src/main.rs".into(),
@@ -254,12 +258,11 @@ mod tests {
         }
     }
 
-    fn right(line: u32) -> Value {
-        json!({
-            "path": "src/main.rs",
-            "line": line,
-            "side": "RIGHT"
-        })
+    fn right(line: u32) -> ReviewCommentTarget {
+        ReviewCommentTarget::Line {
+            path: "src/main.rs".into(),
+            line: NonZeroU32::new(line).unwrap(),
+        }
     }
 
     #[test]
@@ -401,10 +404,9 @@ mod tests {
         .unwrap()];
         assert_eq!(
             comment_position(&files, &location(None)),
-            Some(json!({
-                "path": "src/new.rs",
-                "subject_type": "file"
-            }))
+            Some(ReviewCommentTarget::File {
+                path: "src/new.rs".into(),
+            })
         );
     }
 
@@ -516,10 +518,9 @@ mod tests {
         assert_eq!(comment_position(&files, &location(Some(1))), None);
         assert_eq!(
             comment_position(&files, &location(None)),
-            Some(json!({
-                "path": "src/main.rs",
-                "subject_type": "file"
-            }))
+            Some(ReviewCommentTarget::File {
+                path: "src/main.rs".into(),
+            })
         );
     }
 

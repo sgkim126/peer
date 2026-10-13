@@ -35,7 +35,7 @@ fn github_output_without_publishing_does_not_require_authentication_or_a_checkou
 }
 
 #[test]
-fn publishing_requires_a_token_without_discovering_project_configuration() {
+fn publishing_reports_gh_authentication_failure_without_discovering_project_configuration() {
     let output = render(
         &[
             "--format",
@@ -49,10 +49,7 @@ fn publishing_requires_a_token_without_discovering_project_configuration() {
     );
     assert_eq!(output.status.code(), Some(1));
     assert_matches!(output.stdout[..], []);
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("GitHub access requires a non-empty GITHUB_TOKEN")
-    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("gh command failed"));
 }
 
 #[test]
@@ -116,14 +113,11 @@ fn publishing_without_repo_rejects_terminal_before_reading_input() {
 }
 
 #[test]
-fn publishing_with_default_format_requires_a_token() {
+fn publishing_with_default_format_reports_gh_authentication_failure() {
     let output = render(&["--github", "123", "--repo", "owner/repo"], FINDING);
     assert_eq!(output.status.code(), Some(1));
     assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("GitHub access requires a non-empty GITHUB_TOKEN")
-    );
+    assert!(String::from_utf8_lossy(&output.stderr).contains("gh command failed"));
 }
 
 #[test]

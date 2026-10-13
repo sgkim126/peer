@@ -152,16 +152,24 @@ async fn reports_comment_creation_failure_without_retrying() {
     let mut reply = created();
     reply.status = 403;
     let mut replies = before_publish();
-    replies.push(reply);
+    replies.extend([reply, Reply::json(json!([])), Reply::json(json!([]))]);
     let server = Server::start(replies).await;
     assert_matches!(
         server
             .client()
             .publish(&repository(), number(), &finding())
             .await,
-        Err(GitHubError::Api { status: 403, .. })
+        Err(GitHubError::Command(_))
     );
-    assert_eq!(server.requests().len(), 7);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 9);
+    assert_eq!(
+        requests
+            .iter()
+            .filter(|request| request.starts_with("POST "))
+            .count(),
+        1
+    );
 }
 
 fn document() -> RenderDocument {
@@ -254,7 +262,8 @@ async fn finds_duplicates_on_later_pages_of_conversation_comments() {
     assert_eq!(report.skipped, 1);
     assert_eq!(report.urls, Vec::<String>::new());
     assert_eq!(report.published, 0);
-    assert_eq!(server.requests().len(), 5);
+    // gh pr view retrieves both conversation pages in one command.
+    assert_eq!(server.requests().len(), 4);
 }
 
 #[tokio::test]
@@ -332,7 +341,7 @@ async fn failure_to_read_existing_conversation_comments_prevents_any_posts() {
             .client()
             .publish(&repository(), number(), &finding())
             .await,
-        Err(GitHubError::Api { status: 500, .. })
+        Err(GitHubError::Command(_))
     );
     assert_eq!(server.requests().len(), 3);
 }
@@ -423,7 +432,13 @@ async fn rerunning_after_summary_failure_posts_only_the_summary() {
     let mut replies = before_publish();
     let mut rejected = created();
     rejected.status = 403;
-    replies.extend([created(), created(), rejected]);
+    replies.extend([
+        created(),
+        created(),
+        rejected,
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+    ]);
     let first = Server::start(replies).await;
     assert!(
         first

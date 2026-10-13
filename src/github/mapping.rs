@@ -6,7 +6,7 @@ use crate::context::{
     ReviewCommentLocation, ReviewCommentThread, ReviewContext, ReviewThreadComment,
 };
 
-use super::client::{
+use super::commands::{
     CommitComment, IssueComment, PullRequest, PullRequestReview, ReviewComment, User,
 };
 use super::position::CommitCommentPosition;

@@ -25,7 +25,6 @@ impl fmt::Debug for GhInvocation {
 }
 
 #[derive(Debug)]
-#[cfg_attr(not(test), expect(dead_code))]
 pub struct GhOutput {
     pub status: ExitStatus,
     pub stdout: Vec<u8>,
@@ -42,7 +41,6 @@ pub enum GhRunError {
 
 impl GhRunError {
     /// A failed invocation may already have performed a remote mutation.
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn may_have_run(&self) -> bool {
         !matches!(self, Self::Spawn(_))
     }

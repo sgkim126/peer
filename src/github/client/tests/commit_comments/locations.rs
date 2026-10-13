@@ -1,5 +1,7 @@
 use super::*;
 
+use std::num::NonZeroU32;
+
 #[tokio::test]
 async fn resolves_paginated_comments_using_one_commit_patch() {
     let mut added = commit_comment(1, "abc1234");

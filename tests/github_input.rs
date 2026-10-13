@@ -96,7 +96,7 @@ fn github_repository_flag_overrides_missing_repository_configuration() {
             .args(["--github", "123", "--repo", "owner/repo"])
             .output()
             .unwrap(),
-        "GitHub access requires a non-empty GITHUB_TOKEN",
+        "gh command failed",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
@@ -109,7 +109,7 @@ fn github_repository_flag_overrides_invalid_repository_configuration() {
             .args(["--github", "123", "--repo", "owner/repo"])
             .output()
             .unwrap(),
-        "GitHub access requires a non-empty GITHUB_TOKEN",
+        "gh command failed",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
@@ -144,16 +144,19 @@ fn github_rejects_empty_repository_flag_with_valid_repository_configuration() {
 }
 
 #[test]
-fn github_rejects_missing_token_before_reviewing() {
+fn github_reports_gh_authentication_failure_before_reviewing() {
     let directory = project(Some("owner/repo"));
     assert_error(
         command(&directory)
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "GitHub access requires a non-empty GITHUB_TOKEN",
+        "gh command failed",
     );
     assert!(!directory.path().join(".peer/cache").exists());
+    let calls = std::fs::read_to_string(directory.path().join("gh-calls")).unwrap();
+    assert_eq!(calls.lines().next(), Some("--version"));
+    assert_eq!(calls.lines().count(), 2);
 }
 
 #[test]
@@ -179,7 +182,7 @@ fn gitlab_review_does_not_check_gh_availability() {
 }
 
 #[test]
-fn github_rejects_empty_token_before_reviewing() {
+fn github_delegates_an_empty_token_to_gh() {
     let directory = project(Some("owner/repo"));
     assert_error(
         command(&directory)
@@ -187,13 +190,13 @@ fn github_rejects_empty_token_before_reviewing() {
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "GitHub access requires a non-empty GITHUB_TOKEN",
+        "gh command failed",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
 
 #[test]
-fn github_rejects_whitespace_token_before_reviewing() {
+fn github_delegates_a_whitespace_token_to_gh() {
     let directory = project(Some("owner/repo"));
     assert_error(
         command(&directory)
@@ -201,7 +204,7 @@ fn github_rejects_whitespace_token_before_reviewing() {
             .args(["--github", "123"])
             .output()
             .unwrap(),
-        "GitHub access requires a non-empty GITHUB_TOKEN",
+        "gh command failed",
     );
     assert!(!directory.path().join(".peer/cache").exists());
 }
@@ -215,7 +218,7 @@ fn invalid_tokens_are_not_logged_even_with_debug_logging() {
         .output()
         .unwrap();
     assert!(!String::from_utf8_lossy(&output.stderr).contains("secret-value"));
-    assert_error(output, "GITHUB_TOKEN is not a valid HTTP bearer token");
+    assert_error(output, "gh command failed");
 }
 
 #[test]

@@ -1,4 +1,5 @@
 mod client;
+mod commands;
 mod error;
 mod feedback;
 mod mapping;

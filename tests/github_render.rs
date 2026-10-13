@@ -80,7 +80,7 @@ fn github_uses_the_configured_repository_for_links() {
 }
 
 #[test]
-fn publishing_uses_repository_configuration_before_requiring_authentication() {
+fn publishing_uses_repository_configuration_before_gh_authentication() {
     let directory = project(Some("configured/repository"));
     assert_error(
         render(
@@ -88,16 +88,16 @@ fn publishing_uses_repository_configuration_before_requiring_authentication() {
             &["--format", "github", "--github", "123"],
             FINDING,
         ),
-        "GitHub access requires a non-empty GITHUB_TOKEN",
+        "gh command failed",
     );
 }
 
 #[test]
-fn publishing_with_default_format_uses_repository_configuration_before_requiring_authentication() {
+fn publishing_with_default_format_uses_repository_configuration_before_gh_authentication() {
     let directory = project(Some("configured/repository"));
     assert_error(
         render(directory.path(), &["--github", "123"], FINDING),
-        "GitHub access requires a non-empty GITHUB_TOKEN",
+        "gh command failed",
     );
 }
 
