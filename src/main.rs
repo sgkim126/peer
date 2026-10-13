@@ -9,6 +9,7 @@ mod gh;
 mod git;
 mod github;
 mod gitlab;
+mod glab;
 mod init;
 mod llm;
 mod pi;
