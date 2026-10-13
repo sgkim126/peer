@@ -892,6 +892,7 @@ dependencies = [
  "tokio",
  "toml",
  "toml_edit",
+ "url",
 ]
 
 [[package]]
