@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde::{Serialize, de::DeserializeOwned};
 use url::Url;
 
@@ -6,6 +8,20 @@ use crate::glab::{GlabClient, GlabInvocation, GlabOutput, GlabRunError};
 use super::CommandError;
 
 const API_URL: &str = "https://gitlab.com/api/v4/";
+
+pub struct Collection<T> {
+    pub items: Vec<T>,
+    pub project_accessible: bool,
+}
+
+impl<T: std::fmt::Debug> std::fmt::Debug for Collection<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Collection")
+            .field("items", &self.items)
+            .field("project_accessible", &self.project_accessible)
+            .finish()
+    }
+}
 
 #[derive(Debug)]
 pub struct Response<'a> {
@@ -42,6 +58,53 @@ pub async fn post<T: DeserializeOwned>(
         .map(|(value, _)| value)
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
+pub async fn list<T: DeserializeOwned>(
+    client: &GlabClient,
+    path: &str,
+) -> Result<Vec<T>, CommandError> {
+    Ok(pages(client, path, false).await?.items)
+}
+
+pub async fn pages<T: DeserializeOwned>(
+    client: &GlabClient,
+    path: &str,
+    skip_inaccessible: bool,
+) -> Result<Collection<T>, CommandError> {
+    let mut url = endpoint(path)?;
+    url.query_pairs_mut().append_pair("per_page", "100");
+    let collection_path = url.path().to_owned();
+    let mut next = Some(url);
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    while let Some(url) = next {
+        if url.path() != collection_path || !seen.insert(url.clone()) {
+            return Err(CommandError::InvalidPagination);
+        }
+        match request::<Vec<T>>(client, &url, "GET", None, true).await {
+            Ok((page, following)) => {
+                result.extend(page);
+                next = following;
+            }
+            Err(CommandError::Api {
+                status: 403 | 404,
+                rate_limited: false,
+                ..
+            }) if skip_inaccessible && seen.len() == 1 => {
+                return Ok(Collection {
+                    items: Vec::new(),
+                    project_accessible: false,
+                });
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(Collection {
+        items: result,
+        project_accessible: true,
+    })
+}
+
 fn endpoint(path: &str) -> Result<Url, CommandError> {
     let base = Url::parse(API_URL).expect("valid GitLab API URL");
     let url = base
@@ -67,7 +130,7 @@ async fn request<T: DeserializeOwned>(
     url: &Url,
     method: &str,
     body: Option<Vec<u8>>,
-    _paginated: bool,
+    paginated: bool,
 ) -> Result<(T, Option<Url>), CommandError> {
     // Validate every page before glab sees its URL, including its credentials.
     endpoint(url.as_str())?;
@@ -111,7 +174,11 @@ async fn request<T: DeserializeOwned>(
         endpoint: path,
         source,
     })?;
-    let next = None;
+    let next = if paginated {
+        next_page(&response)?
+    } else {
+        None
+    };
     Ok((value, next))
 }
 
@@ -246,6 +313,42 @@ fn diff_refs_message(value: &serde_json::Value) -> bool {
         }
         _ => false,
     }
+}
+
+pub fn next_page(response: &Response<'_>) -> Result<Option<Url>, CommandError> {
+    let mut next = None;
+    for (_, value) in response
+        .headers
+        .iter()
+        .filter(|(name, _)| name.eq_ignore_ascii_case("link"))
+    {
+        for link in value.split(',') {
+            let mut parts = link.split(';');
+            let target = parts.next().unwrap_or_default().trim();
+            let is_next = parts.any(|part| {
+                part.trim().split_once('=').is_some_and(|(key, value)| {
+                    key.trim() == "rel"
+                        && value
+                            .trim()
+                            .trim_matches('"')
+                            .split_ascii_whitespace()
+                            .any(|relation| relation == "next")
+                })
+            });
+            if is_next {
+                let url = target
+                    .strip_prefix('<')
+                    .and_then(|target| target.strip_suffix('>'))
+                    .and_then(|target| Url::parse(target).ok())
+                    .ok_or(CommandError::InvalidPagination)?;
+                endpoint(url.as_str())?;
+                if next.replace(url).is_some() {
+                    return Err(CommandError::InvalidPagination);
+                }
+            }
+        }
+    }
+    Ok(next)
 }
 
 #[cfg(test)]

@@ -8,6 +8,215 @@ use super::super::api::{self, commit_error, position_error};
 use super::*;
 use crate::glab::GlabRunError;
 
+fn next_page(headers: Vec<(&str, &str)>) -> Result<Option<Url>, CommandError> {
+    api::next_page(&api::Response {
+        status: 200,
+        headers,
+        body: b"[]",
+    })
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_to_another_origin() {
+    let server = Server::start(vec![Reply::json(json!([])).header(
+        "Link: <https://example.com/api/v4/projects/5/notes?page=2>; rel=\"next\"",
+    )])
+    .await;
+
+    assert_matches!(
+        api::list::<Value>(&client(&server), "projects/5/notes").await,
+        Err(CommandError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_to_another_collection() {
+    let server =
+        Server::start(vec![Reply::json(json!([])).header(
+            "Link: <{base}projects/another-project/notes?page=2>; rel=\"next\"",
+        )])
+        .await;
+
+    assert_matches!(
+        api::list::<Value>(&client(&server), "projects/5/notes").await,
+        Err(CommandError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_with_fragments() {
+    let server =
+        Server::start(vec![Reply::json(json!([])).header(
+            "Link: <{base}projects/5/notes?page=2#fragment>; rel=\"next\"",
+        )])
+        .await;
+
+    assert_matches!(
+        api::list::<Value>(&client(&server), "projects/5/notes").await,
+        Err(CommandError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_pagination_links_back_to_an_already_visited_page() {
+    let server = Server::start(vec![
+        Reply::json(json!([])).header("Link: <{base}projects/5/notes?per_page=100>; rel=\"next\""),
+        Reply::json(json!([])),
+    ])
+    .await;
+
+    assert_matches!(
+        api::list::<Value>(&client(&server), "projects/5/notes").await,
+        Err(CommandError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[tokio::test]
+async fn rejects_repeated_next_page_links() {
+    let server = Server::start(vec![
+        Reply::json(json!([])).header("Link: <{base}projects/5/notes?page=2>; rel=\"next\""),
+        Reply::json(json!([])).header("Link: <{base}projects/5/notes?page=2>; rel=\"next\""),
+    ])
+    .await;
+
+    assert_matches!(
+        api::list::<Value>(&client(&server), "projects/5/notes").await,
+        Err(CommandError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[test]
+fn rejects_next_links_without_an_angle_bracketed_url() {
+    assert_matches!(
+        next_page(vec![("Link", "not-a-url; rel=next")]),
+        Err(CommandError::InvalidPagination)
+    );
+}
+
+#[test]
+fn rejects_relative_next_page_links() {
+    assert_matches!(
+        next_page(vec![("Link", "<relative-path>; rel=next")]),
+        Err(CommandError::InvalidPagination)
+    );
+}
+
+#[test]
+fn rejects_multiple_next_page_links() {
+    assert_matches!(
+        next_page(vec![(
+            "Link",
+            "<https://gitlab.com/api/v4/one>; rel=next, <https://gitlab.com/api/v4/two>; rel=next",
+        )]),
+        Err(CommandError::InvalidPagination)
+    );
+}
+
+#[tokio::test]
+async fn collects_items_from_all_linked_pages() {
+    let server = Server::start(vec![
+        Reply::json(json!([1, 2])).header("Link: <{base}projects/5/notes?page=2>; rel=\"next\""),
+        Reply::json(json!([3])).header("Link: <{base}projects/5/notes?page=3>; rel=\"next\""),
+        Reply::json(json!([4])),
+    ])
+    .await;
+
+    let items = api::list::<Value>(&client(&server), "projects/5/notes")
+        .await
+        .unwrap();
+
+    assert_eq!(items, vec![json!(1), json!(2), json!(3), json!(4)]);
+    assert_eq!(server.requests().len(), 3);
+    assert_eq!(
+        server.invocation(0).0,
+        [
+            "api",
+            "https://gitlab.com/api/v4/projects/5/notes?per_page=100",
+            "--hostname",
+            "gitlab.com",
+            "--method",
+            "GET",
+            "--include",
+            "--header",
+            "Accept: application/json",
+        ]
+    );
+    assert_matches!(server.invocation(0).1.as_slice(), []);
+}
+
+#[tokio::test]
+async fn preserves_initial_query_parameters() {
+    let server = Server::start(vec![Reply::json(json!([]))]).await;
+
+    api::list::<Value>(&client(&server), "projects/5/notes?sort=asc")
+        .await
+        .unwrap();
+
+    assert_eq!(
+        server.invocation(0).0[1],
+        "https://gitlab.com/api/v4/projects/5/notes?sort=asc&per_page=100"
+    );
+}
+
+#[tokio::test]
+async fn preserves_server_provided_next_urls() {
+    let server = Server::start(vec![
+        Reply::json(json!([1])).header(concat!(
+            "Link: <{base}projects/5/notes?",
+            "pagination=keyset&cursor=opaque%2Bvalue%2Fpart%3D&per_page=2&sort=desc>; rel=\"next\"",
+        )),
+        Reply::json(json!([2])),
+    ])
+    .await;
+
+    api::list::<Value>(&client(&server), "projects/5/notes?sort=asc")
+        .await
+        .unwrap();
+
+    let requests = server.requests();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        server.invocation(1).0[1],
+        concat!(
+            "https://gitlab.com/api/v4/projects/5/notes?",
+            "pagination=keyset&cursor=opaque%2Bvalue%2Fpart%3D&per_page=2&sort=desc",
+        )
+    );
+}
+
+#[test]
+fn ignores_conflicting_x_next_page() {
+    let next = "https://gitlab.com/api/v4/projects/5/notes?page=2";
+    let link = format!("<{next}>; rel=next");
+
+    assert_eq!(
+        next_page(vec![("Link", &link), ("X-Next-Page", "3")]).unwrap(),
+        Some(Url::parse(next).unwrap())
+    );
+}
+
+#[test]
+fn ignores_x_next_page_without_link() {
+    assert_eq!(next_page(vec![("X-Next-Page", "2")]).unwrap(), None);
+}
+
+#[test]
+fn ignores_previous_page_links() {
+    assert_eq!(
+        next_page(vec![(
+            "Link",
+            "<https://gitlab.com/api/v4/projects/5/notes?page=1>; rel=prev",
+        )])
+        .unwrap(),
+        None
+    );
+}
+
 #[tokio::test]
 async fn rejects_credentials_on_the_api_origin_before_sending_a_request() {
     let server = Server::start(Vec::new()).await;

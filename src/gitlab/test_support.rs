@@ -101,7 +101,6 @@ impl Server {
         GlabClient::new(self.directory.path().join("glab"), timeout)
     }
 
-    #[expect(dead_code)]
     pub fn invocation(&self, index: usize) -> (Vec<String>, Vec<u8>) {
         let path = self.directory.path().join(index.to_string());
         let args = fs::read_to_string(path.join("args"))
