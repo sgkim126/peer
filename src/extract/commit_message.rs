@@ -96,10 +96,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         run_git(&["init"], tmp.path()).await.unwrap();
         let hash = "deadbeef";
-        let err = Extractor::new(tmp.path().to_path_buf())
-            .commit_message(hash)
-            .await
-            .unwrap_err();
-        assert_matches!(err, ExtractError::Git { .. });
+        assert_matches!(
+            Extractor::new(tmp.path().to_path_buf())
+                .commit_message(hash)
+                .await,
+            Err(ExtractError::Git { .. })
+        );
     }
 }

@@ -234,11 +234,12 @@ mod tests {
     async fn file_content_fails_for_nonexistent_path() {
         let repo = Repo::new().await;
         let hash = repo.commit(&[("a.txt", b"a")], "add").await;
-        let err = Extractor::new(repo.path.clone())
-            .file_content(hash.as_ref(), Path::new("nonexistent.txt"), None)
-            .await
-            .unwrap_err();
-        assert_matches!(err, ExtractError::Git { .. });
+        assert_matches!(
+            Extractor::new(repo.path.clone())
+                .file_content(hash.as_ref(), Path::new("nonexistent.txt"), None)
+                .await,
+            Err(ExtractError::Git { .. })
+        );
     }
 
     #[tokio::test]
@@ -302,16 +303,16 @@ mod tests {
             .commit(&[("data.bin", b"\0binary")], "add binary")
             .await;
 
-        let error = Extractor::new(repo.path.clone())
-            .file_content(
-                hash.as_ref(),
-                Path::new("data.bin"),
-                Some(FileContentRange::new(1, 1).unwrap()),
-            )
-            .await
-            .unwrap_err();
-
-        assert_matches!(error, ExtractError::InvalidFileContentRange(_));
+        assert_matches!(
+            Extractor::new(repo.path.clone())
+                .file_content(
+                    hash.as_ref(),
+                    Path::new("data.bin"),
+                    Some(FileContentRange::new(1, 1).unwrap()),
+                )
+                .await,
+            Err(ExtractError::InvalidFileContentRange(_))
+        );
     }
 
     #[test]

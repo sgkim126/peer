@@ -177,11 +177,11 @@ mod tests {
     #[tokio::test]
     async fn rejects_an_incompatible_pi_version() {
         let (_directory, executable) = fake_pi("0.82.0");
-        let error = PiDependency::from_executable(executable).await.unwrap_err();
+        let result = PiDependency::from_executable(executable).await;
 
         assert_matches!(
-            error,
-            DependencyError::UnsupportedVersion { actual, .. } if actual == "0.82.0"
+            result,
+            Err(DependencyError::UnsupportedVersion { actual, .. }) if actual == "0.82.0"
         );
     }
 

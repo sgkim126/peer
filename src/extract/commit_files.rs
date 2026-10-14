@@ -497,11 +497,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         run_git(&["init"], tmp.path()).await.unwrap();
         let hash = "deadbeef";
-        let err = Extractor::new(tmp.path().to_path_buf())
-            .commit_files(hash)
-            .await
-            .unwrap_err();
-
-        assert_matches!(err, ExtractError::Git { .. });
+        assert_matches!(
+            Extractor::new(tmp.path().to_path_buf())
+                .commit_files(hash)
+                .await,
+            Err(ExtractError::Git { .. })
+        );
     }
 }

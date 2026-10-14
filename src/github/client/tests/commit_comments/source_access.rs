@@ -225,12 +225,9 @@ async fn rejects_a_forbidden_source_commit_after_loading_no_comments() {
     ]);
     let server = Server::start(replies).await;
 
-    let error = server
-        .client()
-        .review_input(&repository(), number())
-        .await
-        .unwrap_err();
-    assert_matches!(error, GitHubError::Api { status: 403, .. });
+    let result = server.client().review_input(&repository(), number()).await;
+
+    assert_matches!(result, Err(GitHubError::Api { status: 403, .. }));
     let requests = server.requests();
     assert_eq!(requests.len(), 9);
     assert!(

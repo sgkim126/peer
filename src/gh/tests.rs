@@ -162,7 +162,7 @@ async fn cancellation_kills_child() {
     let pid = wait_for_pid(&pid_file).await;
 
     task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
+    assert_matches!(task.await, Err(error) if error.is_cancelled());
     tokio::time::timeout(Duration::from_secs(5), async {
         while process_exists(&pid) {
             tokio::time::sleep(Duration::from_millis(10)).await;

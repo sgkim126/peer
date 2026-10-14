@@ -56,7 +56,9 @@ mod tests {
     #[tokio::test]
     async fn non_zero_exit_status_is_nonzero() {
         let tmp = tempfile::tempdir().unwrap();
-        let err = run_git(&["log"], tmp.path()).await.unwrap_err();
-        assert_matches!(err, GitError::NonZeroExit { status, .. } if status != 0);
+        assert_matches!(
+            run_git(&["log"], tmp.path()).await,
+            Err(GitError::NonZeroExit { status, .. }) if status != 0
+        );
     }
 }

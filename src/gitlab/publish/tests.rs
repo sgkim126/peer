@@ -456,13 +456,16 @@ async fn rejects_mismatched_base_sha_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -474,13 +477,16 @@ async fn rejects_mismatched_head_sha_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -492,13 +498,16 @@ async fn rejects_mismatched_start_sha_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -510,13 +519,16 @@ async fn rejects_mismatched_project_ids_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -528,13 +540,16 @@ async fn rejects_mismatched_merge_request_numbers_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -546,13 +561,16 @@ async fn rejects_mismatched_source_project_ids_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -563,13 +581,16 @@ async fn rejects_legacy_input_when_ordered_commits_do_not_end_at_head() {
     input.ordered_commits = vec![CommitHash::new(OLD).unwrap()];
     let server = Server::start(vec![merge_request(), commits()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::InvalidReviewCommits);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::InvalidReviewCommits)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -580,13 +601,16 @@ async fn rejects_legacy_findings_outside_the_merge_request() {
     input.findings[0].commit = CommitHash::new(&"e".repeat(40)).unwrap();
     let server = Server::start(vec![merge_request(), commits()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::InvalidReviewCommits);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::InvalidReviewCommits)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -594,15 +618,15 @@ async fn rejects_legacy_findings_outside_the_merge_request() {
 async fn rejects_empty_remote_commit_lists_before_writes() {
     let server = Server::start(vec![merge_request(), Reply::json(json!([]))]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input(&["Issue"]))
-        .await
-        .unwrap_err();
+        .await;
 
     assert_matches!(
-        error.reason.as_ref(),
-        PublishFailure::Api(GitLabError::IncompleteCommits)
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::Api(GitLabError::IncompleteCommits))
     );
     assert_eq!(server.posts(), vec![]);
 }
@@ -611,15 +635,15 @@ async fn rejects_empty_remote_commit_lists_before_writes() {
 async fn rejects_remote_commit_lists_without_head_before_writes() {
     let server = Server::start(vec![merge_request(), Reply::json(json!([{ "id": OLD }]))]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input(&["Issue"]))
-        .await
-        .unwrap_err();
+        .await;
 
     assert_matches!(
-        error.reason.as_ref(),
-        PublishFailure::Api(GitLabError::IncompleteCommits)
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::Api(GitLabError::IncompleteCommits))
     );
     assert_eq!(server.posts(), vec![]);
 }
@@ -632,15 +656,15 @@ async fn rejects_duplicate_remote_commits_before_writes() {
     ])
     .await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input(&["Issue"]))
-        .await
-        .unwrap_err();
+        .await;
 
     assert_matches!(
-        error.reason.as_ref(),
-        PublishFailure::Api(GitLabError::IncompleteCommits)
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::Api(GitLabError::IncompleteCommits))
     );
     assert_eq!(server.posts(), vec![]);
 }
@@ -652,12 +676,16 @@ async fn detects_merge_request_changes_after_loading_diffs() {
     changed["diff_refs"]["base_sha"] = json!("e".repeat(40));
     replies[6] = Reply::json(changed);
     let server = Server::start(replies).await;
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input(&["Issue"]))
-        .await
-        .unwrap_err();
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+        .await;
+
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -1210,12 +1238,16 @@ async fn uncertain_fallback_posts_are_confirmed_separately_before_remaining_feed
 async fn rejects_oversized_feedback_before_writes() {
     let input = input(&[&"x".repeat(MAX_NOTE_CHARACTERS)]);
     let server = Server::start(vec![merge_request(), commits(), empty_discussions()]).await;
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
-    assert_matches!(error.reason.as_ref(), PublishFailure::NoteTooLong);
+        .await;
+
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::NoteTooLong)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 

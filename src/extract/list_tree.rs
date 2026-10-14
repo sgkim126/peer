@@ -174,9 +174,10 @@ mod tests {
 
     #[test]
     fn rejects_malformed_records() {
-        let error = parse_tree_listing("not-a-tree-record\0", None).unwrap_err();
-
-        assert_matches!(error, ExtractError::MalformedGitOutput(_));
+        assert_matches!(
+            parse_tree_listing("not-a-tree-record\0", None),
+            Err(ExtractError::MalformedGitOutput(_))
+        );
     }
 
     #[test]
