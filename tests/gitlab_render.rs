@@ -2,6 +2,8 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
 
+mod support;
+
 const FINDING: &str = r#"{
     "ordered_commits": ["abc1234"],
     "findings": [{"commit":"abc1234","severity":"high","message":"Check this."}],
@@ -9,7 +11,9 @@ const FINDING: &str = r#"{
 }"#;
 
 fn render(directory: &Path, arguments: &[&str]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_peer"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_peer"));
+    support::configure_glab(&mut command, directory, false);
+    let mut child = command
         .arg("render")
         .args(arguments)
         .current_dir(directory)
@@ -47,8 +51,7 @@ fn explicit_repository_renders_without_configuration_authentication_or_checkout(
     );
 }
 
-#[test]
-fn gitlab_uses_only_its_own_configured_repository() {
+fn configured_project() -> tempfile::TempDir {
     let directory = tempfile::tempdir().unwrap();
     let peer = directory.path().join(".peer");
     std::fs::create_dir(&peer).unwrap();
@@ -63,10 +66,23 @@ fn gitlab_uses_only_its_own_configured_repository() {
         "group/subgroup/configured".into(),
     )]));
     std::fs::write(peer.join("config.toml"), toml::to_string(&config).unwrap()).unwrap();
+    directory
+}
+
+#[test]
+fn gitlab_uses_only_its_own_configured_repository() {
+    let directory = configured_project();
+
     assert_rendered(
         render(directory.path(), &["--format", "gitlab"]),
         "group/subgroup/configured",
     );
+}
+
+#[test]
+fn explicit_repository_overrides_configured_repository() {
+    let directory = configured_project();
+
     assert_rendered(
         render(
             directory.path(),

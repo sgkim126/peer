@@ -10,17 +10,20 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
+use crate::gitlab::test_support::{Reply, Server};
+
 const HEAD: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const OLD: &str = "dddddddddddddddddddddddddddddddddddddddd";
 
-struct Reply {
+struct HttpReply {
     status: u16,
     body: String,
     headers: Vec<String>,
     disconnect: bool,
 }
 
-impl Reply {
+#[expect(dead_code)]
+impl HttpReply {
     fn json(body: Value) -> Self {
         Self {
             status: 200,
@@ -38,14 +41,14 @@ impl Reply {
     }
 }
 
-struct Server {
-    base: Url,
+struct HttpServer {
     requests: Arc<Mutex<Vec<String>>>,
     task: JoinHandle<()>,
 }
 
-impl Server {
-    async fn start(replies: Vec<Reply>) -> Self {
+#[expect(dead_code)]
+impl HttpServer {
+    async fn start(replies: Vec<HttpReply>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
         let address = base.to_string();
@@ -99,15 +102,7 @@ impl Server {
                 let _ = stream.write_all(response.as_bytes()).await;
             }
         });
-        Self {
-            base,
-            requests,
-            task,
-        }
-    }
-
-    fn client(&self) -> GitLabClient {
-        GitLabClient::new("test-token", self.base.clone(), Duration::from_secs(2)).unwrap()
+        Self { requests, task }
     }
 
     fn requests(&self) -> Vec<String> {
@@ -129,7 +124,7 @@ impl Server {
     }
 }
 
-impl Drop for Server {
+impl Drop for HttpServer {
     fn drop(&mut self) {
         self.task.abort();
     }
@@ -1189,6 +1184,31 @@ async fn confirms_inline_posts_after_disconnects_without_fallback() {
     let server = Server::start(replies).await;
     let report = server
         .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.inline, 1);
+    assert_eq!(server.posts().len(), 1);
+}
+
+#[tokio::test]
+async fn confirms_inline_posts_after_process_timeouts_without_fallback() {
+    let input = input(&["Issue"]);
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let mut replies = before_inline();
+    replies.extend([
+        merge_request(),
+        Reply {
+            delay: Duration::from_secs(6),
+            ..Reply::json(json!({}))
+        },
+        known(&inline_body(&review.items[0]), 17),
+    ]);
+    let server = Server::start(replies).await;
+    let client = GitLabClient::new(server.glab(Duration::from_secs(5)));
+    let report = client
         .publish(&repository(), number(), &input)
         .await
         .unwrap();

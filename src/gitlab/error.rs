@@ -1,5 +1,7 @@
 use std::{env::VarError, fmt};
 
+use super::commands::CommandError;
+
 #[derive(Debug)]
 pub enum GitLabError {
     MissingRepository,
@@ -7,10 +9,7 @@ pub enum GitLabError {
     MissingToken,
     InvalidToken,
     Client(reqwest::Error),
-    Request {
-        endpoint: String,
-        source: reqwest::Error,
-    },
+    Command(CommandError),
     Api {
         endpoint: String,
         status: u16,
@@ -20,7 +19,7 @@ pub enum GitLabError {
     },
     Decode {
         endpoint: String,
-        source: reqwest::Error,
+        source: serde_json::Error,
     },
     InvalidPagination,
     InvalidMergeRequest,
@@ -32,15 +31,15 @@ pub enum GitLabError {
 impl GitLabError {
     /// The server may have accepted a POST even though its response was lost.
     pub fn may_have_published(&self) -> bool {
-        matches!(
-            self,
-            Self::Request { .. }
-                | Self::Decode { .. }
-                | Self::Api {
-                    status: 408 | 500..=599,
-                    ..
-                }
-        )
+        match self {
+            Self::Command(error) => error.may_have_published(),
+            Self::Decode { .. }
+            | Self::Api {
+                status: 408 | 500..=599,
+                ..
+            } => true,
+            _ => false,
+        }
     }
 }
 
@@ -61,14 +60,7 @@ impl fmt::Display for GitLabError {
             ),
             Self::InvalidToken => write!(f, "GITLAB_TOKEN is not a valid HTTP private token"),
             Self::Client(_) => write!(f, "failed to configure the GitLab HTTP client"),
-            Self::Request { endpoint, source } => {
-                let reason = if source.is_timeout() {
-                    "timed out"
-                } else {
-                    "failed"
-                };
-                write!(f, "GitLab request {reason}: {endpoint}")
-            }
+            Self::Command(error) => error.fmt(f),
             Self::Api {
                 endpoint,
                 status,
@@ -79,7 +71,7 @@ impl fmt::Display for GitLabError {
                     "API rate limit exceeded"
                 } else {
                     match status {
-                        401 => "authentication failed; check GITLAB_TOKEN",
+                        401 => "authentication failed; check glab auth status",
                         403 => "access denied; check token permissions",
                         404 => "merge request or project not found or inaccessible",
                         _ => "API request failed",
@@ -116,7 +108,7 @@ impl std::error::Error for GitLabError {
             Self::MissingToken => None,
             Self::InvalidToken => None,
             Self::Client(source) => Some(source),
-            Self::Request { source, .. } => Some(source),
+            Self::Command(source) => Some(source),
             Self::Api { .. } => None,
             Self::Decode { source, .. } => Some(source),
             Self::InvalidPagination => None,
@@ -124,6 +116,29 @@ impl std::error::Error for GitLabError {
             Self::MergeRequestNotReady => None,
             Self::IncompleteCommits => None,
             Self::MergeRequestChanged => None,
+        }
+    }
+}
+
+impl From<CommandError> for GitLabError {
+    fn from(error: CommandError) -> Self {
+        match error {
+            CommandError::Api {
+                endpoint,
+                status,
+                rate_limited,
+                position_invalid,
+                commit_invalid,
+            } => Self::Api {
+                endpoint,
+                status,
+                rate_limited,
+                position_invalid,
+                commit_invalid,
+            },
+            CommandError::Decode { endpoint, source } => Self::Decode { endpoint, source },
+            CommandError::InvalidPagination => Self::InvalidPagination,
+            error => Self::Command(error),
         }
     }
 }

@@ -56,7 +56,6 @@ impl fmt::Debug for CommandError {
 }
 
 impl CommandError {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn may_have_published(&self) -> bool {
         match self {
             Self::Run(error) => error.may_have_run(),

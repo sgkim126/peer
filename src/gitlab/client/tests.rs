@@ -2,20 +2,24 @@ use super::*;
 
 use std::assert_matches;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 use tokio::task::JoinHandle;
 
-struct Reply {
+use crate::gitlab::test_support::{Reply, Server};
+
+struct HttpReply {
     status: u16,
     body: String,
     headers: Vec<String>,
     delay: Duration,
 }
 
-impl Reply {
+#[expect(dead_code)]
+impl HttpReply {
     fn json(value: Value) -> Self {
         Self {
             status: 200,
@@ -36,14 +40,14 @@ impl Reply {
     }
 }
 
-struct Server {
-    base: Url,
+struct HttpServer {
     requests: Arc<Mutex<Vec<String>>>,
     task: JoinHandle<()>,
 }
 
-impl Server {
-    async fn start(replies: Vec<Reply>) -> Self {
+#[expect(dead_code)]
+impl HttpServer {
+    async fn start(replies: Vec<HttpReply>) -> Self {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = Url::parse(&format!(
             "http://{}/api/v4/",
@@ -99,20 +103,7 @@ impl Server {
                 let _ = stream.write_all(response.as_bytes()).await;
             }
         });
-        Self {
-            base,
-            requests,
-            task,
-        }
-    }
-
-    fn client(&self) -> GitLabClient {
-        GitLabClient::new(
-            "test-private-token",
-            self.base.clone(),
-            Duration::from_secs(2),
-        )
-        .unwrap()
+        Self { requests, task }
     }
 
     fn requests(&self) -> Vec<String> {
@@ -120,7 +111,7 @@ impl Server {
     }
 }
 
-impl Drop for Server {
+impl Drop for HttpServer {
     fn drop(&mut self) {
         self.task.abort();
     }
@@ -192,10 +183,6 @@ async fn loads_a_fork_merge_request_from_the_target_project() {
     assert!(requests[4].starts_with(
         "GET /api/v4/projects/9/repository/commits/abc1234/discussions?per_page=100 "
     ));
-    for request in &requests {
-        assert!(request.contains("private-token: test-private-token\r\n"));
-        assert!(!request.contains("authorization:"));
-    }
 }
 
 #[tokio::test]

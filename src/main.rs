@@ -166,7 +166,7 @@ async fn main() -> ExitCode {
                         .filter(|value| !value.trim().is_empty())
                         .ok_or(gitlab::GitLabError::MissingRepository)?;
                     let repository = gitlab::Repository::parse(repository)?;
-                    gitlab::GitLabClient::from_env()?
+                    gitlab::GitLabClient::default()
                         .review_input(&repository, number)
                         .await
                 }
@@ -406,7 +406,7 @@ async fn main() -> ExitCode {
                         repo.as_deref()
                             .expect("GitLab rendering requires a repository"),
                     )?;
-                    let client = gitlab::GitLabClient::from_env()?;
+                    let client = gitlab::GitLabClient::default();
                     client.publish(&repository, number, &input).await
                 }
                 .await;

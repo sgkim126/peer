@@ -1,51 +1,32 @@
 use std::collections::HashSet;
 use std::num::{NonZeroU32, NonZeroU64};
-use std::time::Duration;
 
-use log::{debug, trace};
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue, LINK};
-use reqwest::{Client, Method, Url};
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use log::debug;
+use reqwest::Url;
+use reqwest::header::{HeaderMap, HeaderValue, LINK};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::context::ReviewContext;
 use crate::git::CommitHash;
+use crate::glab::GlabClient;
 
+use super::commands::{self, Collection};
 use super::{GitLabError, Repository, mapping};
-
-const API_URL: &str = "https://gitlab.com/api/v4/";
+use serde::de::DeserializeOwned;
 
 pub struct GitLabClient {
-    http: Client,
-    base: Url,
+    pub glab: GlabClient,
 }
 
-struct Collection<T> {
-    items: Vec<T>,
-    project_accessible: bool,
+impl Default for GitLabClient {
+    fn default() -> Self {
+        Self::new(GlabClient::default())
+    }
 }
 
 impl GitLabClient {
-    pub fn from_env() -> Result<Self, GitLabError> {
-        Self::new(
-            &std::env::var("GITLAB_TOKEN")?,
-            Url::parse(API_URL).expect("valid GitLab API URL"),
-            Duration::from_secs(30),
-        )
-    }
-
-    pub fn new(token: &str, base: Url, timeout: Duration) -> Result<Self, GitLabError> {
-        let mut headers = HeaderMap::new();
-        headers.insert("private-token", private_token(token)?);
-        headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
-        let http = Client::builder()
-            .user_agent(concat!("peer/", env!("CARGO_PKG_VERSION")))
-            .default_headers(headers)
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(timeout)
-            .redirect(reqwest::redirect::Policy::none())
-            .retry(reqwest::retry::never())
-            .build()?;
-        Ok(Self { http, base })
+    pub fn new(glab: GlabClient) -> Self {
+        Self { glab }
     }
 
     pub async fn review_input(
@@ -133,16 +114,11 @@ impl GitLabClient {
     }
 
     pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, GitLabError> {
-        let url = self.base.join(path).expect("valid GitLab API path");
-        self.request(url, Method::GET, None)
-            .await
-            .map(|(value, _)| value)
+        Ok(commands::api::get(&self.glab, path).await?)
     }
 
     pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitLabError> {
-        self.list_with_access(path, false)
-            .await
-            .map(|collection| collection.items)
+        Ok(commands::api::list(&self.glab, path).await?)
     }
 
     async fn list_with_access<T: DeserializeOwned>(
@@ -150,40 +126,15 @@ impl GitLabClient {
         path: &str,
         skip_inaccessible_project: bool,
     ) -> Result<Collection<T>, GitLabError> {
-        let mut url = self.base.join(path).expect("valid GitLab API path");
-        url.query_pairs_mut().append_pair("per_page", "100");
-        let collection_path = url.path().to_string();
-        let mut next = Some(url);
-        let mut seen = HashSet::new();
-        let mut items = Vec::new();
-        while let Some(url) = next {
-            if url.path() != collection_path || !seen.insert(url.clone()) {
-                return Err(GitLabError::InvalidPagination);
-            }
-            let (page, headers) = match self.request::<Vec<T>>(url, Method::GET, None).await {
-                Ok(page) => page,
-                Err(
-                    error @ GitLabError::Api {
-                        status: 403 | 404,
-                        rate_limited: false,
-                        ..
-                    },
-                ) if skip_inaccessible_project && seen.len() == 1 => {
-                    debug!("GitLab optional collection unavailable: path={path} error={error}");
-                    return Ok(Collection {
-                        items: Vec::new(),
-                        project_accessible: false,
-                    });
-                }
-                Err(error) => return Err(error),
-            };
-            items.extend(page);
-            next = next_page(&headers)?;
-        }
-        Ok(Collection {
-            items,
-            project_accessible: true,
-        })
+        Ok(commands::api::pages(&self.glab, path, skip_inaccessible_project).await?)
+    }
+
+    pub async fn post<T: DeserializeOwned>(
+        &self,
+        path: &str,
+        body: &impl Serialize,
+    ) -> Result<T, GitLabError> {
+        Ok(commands::api::post(&self.glab, path, body).await?)
     }
 
     async fn commit_discussions(
@@ -209,96 +160,9 @@ impl GitLabClient {
         }
         Ok(discussions)
     }
-
-    pub async fn post<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &serde_json::Value,
-    ) -> Result<T, GitLabError> {
-        let url = self.base.join(path).expect("valid GitLab API path");
-        self.request(url, Method::POST, Some(body))
-            .await
-            .map(|(value, _)| value)
-    }
-
-    async fn request<T: DeserializeOwned>(
-        &self,
-        url: Url,
-        method: Method,
-        body: Option<&serde_json::Value>,
-    ) -> Result<(T, HeaderMap), GitLabError> {
-        if url.origin() != self.base.origin()
-            || !url.username().is_empty()
-            || url.password().is_some()
-            || !url.path().starts_with(self.base.path())
-            || url.fragment().is_some()
-        {
-            return Err(GitLabError::InvalidPagination);
-        }
-        let endpoint = url.path().to_string();
-        trace!("sending GitLab request: method={method} endpoint={endpoint}");
-        let mut request = self.http.request(method, url);
-        if let Some(body) = body {
-            request = request.json(body);
-        }
-        let response = request
-            .send()
-            .await
-            .map_err(|source| GitLabError::Request {
-                endpoint: endpoint.clone(),
-                source,
-            })?;
-        let status = response.status();
-        if !status.is_success() {
-            let rate_limited = status.as_u16() == 429
-                || (status.as_u16() == 403
-                    && (response
-                        .headers()
-                        .get("ratelimit-remaining")
-                        .is_some_and(|value| value == "0")
-                        || response.headers().contains_key("retry-after")));
-            // Only definite target validation errors permit retrying an inline
-            // discussion without a position. Never retain error response bodies:
-            // they can contain private note text or credentials.
-            let (position_invalid, commit_invalid) = if matches!(status.as_u16(), 400 | 422) {
-                response
-                    .json::<serde_json::Value>()
-                    .await
-                    .ok()
-                    .and_then(|body| {
-                        body.get("message")
-                            .map(|message| (position_error(message), commit_error(message)))
-                    })
-                    .unwrap_or((false, false))
-            } else {
-                (false, false)
-            };
-            return Err(GitLabError::Api {
-                endpoint,
-                status: status.as_u16(),
-                rate_limited,
-                position_invalid,
-                commit_invalid,
-            });
-        }
-        let headers = response.headers().clone();
-        let value = response.json().await.map_err(|source| {
-            if source.is_decode() {
-                GitLabError::Decode {
-                    endpoint: endpoint.clone(),
-                    source,
-                }
-            } else {
-                GitLabError::Request {
-                    endpoint: endpoint.clone(),
-                    source,
-                }
-            }
-        })?;
-        Ok((value, headers))
-    }
 }
 
+#[expect(dead_code)]
 fn position_error(message: &serde_json::Value) -> bool {
     match message {
         serde_json::Value::Object(fields) => {
@@ -312,6 +176,7 @@ fn position_error(message: &serde_json::Value) -> bool {
     }
 }
 
+#[expect(dead_code)]
 fn commit_error(message: &serde_json::Value) -> bool {
     match message {
         serde_json::Value::Object(fields) => {
@@ -353,6 +218,7 @@ fn diff_refs_message(value: &serde_json::Value) -> bool {
     }
 }
 
+#[cfg_attr(not(test), expect(dead_code))]
 fn private_token(token: &str) -> Result<HeaderValue, GitLabError> {
     if token.trim().is_empty() {
         return Err(GitLabError::MissingToken);
@@ -365,6 +231,7 @@ fn private_token(token: &str) -> Result<HeaderValue, GitLabError> {
     Ok(value)
 }
 
+#[expect(dead_code)]
 fn next_page(headers: &HeaderMap) -> Result<Option<Url>, GitLabError> {
     let mut next = None;
     for header in headers.get_all(LINK) {
@@ -519,6 +386,9 @@ where
     }))
 }
 
+#[cfg(test)]
+mod tests;
+
 #[derive(Debug, Deserialize)]
 struct CommitRef {
     id: CommitHash,
@@ -559,6 +429,3 @@ pub struct Position {
     pub new_line: Option<NonZeroU32>,
     pub old_line: Option<NonZeroU32>,
 }
-
-#[cfg(test)]
-mod tests;

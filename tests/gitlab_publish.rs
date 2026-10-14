@@ -1,8 +1,8 @@
 use std::assert_matches;
-mod support;
-
 use std::io::Write;
 use std::process::{Command, Output, Stdio};
+
+mod support;
 
 fn render(arguments: &[&str], input: &str) -> Output {
     let directory = tempfile::tempdir().unwrap();
@@ -35,7 +35,7 @@ fn gitlab_output_without_publishing_does_not_require_authentication_or_a_checkou
 }
 
 #[test]
-fn publishing_requires_a_token_without_discovering_project_configuration() {
+fn publishing_reports_glab_authentication_failure_without_discovering_configuration() {
     let output = render(
         &[
             "--format",
@@ -48,11 +48,8 @@ fn publishing_requires_a_token_without_discovering_project_configuration() {
         FINDING,
     );
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("GitLab access requires a non-empty GITLAB_TOKEN")
-    );
+    assert_matches!(output.stdout[..], []);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("glab command failed"));
 }
 
 #[test]
@@ -116,14 +113,11 @@ fn publishing_without_repo_rejects_terminal_before_reading_input() {
 }
 
 #[test]
-fn publishing_with_default_format_requires_a_token() {
+fn publishing_with_default_format_reports_glab_authentication_failure() {
     let output = render(&["--gitlab", "123", "--repo", "owner/repo"], FINDING);
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
-    assert!(
-        String::from_utf8_lossy(&output.stderr)
-            .contains("GitLab access requires a non-empty GITLAB_TOKEN")
-    );
+    assert_matches!(output.stdout[..], []);
+    assert!(String::from_utf8_lossy(&output.stderr).contains("glab command failed"));
 }
 
 #[test]

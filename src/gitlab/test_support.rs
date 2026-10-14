@@ -8,6 +8,8 @@ use url::Url;
 
 use crate::glab::GlabClient;
 
+use super::GitLabClient;
+
 pub struct Reply {
     pub status: u16,
     pub body: String,
@@ -37,7 +39,6 @@ impl Reply {
         self
     }
 
-    #[expect(dead_code)]
     pub fn failure(status: u16, body: Value) -> Self {
         Self::json(body).status(status)
     }
@@ -95,6 +96,10 @@ impl Server {
         fs::write(&executable, SCRIPT).unwrap();
         fs::set_permissions(&executable, fs::Permissions::from_mode(0o755)).unwrap();
         Self { directory }
+    }
+
+    pub fn client(&self) -> GitLabClient {
+        GitLabClient::new(self.glab(Duration::from_secs(10)))
     }
 
     pub fn glab(&self, timeout: Duration) -> GlabClient {
@@ -156,7 +161,6 @@ impl Server {
             .collect()
     }
 
-    #[expect(dead_code)]
     pub fn posts(&self) -> Vec<(String, Value)> {
         self.requests()
             .into_iter()
