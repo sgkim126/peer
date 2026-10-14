@@ -29,19 +29,19 @@ pub struct QualityReport {
     pub findings: Vec<Finding>,
 }
 
-pub struct QualityStage {
-    commit: ReviewCommitInput,
-    review_head: CommitHash,
-    context: ReviewContextReport,
-    knowledge: KnowledgeReport,
+pub struct QualityStage<'a> {
+    commit: &'a ReviewCommitInput,
+    review_head: &'a CommitHash,
+    context: &'a ReviewContextReport,
+    knowledge: &'a KnowledgeReport,
 }
 
-impl QualityStage {
+impl<'a> QualityStage<'a> {
     pub fn new(
-        commit: ReviewCommitInput,
-        review_head: CommitHash,
-        context: ReviewContextReport,
-        knowledge: KnowledgeReport,
+        commit: &'a ReviewCommitInput,
+        review_head: &'a CommitHash,
+        context: &'a ReviewContextReport,
+        knowledge: &'a KnowledgeReport,
     ) -> Self {
         Self {
             commit,
@@ -52,7 +52,7 @@ impl QualityStage {
     }
 }
 
-impl ReviewStage for QualityStage {
+impl ReviewStage for QualityStage<'_> {
     type Report = QualityReport;
 
     fn kind(&self) -> StageKind {
@@ -117,10 +117,10 @@ mod tests {
     use crate::extract::CommitFiles;
     use crate::stage::Severity;
 
-    fn stage() -> QualityStage {
+    fn input() -> (ReviewCommitInput, ReviewContextReport, KnowledgeReport) {
         let hash = CommitHash::new("abc123456789").unwrap();
-        QualityStage {
-            commit: ReviewCommitInput {
+        (
+            ReviewCommitInput {
                 hash: hash.clone(),
                 message: "Add focused quality stage".to_string(),
                 files: CommitFiles {
@@ -129,8 +129,7 @@ mod tests {
                 },
                 diff: "+quality stage".to_string(),
             },
-            review_head: hash,
-            context: ReviewContextReport {
+            ReviewContextReport {
                 summary: "Add staged review".to_string(),
                 objectives: Vec::new(),
                 expected_behavior: Vec::new(),
@@ -140,12 +139,12 @@ mod tests {
                 verification: Vec::new(),
                 unresolved: Vec::new(),
             },
-            knowledge: KnowledgeReport {
+            KnowledgeReport {
                 summary: "Knowledge reviewed".to_string(),
                 questions: Vec::new(),
                 recommendations: Vec::new(),
             },
-        }
+        )
     }
 
     fn finding(commit: CommitHash, message: &str) -> Finding {
@@ -159,6 +158,8 @@ mod tests {
 
     #[test]
     fn rejects_a_finding_outside_the_target_commit() {
+        let (commit, context, knowledge) = input();
+        let stage = QualityStage::new(&commit, &commit.hash, &context, &knowledge);
         let report = QualityReport {
             summary: "Found a quality problem".to_string(),
             findings: vec![finding(
@@ -168,14 +169,15 @@ mod tests {
         };
 
         assert_eq!(
-            stage().validate_report(&report),
+            stage.validate_report(&report),
             Err("quality finding commit def567890123 is outside the target".to_string())
         );
     }
 
     #[test]
     fn rejects_a_blank_finding_message() {
-        let stage = stage();
+        let (commit, context, knowledge) = input();
+        let stage = QualityStage::new(&commit, &commit.hash, &context, &knowledge);
         let report = QualityReport {
             summary: "Found a quality problem".to_string(),
             findings: vec![finding(stage.commit.hash.clone(), "  ")],

@@ -163,7 +163,7 @@ pub async fn run_pipeline(
         errors: Vec::new(),
     };
 
-    let context_stage = ReviewContextStage::new(input.clone());
+    let context_stage = ReviewContextStage::new(&input);
     let context_run = match execute(cache, runtime, config, &model, resume, &context_stage).await {
         Ok(run) => run,
         Err(error) => {
@@ -181,7 +181,7 @@ pub async fn run_pipeline(
         .stages
         .push(PipelineStageResult::ReviewContext(context_run));
 
-    let knowledge_stage = KnowledgeStage::new(input.clone(), context_report.clone());
+    let knowledge_stage = KnowledgeStage::new(&input, &context_report);
     let knowledge_run =
         match execute(cache, runtime, config, &model, resume, &knowledge_stage).await {
             Ok(run) => run,
@@ -201,24 +201,14 @@ pub async fn run_pipeline(
         .push(PipelineStageResult::Knowledge(knowledge_run));
 
     for commit in &input.commits {
-        let stage = QualityStage::new(
-            commit.clone(),
-            input.head.clone(),
-            context_report.clone(),
-            knowledge_report.clone(),
-        );
+        let stage = QualityStage::new(commit, &input.head, &context_report, &knowledge_report);
         match execute(cache, runtime, config, &model, resume, &stage).await {
             Ok(run) => result.stages.push(PipelineStageResult::Quality(run)),
             Err(error) => push_error(&mut result, &stage, error),
         }
     }
     for commit in &input.commits {
-        let stage = SecurityStage::new(
-            commit.clone(),
-            input.head.clone(),
-            context_report.clone(),
-            knowledge_report.clone(),
-        );
+        let stage = SecurityStage::new(commit, &input.head, &context_report, &knowledge_report);
         match execute(cache, runtime, config, &model, resume, &stage).await {
             Ok(run) => result.stages.push(PipelineStageResult::Security(run)),
             Err(error) => push_error(&mut result, &stage, error),

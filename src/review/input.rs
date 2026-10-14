@@ -144,7 +144,7 @@ mod tests {
         assert!(input.target_diff_files.contains(&"first.txt".to_string()));
         assert!(input.target_diff_files.contains(&"second.txt".to_string()));
 
-        let request = ReviewContextStage::new(input).request();
+        let request = ReviewContextStage::new(&input).request();
         assert!(request.prompt.contains("target.diff:first.txt"));
         assert!(request.prompt.contains("target.diff:second.txt"));
     }
@@ -181,7 +181,7 @@ mod tests {
 
         assert!(input.cumulative_diff.is_empty());
         assert!(input.target_diff_files.is_empty());
-        let stage = ReviewContextStage::new(input);
+        let stage = ReviewContextStage::new(&input);
         assert!(!stage.request().prompt.contains("target.diff:file.txt"));
     }
 }

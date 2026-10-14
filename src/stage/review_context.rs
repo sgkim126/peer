@@ -56,15 +56,15 @@ pub struct ReviewContextReport {
     pub unresolved: Vec<SourcedStatement>,
 }
 
-pub struct ReviewContextStage {
-    input: ReviewInput,
+pub struct ReviewContextStage<'a> {
+    input: &'a ReviewInput,
     commits: Vec<CommitHash>,
     target: StageTarget,
     sources: HashSet<String>,
 }
 
-impl ReviewContextStage {
-    pub fn new(input: ReviewInput) -> Self {
+impl<'a> ReviewContextStage<'a> {
+    pub fn new(input: &'a ReviewInput) -> Self {
         let commits = input
             .commits
             .iter()
@@ -118,7 +118,7 @@ impl ReviewContextStage {
     }
 }
 
-impl ReviewStage for ReviewContextStage {
+impl ReviewStage for ReviewContextStage<'_> {
     type Report = ReviewContextReport;
 
     fn kind(&self) -> StageKind {
@@ -230,9 +230,9 @@ mod tests {
     use crate::context::ReviewContext;
     use crate::review::ReviewCommitInput;
 
-    fn stage() -> ReviewContextStage {
+    fn input() -> ReviewInput {
         let hash = CommitHash::new("abc1234").unwrap();
-        ReviewContextStage::new(ReviewInput {
+        ReviewInput {
             context: ReviewContext {
                 title: Some("Add staged review".to_string()),
                 body: None,
@@ -256,7 +256,7 @@ mod tests {
             }],
             target_diff_files: vec!["src/cli.rs".to_string()],
             cumulative_diff: "+staged review".to_string(),
-        })
+        }
     }
 
     fn report_with_source(source: &str) -> ReviewContextReport {
@@ -277,7 +277,8 @@ mod tests {
 
     #[test]
     fn request_labels_every_input_source() {
-        let request = stage().request();
+        let input = input();
+        let request = ReviewContextStage::new(&input).request();
 
         assert!(
             request
@@ -299,11 +300,9 @@ mod tests {
 
     #[test]
     fn range_request_uses_the_target_diff_source() {
-        let stage = {
-            let mut input = stage().input;
-            input.base = Some(CommitHash::new("def5678").unwrap());
-            ReviewContextStage::new(input)
-        };
+        let mut input = input();
+        input.base = Some(CommitHash::new("def5678").unwrap());
+        let stage = ReviewContextStage::new(&input);
         let request = stage.request();
 
         assert!(request.prompt.contains(r#""source": "target.diff""#));
@@ -315,24 +314,28 @@ mod tests {
 
     #[test]
     fn single_commit_report_accepts_the_target_diff_source() {
+        let input = input();
         assert_eq!(
-            stage().validate_report(&report_with_source("target.diff")),
+            ReviewContextStage::new(&input).validate_report(&report_with_source("target.diff")),
             Ok(())
         );
     }
 
     #[test]
     fn accepts_a_target_diff_source_qualified_by_a_changed_file() {
+        let input = input();
         assert_eq!(
-            stage().validate_report(&report_with_source("target.diff:src/cli.rs")),
+            ReviewContextStage::new(&input)
+                .validate_report(&report_with_source("target.diff:src/cli.rs")),
             Ok(())
         );
     }
 
     #[test]
     fn rejects_a_target_diff_source_qualified_by_an_unchanged_file() {
+        let input = input();
         assert_eq!(
-            stage()
+            ReviewContextStage::new(&input)
                 .validate_report(&report_with_source("target.diff:src/unknown.rs"))
                 .unwrap_err(),
             "unknown review context source: target.diff:src/unknown.rs"
@@ -341,10 +344,13 @@ mod tests {
 
     #[test]
     fn rejects_unknown_sources() {
+        let input = input();
         let report = report_with_source("unknown");
 
         assert_eq!(
-            stage().validate_report(&report).unwrap_err(),
+            ReviewContextStage::new(&input)
+                .validate_report(&report)
+                .unwrap_err(),
             "unknown review context source: unknown"
         );
     }

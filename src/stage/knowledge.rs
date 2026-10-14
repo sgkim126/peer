@@ -109,15 +109,15 @@ pub struct KnowledgeReport {
     pub recommendations: Vec<StructuralRecommendation>,
 }
 
-pub struct KnowledgeStage {
-    input: ReviewInput,
-    context: ReviewContextReport,
+pub struct KnowledgeStage<'a> {
+    input: &'a ReviewInput,
+    context: &'a ReviewContextReport,
     commits: Vec<CommitHash>,
     target: StageTarget,
 }
 
-impl KnowledgeStage {
-    pub fn new(input: ReviewInput, context: ReviewContextReport) -> Self {
+impl<'a> KnowledgeStage<'a> {
+    pub fn new(input: &'a ReviewInput, context: &'a ReviewContextReport) -> Self {
         let commits = input
             .commits
             .iter()
@@ -143,7 +143,7 @@ impl KnowledgeStage {
     }
 }
 
-impl ReviewStage for KnowledgeStage {
+impl ReviewStage for KnowledgeStage<'_> {
     type Report = KnowledgeReport;
 
     fn kind(&self) -> StageKind {
@@ -282,9 +282,9 @@ mod tests {
     use crate::review::ReviewCommitInput;
     use crate::stage::review_context::SourcedStatement;
 
-    fn stage() -> KnowledgeStage {
+    fn input() -> (ReviewInput, ReviewContextReport) {
         let hash = CommitHash::new("abc123456789").unwrap();
-        KnowledgeStage::new(
+        (
             ReviewInput {
                 context: ReviewContext::default(),
                 base: None,
@@ -319,7 +319,8 @@ mod tests {
 
     #[test]
     fn request_includes_every_commit_and_repository_tools() {
-        let request = stage().request();
+        let (input, context) = input();
+        let request = KnowledgeStage::new(&input, &context).request();
 
         assert!(request.prompt.contains("abc123456789"));
         assert!(request.prompt.contains("RETRIES"));
@@ -420,6 +421,8 @@ mod tests {
 
     #[test]
     fn accepts_any_number_of_valid_questions() {
+        let (input, context) = input();
+        let stage = KnowledgeStage::new(&input, &context);
         let report = KnowledgeReport {
             summary: "Several decisions need durable context".to_string(),
             questions: vec![
@@ -437,11 +440,13 @@ mod tests {
             recommendations: vec![],
         };
 
-        assert_eq!(stage().validate_report(&report), Ok(()));
+        assert_eq!(stage.validate_report(&report), Ok(()));
     }
 
     #[test]
     fn rejects_commits_outside_the_review() {
+        let (input, context) = input();
+        let stage = KnowledgeStage::new(&input, &context);
         let report = KnowledgeReport {
             summary: "One decision needs durable context".to_string(),
             questions: vec![KnowledgeQuestion {
@@ -457,13 +462,15 @@ mod tests {
         };
 
         assert_eq!(
-            stage().validate_report(&report).unwrap_err(),
+            stage.validate_report(&report).unwrap_err(),
             "knowledge question commit def5678 is outside the review"
         );
     }
 
     #[test]
     fn recommendations_require_a_related_commit() {
+        let (input, context) = input();
+        let stage = KnowledgeStage::new(&input, &context);
         let report = KnowledgeReport {
             summary: "The migration should be separated".to_string(),
             questions: vec![],
@@ -476,13 +483,15 @@ mod tests {
         };
 
         assert_eq!(
-            stage().validate_report(&report).unwrap_err(),
+            stage.validate_report(&report).unwrap_err(),
             "structural recommendations require at least one related commit"
         );
     }
 
     #[test]
     fn reorder_and_merge_recommendations_require_two_related_commits() {
+        let (input, context) = input();
+        let stage = KnowledgeStage::new(&input, &context);
         for kind in [
             StructuralRecommendationKind::ReorderCommits,
             StructuralRecommendationKind::MergeSquash,
@@ -499,7 +508,7 @@ mod tests {
             };
 
             assert_eq!(
-                stage().validate_report(&report).unwrap_err(),
+                stage.validate_report(&report).unwrap_err(),
                 "reorder and merge/squash recommendations require at least two distinct related commits"
             );
         }
@@ -507,6 +516,8 @@ mod tests {
 
     #[test]
     fn reorder_and_merge_recommendations_reject_duplicate_related_commits() {
+        let (input, context) = input();
+        let stage = KnowledgeStage::new(&input, &context);
         for kind in [
             StructuralRecommendationKind::ReorderCommits,
             StructuralRecommendationKind::MergeSquash,
@@ -524,7 +535,7 @@ mod tests {
             };
 
             assert_eq!(
-                stage().validate_report(&report).unwrap_err(),
+                stage.validate_report(&report).unwrap_err(),
                 "reorder and merge/squash recommendations require at least two distinct related commits"
             );
         }
