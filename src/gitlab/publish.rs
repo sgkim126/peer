@@ -3,7 +3,6 @@ use std::fmt;
 use std::num::NonZeroU64;
 
 use serde::Deserialize;
-use serde_json::json;
 
 use crate::feedback::{Feedback, PreparedReview, fingerprints, marker};
 use crate::git::CommitHash;
@@ -11,10 +10,10 @@ use crate::render::RenderDocument;
 use crate::stage::StageTarget;
 
 use super::commands::{
-    self, CommitInput, CommitRef, CreateCommitDiscussionInput, CreateNoteInput, MergeRequest,
-    MergeRequestInput, PublishedDiscussion,
+    self, CommitInput, CommitRef, CreateCommitDiscussionInput, CreateMrDiscussionInput,
+    CreateNoteInput, DiscussionTarget, MergeRequest, MergeRequestInput,
 };
-use super::position::{ChangedFile, comment_position};
+use super::position::comment_position;
 use super::{
     CONVERSATION_MARKER, DiffRefs, GitLabClient, GitLabError, GitLabReviewSource, Repository,
 };
@@ -235,7 +234,6 @@ impl GitLabClient {
         {
             return Err(PublishFailure::SnapshotMismatch);
         }
-        let prefix = format!("{}/merge_requests/{number}", repository.api_path());
         let merge_request_input = MergeRequestInput { repository, number };
         let commits = commands::list_mr_commits(&self.glab, merge_request_input)
             .await
@@ -302,19 +300,21 @@ impl GitLabClient {
                 && commit.diff_refs().is_some()
                 && !files_by_commit.contains_key(commit.id.as_ref())
             {
-                let files = self
-                    .list::<ChangedFile>(&format!(
-                        "{}/repository/commits/{}/diff",
-                        repository.api_path(),
-                        commit.id,
-                    ))
-                    .await
-                    .or_else(|error| match error {
-                        GitLabError::Api {
-                            status: 404 | 413, ..
-                        } => Ok(vec![]),
-                        _ => Err(error),
-                    })?;
+                let files = commands::list_commit_diff(
+                    &self.glab,
+                    CommitInput {
+                        repository,
+                        commit: &commit.id,
+                    },
+                )
+                .await
+                .map_err(GitLabError::from)
+                .or_else(|error| match error {
+                    GitLabError::Api {
+                        status: 404 | 413, ..
+                    } => Ok(vec![]),
+                    _ => Err(error),
+                })?;
                 files_by_commit.insert(commit.id.as_ref().to_string(), files);
             }
             let mut positions = Vec::new();
@@ -345,46 +345,46 @@ impl GitLabClient {
             let body = inline_body(item);
             let mut candidates = Vec::new();
             if let Some(commit) = commit {
-                for position in positions {
+                for position in &positions {
                     candidates.push((
-                        format!("{prefix}/discussions"),
-                        json!({ "body": body, "commit_id": commit.id, "position": position }),
+                        Some(DiscussionTarget {
+                            commit: &commit.id,
+                            position,
+                        }),
                         None,
                         true,
                     ));
                 }
-                candidates.push((
-                    format!(
-                        "{}/repository/commits/{}/discussions",
-                        repository.api_path(),
-                        commit.id
-                    ),
-                    json!({ "body": body }),
-                    Some(&commit.id),
-                    false,
-                ));
+                candidates.push((None, Some(&commit.id), false));
             }
-            candidates.push((
-                format!("{prefix}/discussions"),
-                json!({ "body": body }),
-                None,
-                false,
-            ));
-            for (path, payload, commit_target, inline) in candidates {
+            candidates.push((None, None, false));
+            for (target, commit_target, inline) in candidates {
                 self.assert_current(repository, number, &merge_request)
                     .await?;
                 let result = match commit_target {
-                    Some(commit) => commands::create_commit_discussion(
-                        &self.glab,
-                        CreateCommitDiscussionInput {
-                            commit: CommitInput { repository, commit },
-                            body: &body,
-                        },
-                    )
-                    .await
-                    .map_err(GitLabError::from),
-                    None => self.post::<PublishedDiscussion>(&path, &payload).await,
-                };
+                    Some(commit) => {
+                        commands::create_commit_discussion(
+                            &self.glab,
+                            CreateCommitDiscussionInput {
+                                commit: CommitInput { repository, commit },
+                                body: &body,
+                            },
+                        )
+                        .await
+                    }
+                    None => {
+                        commands::create_mr_discussion(
+                            &self.glab,
+                            CreateMrDiscussionInput {
+                                merge_request: merge_request_input,
+                                body: &body,
+                                target,
+                            },
+                        )
+                        .await
+                    }
+                }
+                .map_err(GitLabError::from);
                 match result {
                     Ok(discussion) => match discussion.notes.first() {
                         Some(note) => report.record(

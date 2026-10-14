@@ -1,7 +1,9 @@
 mod api;
 mod create_commit_discussion;
+mod create_mr_discussion;
 mod create_note;
 mod get_merge_request;
+mod list_commit_diff;
 mod list_commit_discussions;
 mod list_mr_commits;
 mod list_mr_discussions;

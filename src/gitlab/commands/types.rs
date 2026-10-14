@@ -91,3 +91,16 @@ pub struct Position {
     pub new_line: Option<NonZeroU32>,
     pub old_line: Option<NonZeroU32>,
 }
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ChangedFile {
+    pub old_path: String,
+    pub new_path: String,
+    pub diff: Option<String>,
+    pub new_file: bool,
+    pub renamed_file: bool,
+    pub deleted_file: bool,
+    pub collapsed: bool,
+    pub too_large: bool,
+}

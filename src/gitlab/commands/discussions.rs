@@ -1,3 +1,5 @@
+use std::num::NonZeroU32;
+
 use serde::Serialize;
 
 use crate::git::CommitHash;
@@ -44,6 +46,64 @@ pub async fn list_commit_discussions(
         note.commit_id.get_or_insert_with(|| input.commit.clone());
     }
     Ok(collection)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct DiscussionPosition {
+    pub base_sha: CommitHash,
+    pub start_sha: CommitHash,
+    pub head_sha: CommitHash,
+    pub old_path: String,
+    pub new_path: String,
+    #[serde(flatten)]
+    pub kind: PositionKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(tag = "position_type", rename_all = "lowercase")]
+pub enum PositionKind {
+    File,
+    Text {
+        new_line: NonZeroU32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        old_line: Option<NonZeroU32>,
+    },
+}
+
+pub struct DiscussionTarget<'a> {
+    pub commit: &'a CommitHash,
+    pub position: &'a DiscussionPosition,
+}
+
+pub struct CreateMrDiscussionInput<'a> {
+    pub merge_request: MergeRequestInput<'a>,
+    pub body: &'a str,
+    pub target: Option<DiscussionTarget<'a>>,
+}
+
+pub async fn create_mr_discussion(
+    client: &GlabClient,
+    input: CreateMrDiscussionInput<'_>,
+) -> Result<PublishedDiscussion, CommandError> {
+    #[derive(Serialize)]
+    struct Body<'a> {
+        body: &'a str,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        commit_id: Option<&'a CommitHash>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        position: Option<&'a DiscussionPosition>,
+    }
+    let body = Body {
+        body: input.body,
+        commit_id: input.target.as_ref().map(|target| target.commit),
+        position: input.target.as_ref().map(|target| target.position),
+    };
+    api::post(
+        client,
+        &format!("{}/discussions", input.merge_request.path()),
+        &body,
+    )
+    .await
 }
 
 pub struct CreateCommitDiscussionInput<'a> {

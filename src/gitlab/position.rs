@@ -1,22 +1,9 @@
-use serde::Deserialize;
-use serde_json::{Value, json};
+use std::num::NonZeroU32;
 
 use crate::stage::FileLocation;
 
 use super::DiffRefs;
-
-#[derive(Debug, Default, Deserialize)]
-#[serde(default)]
-pub struct ChangedFile {
-    pub old_path: String,
-    pub new_path: String,
-    pub diff: Option<String>,
-    pub new_file: bool,
-    pub renamed_file: bool,
-    pub deleted_file: bool,
-    pub collapsed: bool,
-    pub too_large: bool,
-}
+use super::commands::{ChangedFile, DiscussionPosition, PositionKind};
 
 /// Maps locations in the reviewed head to GitLab diff positions.
 ///
@@ -26,7 +13,7 @@ pub fn comment_position(
     files: &[ChangedFile],
     location: &FileLocation,
     refs: &DiffRefs,
-) -> Option<Value> {
+) -> Option<DiscussionPosition> {
     if !valid_path(&location.file) {
         return None;
     }
@@ -50,20 +37,18 @@ pub fn comment_position(
         return None;
     }
 
-    let mut position = json!({
-        "base_sha": refs.base_sha,
-        "start_sha": refs.start_sha,
-        "head_sha": refs.head_sha,
-        "old_path": file.old_path,
-        "new_path": file.new_path,
-        "position_type": "file",
-    });
+    let mut position = DiscussionPosition {
+        base_sha: refs.base_sha.clone(),
+        start_sha: refs.start_sha.clone(),
+        head_sha: refs.head_sha.clone(),
+        old_path: file.old_path.clone(),
+        new_path: file.new_path.clone(),
+        kind: PositionKind::File,
+    };
     let Some(line) = location.line else {
         return Some(position);
     };
-    if line == 0 {
-        return None;
-    }
+    let line = NonZeroU32::new(line)?;
     if file.new_path != location.file {
         return None;
     }
@@ -76,12 +61,11 @@ pub fn comment_position(
     if file.too_large {
         return None;
     }
-    let old_line = head_line(file.diff.as_deref()?, line)?;
-    position["position_type"] = json!("text");
-    position["new_line"] = json!(line);
-    if let Some(old_line) = old_line {
-        position["old_line"] = json!(old_line);
-    }
+    let old_line = head_line(file.diff.as_deref()?, line.get())?;
+    position.kind = PositionKind::Text {
+        new_line: line,
+        old_line: old_line.map(|line| NonZeroU32::new(line as u32).expect("validated old line")),
+    };
     Some(position)
 }
 
@@ -89,6 +73,7 @@ fn valid_path(path: &str) -> bool {
     !path.contains('\0') && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
 }
 
+#[derive(Debug)]
 struct Hunk {
     old: u64,
     old_end: u64,
@@ -198,6 +183,8 @@ mod tests {
 
     use std::assert_matches;
 
+    use serde_json::json;
+
     use crate::git::CommitHash;
 
     fn refs() -> DiffRefs {
@@ -270,15 +257,17 @@ mod tests {
         let files = [file("@@ -10,0 +11,2 @@\n+first\n+second")];
         assert_eq!(
             comment_position(&files, &location(Some(12)), &refs()),
-            Some(json!({
-                "base_sha": "a".repeat(40),
-                "start_sha": "c".repeat(40),
-                "head_sha": "b".repeat(40),
-                "position_type": "text",
-                "old_path": "src/main.rs",
-                "new_path": "src/main.rs",
-                "new_line": 12,
-            }))
+            Some(DiscussionPosition {
+                base_sha: refs().base_sha,
+                start_sha: refs().start_sha,
+                head_sha: refs().head_sha,
+                old_path: "src/main.rs".into(),
+                new_path: "src/main.rs".into(),
+                kind: PositionKind::Text {
+                    new_line: NonZeroU32::new(12).unwrap(),
+                    old_line: None,
+                },
+            })
         );
     }
 
@@ -286,16 +275,26 @@ mod tests {
     fn maps_shifted_context_to_both_line_numbers() {
         let files = [file("@@ -4,2 +4,3 @@ name\n context\n+added\n context")];
         let position = comment_position(&files, &location(Some(6)), &refs()).unwrap();
-        assert_eq!(position["old_line"], 5);
-        assert_eq!(position["new_line"], 6);
+        assert_eq!(
+            position.kind,
+            PositionKind::Text {
+                new_line: NonZeroU32::new(6).unwrap(),
+                old_line: NonZeroU32::new(5),
+            }
+        );
     }
 
     #[test]
     fn replacement_uses_head_coordinate_without_guessing_deleted_line() {
         let files = [file("@@ -5 +5 @@\n-old\n+new")];
         let position = comment_position(&files, &location(Some(5)), &refs()).unwrap();
-        assert_eq!(position["new_line"], 5);
-        assert_matches!(position.get("old_line"), None);
+        assert_eq!(
+            position.kind,
+            PositionKind::Text {
+                new_line: NonZeroU32::new(5).unwrap(),
+                old_line: None,
+            }
+        );
     }
 
     #[test]
@@ -308,16 +307,26 @@ mod tests {
     fn deletion_does_not_alias_a_head_line_with_the_same_number() {
         let files = [file("@@ -4,2 +4 @@\n-deleted\n context")];
         let position = comment_position(&files, &location(Some(4)), &refs()).unwrap();
-        assert_eq!(position["old_line"], 5);
-        assert_eq!(position["new_line"], 4);
+        assert_eq!(
+            position.kind,
+            PositionKind::Text {
+                new_line: NonZeroU32::new(4).unwrap(),
+                old_line: NonZeroU32::new(5),
+            }
+        );
     }
 
     #[test]
     fn maps_addition_in_later_hunk() {
         let files = [file("@@ -2 +1,0 @@\n-deleted\n@@ -10,0 +10 @@\n+added")];
         let position = comment_position(&files, &location(Some(10)), &refs()).unwrap();
-        assert_eq!(position["new_line"], 10);
-        assert_matches!(position.get("old_line"), None);
+        assert_eq!(
+            position.kind,
+            PositionKind::Text {
+                new_line: NonZeroU32::new(10).unwrap(),
+                old_line: None,
+            }
+        );
     }
 
     #[test]
@@ -340,10 +349,15 @@ mod tests {
         };
 
         let position = comment_position(&[file], &location, &refs()).unwrap();
-        assert_eq!(position["position_type"], "text");
-        assert_eq!(position["old_path"], "src/main.rs");
-        assert_eq!(position["new_path"], "src/renamed.rs");
-        assert_eq!(position["new_line"], 1);
+        assert_eq!(position.old_path, "src/main.rs");
+        assert_eq!(position.new_path, "src/renamed.rs");
+        assert_eq!(
+            position.kind,
+            PositionKind::Text {
+                new_line: NonZeroU32::new(1).unwrap(),
+                old_line: None,
+            }
+        );
     }
 
     #[test]
@@ -353,10 +367,9 @@ mod tests {
         file.renamed_file = true;
 
         let position = comment_position(&[file], &location(None), &refs()).unwrap();
-        assert_eq!(position["position_type"], "file");
-        assert_eq!(position["old_path"], "src/main.rs");
-        assert_eq!(position["new_path"], "src/renamed.rs");
-        assert_matches!(position.get("new_line"), None);
+        assert_eq!(position.kind, PositionKind::File);
+        assert_eq!(position.old_path, "src/main.rs");
+        assert_eq!(position.new_path, "src/renamed.rs");
     }
 
     #[test]
@@ -365,7 +378,6 @@ mod tests {
         renamed.new_path = "src/renamed.rs".into();
         let files = [renamed, file("@@ -0,0 +1 @@\n+added")];
         assert_matches!(comment_position(&files, &location(None), &refs()), None);
-        assert_matches!(comment_position(&files, &location(Some(1)), &refs()), None);
     }
 
     #[test]
@@ -374,9 +386,7 @@ mod tests {
         file.diff = None;
         file.too_large = true;
         let position = comment_position(&[file], &location(None), &refs()).unwrap();
-        assert_eq!(position["position_type"], "file");
-        assert_matches!(position.get("old_line"), None);
-        assert_matches!(position.get("new_line"), None);
+        assert_eq!(position.kind, PositionKind::File);
     }
 
     #[test]
@@ -466,7 +476,13 @@ mod tests {
         )];
 
         let position = comment_position(&files, &location(Some(1)), &refs()).unwrap();
-        assert_eq!(position["new_line"], 1);
+        assert_eq!(
+            position.kind,
+            PositionKind::Text {
+                new_line: NonZeroU32::new(1).unwrap(),
+                old_line: None,
+            }
+        );
     }
 
     #[test]
@@ -474,7 +490,13 @@ mod tests {
         let files = [file("@@ -4294967295 +4294967295 @@\n-old\n+new")];
 
         let position = comment_position(&files, &location(Some(u32::MAX)), &refs()).unwrap();
-        assert_eq!(position["new_line"], u32::MAX);
+        assert_eq!(
+            position.kind,
+            PositionKind::Text {
+                new_line: NonZeroU32::new(u32::MAX).unwrap(),
+                old_line: None,
+            }
+        );
     }
 
     #[test]
@@ -487,7 +509,7 @@ mod tests {
 
     #[test]
     fn rejects_invalid_hunk_header_syntax() {
-        assert!(Hunk::parse("@@ invalid @@").is_none());
+        assert_matches!(Hunk::parse("@@ invalid @@"), None);
     }
 
     #[test]
@@ -527,7 +549,7 @@ mod tests {
 
     #[test]
     fn rejects_hunks_with_two_empty_ranges() {
-        assert!(Hunk::parse("@@ -0,0 +1,0 @@").is_none());
+        assert_matches!(Hunk::parse("@@ -0,0 +1,0 @@"), None);
     }
 
     #[test]

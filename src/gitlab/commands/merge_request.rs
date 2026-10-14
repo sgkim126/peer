@@ -4,7 +4,7 @@ use crate::git::CommitHash;
 use crate::glab::GlabClient;
 
 use super::super::Repository;
-use super::{CommandError, CommitRef, MergeRequest, api};
+use super::{ChangedFile, CommandError, CommitRef, MergeRequest, api};
 
 #[derive(Clone, Copy)]
 pub struct MergeRequestInput<'a> {
@@ -50,4 +50,11 @@ pub async fn list_mr_commits(
     input: MergeRequestInput<'_>,
 ) -> Result<Vec<CommitRef>, CommandError> {
     api::list(client, &format!("{}/commits", input.path())).await
+}
+
+pub async fn list_commit_diff(
+    client: &GlabClient,
+    input: CommitInput<'_>,
+) -> Result<Vec<ChangedFile>, CommandError> {
+    api::list(client, &format!("{}/diff", input.path())).await
 }

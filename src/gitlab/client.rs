@@ -122,14 +122,6 @@ impl GitLabClient {
     pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitLabError> {
         Ok(commands::api::list(&self.glab, path).await?)
     }
-
-    pub async fn post<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        body: &impl Serialize,
-    ) -> Result<T, GitLabError> {
-        Ok(commands::api::post(&self.glab, path, body).await?)
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
