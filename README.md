@@ -56,6 +56,7 @@ Running `peer` requires the following tools:
 | Node.js | 22.19.0 or later |
 | Pi | Exactly 1.1.0 |
 | GitHub CLI (`gh`) | Available on `PATH` when using `--github` |
+| GitLab CLI (`glab`) | Available on `PATH` when using `--gitlab` |
 
 You also need network access to the selected model provider and credentials for that provider.
 

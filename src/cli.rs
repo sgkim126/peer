@@ -116,6 +116,15 @@ impl Command {
             Self::Prune { .. } => false,
         }
     }
+
+    pub fn requires_glab(&self) -> bool {
+        match self {
+            Self::Init { gitlab, .. } => *gitlab,
+            Self::Review { gitlab, .. } => gitlab.is_some(),
+            Self::Render { gitlab, .. } => gitlab.is_some(),
+            Self::Prune { .. } => false,
+        }
+    }
 }
 
 #[derive(ValueEnum, Clone, Copy, Debug, PartialEq)]

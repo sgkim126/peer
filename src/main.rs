@@ -9,6 +9,7 @@ mod gh;
 mod git;
 mod github;
 mod gitlab;
+mod glab;
 mod init;
 mod llm;
 mod pi;
@@ -37,6 +38,13 @@ async fn main() -> ExitCode {
         && let Err(error) = gh::GhClient::default().check_available().await
     {
         eprintln!("--github requires GitHub CLI (gh): {error}");
+        return ExitCode::FAILURE;
+    }
+
+    if cli.command.requires_glab()
+        && let Err(error) = glab::GlabClient::default().check_available().await
+    {
+        eprintln!("--gitlab requires GitLab CLI (glab): {error}");
         return ExitCode::FAILURE;
     }
 

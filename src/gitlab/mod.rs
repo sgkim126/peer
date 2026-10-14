@@ -1,9 +1,13 @@
 mod client;
+mod commands;
 mod error;
 mod mapping;
 mod position;
 mod publish;
 mod repository;
+
+#[cfg(test)]
+mod test_support;
 
 pub use self::client::{DiffRefs, GitLabClient, GitLabReviewSource};
 pub use self::error::GitLabError;
