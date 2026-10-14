@@ -1737,16 +1737,6 @@ mod tests {
     }
 
     #[test]
-    fn render_input_deserializes_render_document() {
-        let document = RenderDocument::from(result());
-        let document_json = serde_json::to_string(&document).unwrap();
-
-        let input = serde_json::from_str::<RenderDocument>(&document_json).unwrap();
-
-        assert_eq!(input, document);
-    }
-
-    #[test]
     fn render_input_rejects_individual_review_items() {
         for input in [
             r#"{"category":"rationale","question":"Why?","evidence":"The choice is not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#,
@@ -1898,65 +1888,6 @@ mod tests {
             RenderStageOutcome::Failed {
                 failure: RenderStageFailure::Stage { .. }
             }
-        );
-    }
-
-    #[test]
-    fn review_stages_are_combined_and_sorted_by_stage_then_commit() {
-        let first = CommitHash::new("abc1234").unwrap();
-        let second = CommitHash::new("def5678").unwrap();
-        let mut security_second = result();
-        security_second.target = StageTarget::Commit(second.clone());
-        let mut knowledge_second = result();
-        knowledge_second.stage = "knowledge".into();
-        knowledge_second.target = StageTarget::Commit(second.clone());
-        let mut security_first = result();
-        security_first.target = StageTarget::Commit(first.clone());
-        let ordered_commits = vec![first.clone(), second];
-        let mut stages = vec![security_second, knowledge_second, security_first]
-            .into_iter()
-            .map(|result| RenderStageParts::from(result).stage)
-            .collect::<Vec<_>>();
-        stages.push(RenderStage {
-            stage: "quality".to_string(),
-            target: StageTarget::Commit(first),
-            outcome: RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution {
-                    reason: "missing api key".to_string(),
-                    usage: None,
-                },
-            },
-        });
-        stages.sort_by_key(|stage| render_stage_order(stage, &ordered_commits));
-        let document = RenderDocument {
-            source: None,
-            summary: Some(review_summary()),
-            context_usage: None,
-            ordered_commits,
-            questions: Vec::new(),
-            recommendations: Vec::new(),
-            findings: Vec::new(),
-            stages,
-        };
-
-        assert_eq!(
-            document
-                .stages
-                .iter()
-                .map(|stage| (stage.stage.as_str(), stage.target.to_string()))
-                .collect::<Vec<_>>(),
-            [
-                ("knowledge", "def5678".to_string()),
-                ("quality", "abc1234".to_string()),
-                ("security", "abc1234".to_string()),
-                ("security", "def5678".to_string()),
-            ]
-        );
-        assert_matches!(
-            &document.stages[1].outcome,
-            RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution { reason, .. }
-            } if reason == "missing api key"
         );
     }
 

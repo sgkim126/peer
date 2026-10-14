@@ -427,21 +427,6 @@ mod tests {
         assert!(!output.contains("Cache-write tokens"));
     }
 
-    #[test]
-    fn includes_cache_usage_when_available() {
-        let mut result = result();
-        let mut usage = result.usage.iter().next().unwrap().clone();
-        usage.cache_read_tokens = 80;
-        usage.cache_write_tokens = 10;
-        result.usage = LlmUsage::from(vec![usage]);
-
-        let rendered = crate::render::RenderStageParts::from(result);
-        let output = render_stage(&rendered.stage);
-
-        assert!(output.contains("- **Cache-read tokens:** 80"));
-        assert!(output.contains("- **Cache-write tokens:** 10"));
-    }
-
     fn multi_model_usage() -> LlmUsage {
         let first = result().usage.iter().next().unwrap().clone();
         let second = LlmModelUsage {

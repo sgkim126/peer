@@ -601,6 +601,8 @@ async fn paginates_reviews_and_groups_inline_replies_across_pages() {
         json!({"id": id, "state": "COMMENTED", "body": format!("Review {id}"),
         "submitted_at": "2026-01-01T00:00:00Z", "commit_id": "abc1234", "user": null})
     };
+    let mut unsubmitted = review(3);
+    unsubmitted["submitted_at"] = Value::Null;
     let inline = |id, parent| {
         json!({"id": id, "in_reply_to_id": parent,
         "created_at": "2026-01-01T00:00:00Z", "body": format!("Inline {id}"), "user": {"login": "bot[bot]", "type": "Bot"},
@@ -611,7 +613,7 @@ async fn paginates_reviews_and_groups_inline_replies_across_pages() {
         Reply::json(json!([])),
         Reply::json(json!([review(2)]))
             .header("Link: <{base}repos/owner/repo/pulls/123/reviews?page=2>; rel=\"next\""),
-        Reply::json(json!([review(1)])),
+        Reply::json(json!([review(1), unsubmitted])),
         Reply::json(json!([inline(11, Some(10))]))
             .header("Link: <{base}repos/owner/repo/pulls/123/comments?page=2>; rel=\"next\""),
         Reply::json(json!([inline(10, None)])),

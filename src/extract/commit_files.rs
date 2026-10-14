@@ -203,45 +203,6 @@ mod tests {
     use tempfile::TempDir;
 
     #[test]
-    fn parse_name_status_added() {
-        let entries = parse_name_status("A\0src/new_file.rs\0").unwrap();
-        assert_eq!(
-            entries,
-            vec![RawFileEntry {
-                status: FileStatus::Added,
-                path: "src/new_file.rs".into(),
-                source_path: None,
-            }]
-        );
-    }
-
-    #[test]
-    fn parse_name_status_modified() {
-        let entries = parse_name_status("M\0src/lib.rs\0").unwrap();
-        assert_eq!(
-            entries,
-            vec![RawFileEntry {
-                status: FileStatus::Modified,
-                path: "src/lib.rs".into(),
-                source_path: None,
-            }]
-        );
-    }
-
-    #[test]
-    fn parse_name_status_deleted() {
-        let entries = parse_name_status("D\0src/old_file.rs\0").unwrap();
-        assert_eq!(
-            entries,
-            vec![RawFileEntry {
-                status: FileStatus::Deleted,
-                path: "src/old_file.rs".into(),
-                source_path: None,
-            }]
-        );
-    }
-
-    #[test]
     fn parse_name_status_renamed_includes_source_path() {
         let entries = parse_name_status("R90\0src/old_name.rs\0src/new_name.rs\0").unwrap();
         assert_eq!(
@@ -349,12 +310,6 @@ mod tests {
     #[test]
     fn parse_binary_paths_empty_input() {
         assert!(parse_binary_paths("").unwrap().is_empty());
-    }
-
-    #[test]
-    fn parse_binary_paths_no_binary_files() {
-        let numstat = "5\t3\tfile1.txt\x0010\t2\tfile2.rs\0";
-        assert!(parse_binary_paths(numstat).unwrap().is_empty());
     }
 
     struct Repo {

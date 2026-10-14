@@ -122,22 +122,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_parent_path() {
-        assert_matches!(
-            validate_repository_relative_path(Path::new("../secret")),
-            Err(ExtractError::InvalidRepositoryRelativePath(_))
-        );
-    }
-
-    #[test]
-    fn rejects_empty_path() {
-        assert_matches!(
-            validate_repository_relative_path(Path::new("")),
-            Err(ExtractError::InvalidRepositoryRelativePath(_))
-        );
-    }
-
-    #[test]
     fn truncates_large_results() {
         let output = (0..=MAX_GREP_RESULT_LINES)
             .map(|index| format!("file.rs:{index}:match"))

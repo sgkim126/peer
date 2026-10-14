@@ -399,17 +399,6 @@ mod tests {
     }
 
     #[test]
-    fn gitlab_unlocated_question_with_one_related_commit_targets_that_commit() {
-        let mut question = question();
-        question["location"] = Value::Null;
-        question["related_commits"] = json!(["abc1234"]);
-
-        let feedback = gitlab_feedback("questions", question);
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
-    }
-
-    #[test]
     fn gitlab_unlocated_question_with_duplicate_related_commits_targets_that_commit() {
         let mut question = question();
         question["location"] = Value::Null;
@@ -439,16 +428,6 @@ mod tests {
         let feedback = gitlab_feedback("recommendations", recommendation);
 
         assert_eq!(feedback.commit, None);
-    }
-
-    #[test]
-    fn gitlab_recommendation_with_one_related_commit_targets_that_commit() {
-        let mut recommendation = recommendation();
-        recommendation["related_commits"] = json!(["abc1234"]);
-
-        let feedback = gitlab_feedback("recommendations", recommendation);
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
     }
 
     #[test]

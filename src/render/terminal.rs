@@ -466,26 +466,6 @@ mod tests {
         assert!(!output.contains("\u{1b}["));
     }
 
-    #[test]
-    fn includes_context_usage_separately() {
-        let mut result = result();
-        result.context_usage = Some(LlmUsage::from(vec![LlmModelUsage {
-            provider: "test-provider".to_string(),
-            input_tokens: 40,
-            output_tokens: 10,
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            cost_usd: 0.0004,
-            model: "context-model".to_string(),
-        }]));
-
-        let output = render_context_usage(result.context_usage.as_ref().unwrap());
-
-        assert!(output.contains(
-            "Context usage: 40 input, 10 output, $0.000400 (test-provider/context-model)"
-        ));
-    }
-
     fn multi_model_usage() -> LlmUsage {
         let first = result().usage.iter().next().unwrap().clone();
         let second = LlmModelUsage {

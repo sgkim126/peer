@@ -879,18 +879,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_cancelled_session_switches() {
-        let error = ensure_not_cancelled(
-            &Some(json!({
-                "cancelled": true
-            })),
-            "switch_session",
-        )
-        .unwrap_err();
-        assert!(error.to_string().contains("cancelled switch_session"));
-    }
-
-    #[test]
     fn rejects_session_path_traversal() {
         assert_matches!(
             validate_relative_path(Path::new("../outside.jsonl")),

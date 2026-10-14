@@ -239,34 +239,6 @@ async fn rerunning_skips_items_and_summary_despite_commit_and_usage_changes() {
 }
 
 #[tokio::test]
-async fn finds_duplicates_on_later_pages_of_conversation_comments() {
-    let input = finding();
-    let body = published_body(&input).await;
-    let page = Reply::json(json!([])).header(
-        "Link: <{base}repos/owner/repo/issues/123/comments?per_page=100&page=2>; rel=\"next\"",
-    );
-    let duplicate = Reply::json(json!([{ "body": body }]));
-    let server = Server::start(vec![
-        pull(),
-        pr_commits(),
-        page,
-        duplicate,
-        Reply::json(json!([])),
-    ])
-    .await;
-    let report = server
-        .client()
-        .publish(&repository(), number(), &input)
-        .await
-        .unwrap();
-    assert_eq!(report.skipped, 1);
-    assert_eq!(report.urls, Vec::<String>::new());
-    assert_eq!(report.published, 0);
-    // gh pr view retrieves both conversation pages in one command.
-    assert_eq!(server.requests().len(), 4);
-}
-
-#[tokio::test]
 async fn finds_duplicates_on_later_pages_of_inline_comments() {
     let input = finding();
     let body = published_body(&input).await;

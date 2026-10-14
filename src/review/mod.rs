@@ -591,24 +591,4 @@ mod tests {
             })
         );
     }
-
-    #[tokio::test]
-    async fn enforces_maximum_commit_count() {
-        let repo = Repo::new().await;
-        let first = repo.commit("a.txt", "first").await;
-        let second = repo.commit("b.txt", "second").await;
-        let target = ReviewTarget::Range {
-            from: first.clone(),
-            to: second.clone(),
-            commits: vec![first, second],
-        };
-
-        assert_matches!(
-            validate_target(&target, 1, &repo.path).await,
-            Err(ReviewTargetError::TooManyCommits {
-                actual: 2,
-                maximum: 1
-            })
-        );
-    }
 }

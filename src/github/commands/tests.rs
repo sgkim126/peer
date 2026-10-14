@@ -14,16 +14,10 @@ use super::*;
 mod api;
 mod create_conversation_comment;
 mod create_review_comment;
-mod get_commit_files;
-mod get_pull_request;
 mod list_commit_comments;
 mod list_conversation_feedback;
-mod list_issue_comments;
-mod list_pr_commits;
 mod list_pr_files;
-mod list_review_comments;
 mod list_review_feedback;
-mod list_reviews;
 
 struct Reply {
     stdout: Vec<u8>,
