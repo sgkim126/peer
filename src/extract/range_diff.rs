@@ -113,7 +113,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn disables_text_conversion() {
+    async fn matches_file_diff_with_text_conversion_configured() {
         let directory = tempfile::tempdir().unwrap();
         run_git(&["init"], directory.path()).await.unwrap();
         run_git(
@@ -125,12 +125,6 @@ mod tests {
         run_git(&["config", "user.name", "Test"], directory.path())
             .await
             .unwrap();
-        run_git(
-            &["config", "diff.marker.textconv", "sed s/before/CONVERTED/"],
-            directory.path(),
-        )
-        .await
-        .unwrap();
         std::fs::write(
             directory.path().join(".gitattributes"),
             "*.txt diff=marker\n",
@@ -146,7 +140,6 @@ mod tests {
         )
         .await
         .unwrap();
-        let from = CommitHash::resolve("HEAD", directory.path()).await.unwrap();
         std::fs::write(directory.path().join("file.txt"), "after\n").unwrap();
         run_git(
             &["commit", "-am", "after", "--no-gpg-sign"],
@@ -154,14 +147,78 @@ mod tests {
         )
         .await
         .unwrap();
+        run_git(
+            &["config", "diff.marker.textconv", "sed s/before/CONVERTED/"],
+            directory.path(),
+        )
+        .await
+        .unwrap();
 
-        let result = Extractor::new(directory.path().to_path_buf())
-            .range_diff(from.as_ref(), "HEAD")
+        let extractor = Extractor::new(directory.path().to_path_buf());
+        let range = extractor.range_diff("HEAD~1", "HEAD").await.unwrap();
+        let file = extractor
+            .file_diff("HEAD~1", "HEAD", std::path::Path::new("file.txt"))
             .await
             .unwrap();
 
-        assert!(!result.diff.contains("CONVERTED"));
-        assert!(result.diff.contains("-before"));
-        assert!(result.diff.contains("+after"));
+        assert!(range.diff.contains("-before"));
+        assert!(range.diff.contains("+after"));
+        assert!(!range.diff.contains("CONVERTED"));
+        assert_eq!(file.diff, range.diff);
+    }
+
+    #[tokio::test]
+    async fn matches_file_diff_with_external_diff_configured() {
+        let directory = tempfile::tempdir().unwrap();
+        run_git(&["init"], directory.path()).await.unwrap();
+        run_git(
+            &["config", "user.email", "test@example.com"],
+            directory.path(),
+        )
+        .await
+        .unwrap();
+        run_git(&["config", "user.name", "Test"], directory.path())
+            .await
+            .unwrap();
+        std::fs::write(
+            directory.path().join(".gitattributes"),
+            "*.txt diff=marker\n",
+        )
+        .unwrap();
+        std::fs::write(directory.path().join("file.txt"), "before\n").unwrap();
+        run_git(&["add", ".gitattributes", "file.txt"], directory.path())
+            .await
+            .unwrap();
+        run_git(
+            &["commit", "--no-gpg-sign", "-m", "before"],
+            directory.path(),
+        )
+        .await
+        .unwrap();
+        std::fs::write(directory.path().join("file.txt"), "after\n").unwrap();
+        run_git(
+            &["commit", "-am", "after", "--no-gpg-sign"],
+            directory.path(),
+        )
+        .await
+        .unwrap();
+        run_git(
+            &["config", "diff.marker.command", "printf EXTERNAL"],
+            directory.path(),
+        )
+        .await
+        .unwrap();
+
+        let extractor = Extractor::new(directory.path().to_path_buf());
+        let range = extractor.range_diff("HEAD~1", "HEAD").await.unwrap();
+        let file = extractor
+            .file_diff("HEAD~1", "HEAD", std::path::Path::new("file.txt"))
+            .await
+            .unwrap();
+
+        assert!(range.diff.contains("-before"));
+        assert!(range.diff.contains("+after"));
+        assert!(!range.diff.contains("EXTERNAL"));
+        assert_eq!(file.diff, range.diff);
     }
 }

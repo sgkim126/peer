@@ -34,6 +34,8 @@ impl Extractor {
                 "--literal-pathspecs",
                 "diff",
                 "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
                 from.as_ref(),
                 to.as_ref(),
                 "--",
