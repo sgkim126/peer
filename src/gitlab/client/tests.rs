@@ -346,27 +346,3 @@ fn source_snapshot_requires_the_gitlab_provider_and_known_fields() {
     value["unknown"] = json!(true);
     assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
 }
-
-#[tokio::test]
-async fn sends_post_requests_with_json_bodies() {
-    let server = Server::start(vec![Reply::json(json!({"id": 123})).status(201)]).await;
-    server
-        .client()
-        .post::<Value>("projects/5/notes", &json!({"body": "A note"}))
-        .await
-        .unwrap();
-    let requests = server.requests();
-    assert!(requests[0].starts_with("POST /api/v4/projects/5/notes "));
-    assert!(requests[0].ends_with("{\"body\":\"A note\"}"));
-}
-
-#[tokio::test]
-async fn decodes_created_post_responses() {
-    let server = Server::start(vec![Reply::json(json!({"id": 123})).status(201)]).await;
-    let reply: Value = server
-        .client()
-        .post("projects/5/notes", &json!({"body": "A note"}))
-        .await
-        .unwrap();
-    assert_eq!(reply["id"], 123);
-}

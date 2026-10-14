@@ -10,7 +10,7 @@ use crate::git::CommitHash;
 use crate::render::RenderDocument;
 use crate::stage::StageTarget;
 
-use super::client::MergeRequest;
+use super::commands::{self, CreateNoteInput, MergeRequest, MergeRequestInput, PublishedNote};
 use super::position::{ChangedFile, comment_position};
 use super::{
     CONVERSATION_MARKER, DiffRefs, GitLabClient, GitLabError, GitLabReviewSource, Repository,
@@ -179,11 +179,6 @@ impl CommitRef {
 }
 
 #[derive(Deserialize)]
-struct PublishedNote {
-    id: NonZeroU64,
-}
-
-#[derive(Deserialize)]
 struct PublishedDiscussion {
     notes: Vec<PublishedNote>,
 }
@@ -249,6 +244,7 @@ impl GitLabClient {
             return Err(PublishFailure::SnapshotMismatch);
         }
         let prefix = format!("{}/merge_requests/{number}", repository.api_path());
+        let merge_request_input = MergeRequestInput { repository, number };
         let commits = self.list::<CommitRef>(&format!("{prefix}/commits")).await?;
         validate_commits(input, &commits, &source)?;
 
@@ -431,9 +427,15 @@ impl GitLabClient {
         if !body.is_empty() {
             self.assert_current(repository, number, &merge_request)
                 .await?;
-            match self
-                .post::<PublishedNote>(&format!("{prefix}/notes"), &json!({ "body": body }))
-                .await
+            match commands::create_note(
+                &self.glab,
+                CreateNoteInput {
+                    merge_request: merge_request_input,
+                    body: &body,
+                },
+            )
+            .await
+            .map_err(GitLabError::from)
             {
                 Ok(note) => report.record(note_url(repository, number, note.id), false, false),
                 Err(error) if error.may_have_published() => {

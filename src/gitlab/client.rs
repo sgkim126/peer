@@ -8,7 +8,7 @@ use crate::context::ReviewContext;
 use crate::git::CommitHash;
 use crate::glab::GlabClient;
 
-use super::commands::{self, Collection};
+use super::commands::{self, Collection, MergeRequest, MergeRequestInput};
 use super::{GitLabError, Repository, mapping};
 use serde::de::DeserializeOwned;
 
@@ -104,15 +104,10 @@ impl GitLabClient {
         repository: &Repository,
         number: NonZeroU64,
     ) -> Result<MergeRequest, GitLabError> {
-        self.get(&format!(
-            "{}/merge_requests/{number}",
-            repository.api_path()
-        ))
-        .await
-    }
-
-    pub async fn get<T: DeserializeOwned>(&self, path: &str) -> Result<T, GitLabError> {
-        Ok(commands::api::get(&self.glab, path).await?)
+        Ok(
+            commands::get_merge_request(&self.glab, MergeRequestInput { repository, number })
+                .await?,
+        )
     }
 
     pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitLabError> {
@@ -214,21 +209,6 @@ pub struct GitLabReviewInput {
     pub source: GitLabReviewSource,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct MergeRequest {
-    pub title: String,
-    pub description: Option<String>,
-    pub project_id: u64,
-    pub iid: u64,
-    pub source_project_id: Option<u64>,
-    pub target_project_id: u64,
-    pub source_branch: String,
-    pub target_branch: String,
-    pub sha: Option<CommitHash>,
-    #[serde(default, deserialize_with = "deserialize_diff_refs")]
-    pub diff_refs: Option<DiffRefs>,
-}
-
 impl MergeRequest {
     pub fn source(&self, number: NonZeroU64) -> Result<GitLabReviewSource, GitLabError> {
         if self.project_id == 0 {
@@ -257,26 +237,6 @@ impl MergeRequest {
             diff_refs: diff_refs.clone(),
         })
     }
-}
-
-fn deserialize_diff_refs<'de, D>(deserializer: D) -> Result<Option<DiffRefs>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    #[derive(Deserialize)]
-    struct OptionalDiffRefs {
-        base_sha: Option<CommitHash>,
-        head_sha: Option<CommitHash>,
-        start_sha: Option<CommitHash>,
-    }
-    let refs = Option::<OptionalDiffRefs>::deserialize(deserializer)?;
-    Ok(refs.and_then(|refs| {
-        Some(DiffRefs {
-            base_sha: refs.base_sha?,
-            head_sha: refs.head_sha?,
-            start_sha: refs.start_sha?,
-        })
-    }))
 }
 
 #[cfg(test)]
