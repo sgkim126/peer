@@ -2,8 +2,6 @@ use std::collections::HashSet;
 use std::num::{NonZeroU32, NonZeroU64};
 
 use log::debug;
-use reqwest::Url;
-use reqwest::header::{HeaderMap, HeaderValue, LINK};
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::context::ReviewContext;
@@ -160,111 +158,6 @@ impl GitLabClient {
         }
         Ok(discussions)
     }
-}
-
-#[expect(dead_code)]
-fn position_error(message: &serde_json::Value) -> bool {
-    match message {
-        serde_json::Value::Object(fields) => {
-            !fields.is_empty()
-                && fields.iter().all(|(field, detail)| {
-                    (position_field(field) && has_validation_message(detail))
-                        || (field == "commit_id" && diff_refs_message(detail))
-                })
-        }
-        _ => false,
-    }
-}
-
-#[expect(dead_code)]
-fn commit_error(message: &serde_json::Value) -> bool {
-    match message {
-        serde_json::Value::Object(fields) => {
-            !fields.is_empty()
-                && fields
-                    .iter()
-                    .all(|(field, detail)| field == "commit_id" && has_validation_message(detail))
-        }
-        _ => false,
-    }
-}
-
-fn position_field(field: &str) -> bool {
-    matches!(field, "position" | "line_code")
-        || field.starts_with("position.")
-        || field.starts_with("position[")
-}
-
-fn has_validation_message(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::String(message) => !message.trim().is_empty(),
-        serde_json::Value::Array(messages) => {
-            !messages.is_empty() && messages.iter().all(has_validation_message)
-        }
-        serde_json::Value::Object(fields) => {
-            !fields.is_empty() && fields.values().all(has_validation_message)
-        }
-        _ => false,
-    }
-}
-
-fn diff_refs_message(value: &serde_json::Value) -> bool {
-    match value {
-        serde_json::Value::String(message) => message.to_ascii_lowercase().contains("diff refs"),
-        serde_json::Value::Array(messages) => {
-            !messages.is_empty() && messages.iter().all(diff_refs_message)
-        }
-        _ => false,
-    }
-}
-
-#[cfg_attr(not(test), expect(dead_code))]
-fn private_token(token: &str) -> Result<HeaderValue, GitLabError> {
-    if token.trim().is_empty() {
-        return Err(GitLabError::MissingToken);
-    }
-    if !token.bytes().all(|byte| byte.is_ascii_graphic()) {
-        return Err(GitLabError::InvalidToken);
-    }
-    let mut value = HeaderValue::from_str(token).map_err(|_| GitLabError::InvalidToken)?;
-    value.set_sensitive(true);
-    Ok(value)
-}
-
-#[expect(dead_code)]
-fn next_page(headers: &HeaderMap) -> Result<Option<Url>, GitLabError> {
-    let mut next = None;
-    for header in headers.get_all(LINK) {
-        for link in header
-            .to_str()
-            .map_err(|_| GitLabError::InvalidPagination)?
-            .split(',')
-        {
-            let mut parts = link.split(';');
-            let target = parts.next().unwrap_or_default().trim();
-            let is_next = parts.any(|part| {
-                part.trim().split_once('=').is_some_and(|(key, value)| {
-                    key.trim() == "rel"
-                        && value
-                            .trim()
-                            .trim_matches('"')
-                            .split_ascii_whitespace()
-                            .any(|rel| rel == "next")
-                })
-            });
-            if is_next {
-                let url = target
-                    .strip_prefix('<')
-                    .and_then(|value| value.strip_suffix('>'))
-                    .and_then(|value| Url::parse(value).ok())
-                    .ok_or(GitLabError::InvalidPagination)?;
-                if next.replace(url).is_some() {
-                    return Err(GitLabError::InvalidPagination);
-                }
-            }
-        }
-    }
-    Ok(next)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]

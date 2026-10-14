@@ -9,18 +9,10 @@ use super::CommandError;
 
 const API_URL: &str = "https://gitlab.com/api/v4/";
 
+#[derive(Debug)]
 pub struct Collection<T> {
     pub items: Vec<T>,
     pub project_accessible: bool,
-}
-
-impl<T: std::fmt::Debug> std::fmt::Debug for Collection<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Collection")
-            .field("items", &self.items)
-            .field("project_accessible", &self.project_accessible)
-            .finish()
-    }
 }
 
 #[derive(Debug)]

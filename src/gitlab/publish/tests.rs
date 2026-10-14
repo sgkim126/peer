@@ -1,134 +1,13 @@
 use super::*;
 
+use serde_json::{Value, json};
 use std::assert_matches;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
-
-use reqwest::Url;
-use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
 
 use crate::gitlab::test_support::{Reply, Server};
 
 const HEAD: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const OLD: &str = "dddddddddddddddddddddddddddddddddddddddd";
-
-struct HttpReply {
-    status: u16,
-    body: String,
-    headers: Vec<String>,
-    disconnect: bool,
-}
-
-#[expect(dead_code)]
-impl HttpReply {
-    fn json(body: Value) -> Self {
-        Self {
-            status: 200,
-            body: body.to_string(),
-            headers: Vec::new(),
-            disconnect: false,
-        }
-    }
-
-    fn failure(status: u16, body: Value) -> Self {
-        Self {
-            status,
-            ..Self::json(body)
-        }
-    }
-}
-
-struct HttpServer {
-    requests: Arc<Mutex<Vec<String>>>,
-    task: JoinHandle<()>,
-}
-
-#[expect(dead_code)]
-impl HttpServer {
-    async fn start(replies: Vec<HttpReply>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-        let address = base.to_string();
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let received = requests.clone();
-        let task = tokio::spawn(async move {
-            for reply in replies {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                let mut buffer = [0; 1024];
-                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                    let count = stream.read(&mut buffer).await.unwrap();
-                    assert_ne!(count, 0);
-                    request.extend_from_slice(&buffer[..count]);
-                }
-                let header_end = request
-                    .windows(4)
-                    .position(|bytes| bytes == b"\r\n\r\n")
-                    .unwrap()
-                    + 4;
-                let content_length = String::from_utf8_lossy(&request[..header_end])
-                    .lines()
-                    .filter_map(|line| line.split_once(':'))
-                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                    .map(|(_, value)| value.trim().parse::<usize>().unwrap())
-                    .unwrap_or(0);
-                while request.len() < header_end + content_length {
-                    let count = stream.read(&mut buffer).await.unwrap();
-                    assert_ne!(count, 0);
-                    request.extend_from_slice(&buffer[..count]);
-                }
-                received
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8(request).unwrap());
-                if reply.disconnect {
-                    continue;
-                }
-                let headers = reply
-                    .headers
-                    .iter()
-                    .map(|header| format!("{}\r\n", header.replace("{base}", &address)))
-                    .collect::<String>();
-                let response = format!(
-                    "HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}",
-                    reply.status,
-                    reply.body.len(),
-                    headers,
-                    reply.body,
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
-        Self { requests, task }
-    }
-
-    fn requests(&self) -> Vec<String> {
-        self.requests.lock().unwrap().clone()
-    }
-
-    fn posts(&self) -> Vec<(String, Value)> {
-        self.requests()
-            .into_iter()
-            .filter(|request| request.starts_with("POST "))
-            .map(|request| {
-                let (headers, body) = request.split_once("\r\n\r\n").unwrap();
-                (
-                    headers.lines().next().unwrap().to_string(),
-                    serde_json::from_str(body).unwrap(),
-                )
-            })
-            .collect()
-    }
-}
-
-impl Drop for HttpServer {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
 
 fn repository() -> Repository {
     Repository::parse("group/subgroup/project").unwrap()

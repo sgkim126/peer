@@ -1,4 +1,4 @@
-use std::{env::VarError, fmt};
+use std::fmt;
 
 use super::commands::CommandError;
 
@@ -6,9 +6,6 @@ use super::commands::CommandError;
 pub enum GitLabError {
     MissingRepository,
     InvalidRepository,
-    MissingToken,
-    InvalidToken,
-    Client(reqwest::Error),
     Command(CommandError),
     Api {
         endpoint: String,
@@ -54,12 +51,6 @@ impl fmt::Display for GitLabError {
                 f,
                 "GitLab repository must use the form namespace/project (subgroups are supported)"
             ),
-            Self::MissingToken => write!(
-                f,
-                "GitLab access requires a non-empty GITLAB_TOKEN environment variable"
-            ),
-            Self::InvalidToken => write!(f, "GITLAB_TOKEN is not a valid HTTP private token"),
-            Self::Client(_) => write!(f, "failed to configure the GitLab HTTP client"),
             Self::Command(error) => error.fmt(f),
             Self::Api {
                 endpoint,
@@ -105,9 +96,6 @@ impl std::error::Error for GitLabError {
         match self {
             Self::MissingRepository => None,
             Self::InvalidRepository => None,
-            Self::MissingToken => None,
-            Self::InvalidToken => None,
-            Self::Client(source) => Some(source),
             Self::Command(source) => Some(source),
             Self::Api { .. } => None,
             Self::Decode { source, .. } => Some(source),
@@ -140,20 +128,5 @@ impl From<CommandError> for GitLabError {
             CommandError::InvalidPagination => Self::InvalidPagination,
             error => Self::Command(error),
         }
-    }
-}
-
-impl From<VarError> for GitLabError {
-    fn from(error: VarError) -> Self {
-        match error {
-            VarError::NotPresent => Self::MissingToken,
-            VarError::NotUnicode(_) => Self::InvalidToken,
-        }
-    }
-}
-
-impl From<reqwest::Error> for GitLabError {
-    fn from(error: reqwest::Error) -> Self {
-        Self::Client(error)
     }
 }
