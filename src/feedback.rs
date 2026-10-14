@@ -26,7 +26,7 @@ pub struct Feedback {
 pub struct PreparedReview {
     pub items: Vec<Feedback>,
     pub summary_fingerprint: Option<String>,
-    parts: Option<github::DocumentParts>,
+    parts: github::DocumentParts,
 }
 
 impl PreparedReview {
@@ -79,22 +79,19 @@ impl PreparedReview {
                     .map(|(finding, body)| prepare_finding(finding, body.clone())),
             )
             .collect();
-        let parts = Some(parts);
-        let summary_fingerprint = match &parts {
-            Some(parts)
-                if !parts.summary.is_empty()
-                    || !parts.context.is_empty()
-                    || !parts.stages.is_empty() =>
-            {
-                Some(fingerprint(
-                    "summary",
-                    json!({
-                        "items": items.iter().map(|item| &item.fingerprint).collect::<BTreeSet<_>>(),
-                        "review": github::summary_identity(document),
-                    }),
-                ))
-            }
-            _ => None,
+        let summary_fingerprint = if !parts.summary.is_empty()
+            || !parts.context.is_empty()
+            || !parts.stages.is_empty()
+        {
+            Some(fingerprint(
+                "summary",
+                json!({
+                    "items": items.iter().map(|item| &item.fingerprint).collect::<BTreeSet<_>>(),
+                    "review": github::summary_identity(document),
+                }),
+            ))
+        } else {
+            None
         };
         Self {
             items,
@@ -105,9 +102,7 @@ impl PreparedReview {
 
     pub fn aggregate(&self, remaining: &[&Feedback], include_summary: bool) -> String {
         let body = |item: &&Feedback| format!("{}\n\n{}", item.body, marker(&item.fingerprint));
-        let Some(mut parts) = self.parts.clone() else {
-            return remaining.iter().map(body).collect::<Vec<_>>().join("\n\n");
-        };
+        let mut parts = self.parts.clone();
         parts.questions.clear();
         parts.recommendations.clear();
         parts.findings.clear();
