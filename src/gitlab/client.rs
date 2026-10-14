@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::num::NonZeroU64;
 
 use log::debug;
-use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
+use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::context::ReviewContext;
 use crate::git::CommitHash;
@@ -117,10 +117,6 @@ impl GitLabClient {
             commands::get_merge_request(&self.glab, MergeRequestInput { repository, number })
                 .await?,
         )
-    }
-
-    pub async fn list<T: DeserializeOwned>(&self, path: &str) -> Result<Vec<T>, GitLabError> {
-        Ok(commands::api::list(&self.glab, path).await?)
     }
 }
 

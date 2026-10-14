@@ -22,6 +22,23 @@ pub struct PublishedDiscussion {
 }
 
 #[derive(Debug, Deserialize)]
+pub struct FeedbackDiscussion {
+    pub notes: Vec<FeedbackNote>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct FeedbackNote {
+    pub id: NonZeroU64,
+    pub body: String,
+    #[serde(default)]
+    pub system: bool,
+    #[serde(default)]
+    pub internal: bool,
+    #[serde(default)]
+    pub confidential: bool,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct MergeRequest {
     pub title: String,
     pub description: Option<String>,

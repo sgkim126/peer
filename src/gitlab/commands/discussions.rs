@@ -6,8 +6,8 @@ use crate::git::CommitHash;
 use crate::glab::GlabClient;
 
 use super::{
-    Collection, CommandError, CommitInput, Discussion, MergeRequestInput, PublishedDiscussion,
-    PublishedNote, api,
+    Collection, CommandError, CommitInput, Discussion, FeedbackDiscussion, MergeRequestInput,
+    PublishedDiscussion, PublishedNote, api,
 };
 
 pub struct ListCommitDiscussionsInput<'a> {
@@ -46,6 +46,20 @@ pub async fn list_commit_discussions(
         note.commit_id.get_or_insert_with(|| input.commit.clone());
     }
     Ok(collection)
+}
+
+pub async fn list_mr_feedback(
+    client: &GlabClient,
+    input: MergeRequestInput<'_>,
+) -> Result<Vec<FeedbackDiscussion>, CommandError> {
+    api::list(client, &format!("{}/discussions", input.path())).await
+}
+
+pub async fn list_commit_feedback(
+    client: &GlabClient,
+    input: CommitInput<'_>,
+) -> Result<Vec<FeedbackDiscussion>, CommandError> {
+    api::list(client, &format!("{}/discussions", input.path())).await
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

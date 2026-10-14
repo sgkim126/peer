@@ -2,8 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::num::NonZeroU64;
 
-use serde::Deserialize;
-
 use crate::feedback::{Feedback, PreparedReview, fingerprints, marker};
 use crate::git::CommitHash;
 use crate::render::RenderDocument;
@@ -172,23 +170,6 @@ impl CommitRef {
             head_sha: self.id.clone(),
         })
     }
-}
-
-#[derive(Deserialize)]
-struct ExistingDiscussion {
-    notes: Vec<ExistingNote>,
-}
-
-#[derive(Deserialize)]
-struct ExistingNote {
-    id: NonZeroU64,
-    body: String,
-    #[serde(default)]
-    system: bool,
-    #[serde(default)]
-    internal: bool,
-    #[serde(default)]
-    confidential: bool,
 }
 
 #[derive(Default)]
@@ -481,17 +462,16 @@ impl GitLabClient {
         commit: Option<&CommitHash>,
     ) -> Result<ExistingFeedback, GitLabError> {
         let mut result = ExistingFeedback::default();
-        let path = match commit {
-            Some(commit) => format!(
-                "{}/repository/commits/{commit}/discussions",
-                repository.api_path()
-            ),
-            None => format!(
-                "{}/merge_requests/{number}/discussions",
-                repository.api_path()
-            ),
+        let discussions = match commit {
+            Some(commit) => {
+                commands::list_commit_feedback(&self.glab, CommitInput { repository, commit })
+                    .await?
+            }
+            None => {
+                commands::list_mr_feedback(&self.glab, MergeRequestInput { repository, number })
+                    .await?
+            }
         };
-        let discussions = self.list::<ExistingDiscussion>(&path).await?;
         for note in discussions
             .into_iter()
             .flat_map(|discussion| discussion.notes)
