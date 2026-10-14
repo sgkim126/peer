@@ -936,3 +936,350 @@ async fn api_error_display_omits_position_validation_messages() {
 
     assert!(!error.to_string().contains(secret));
 }
+
+#[tokio::test]
+async fn rejects_pagination_links_to_another_origin_with_credentials() {
+    let server = Server::start(vec![Reply::json(json!([])).header(
+        "Link: <http://user:password@localhost/api/v4/projects/5/notes?page=2>; rel=\"next\"",
+    )])
+    .await;
+
+    assert_matches!(
+        api::list::<Value>(&client(&server), "projects/5/notes").await,
+        Err(CommandError::InvalidPagination)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
+#[test]
+fn ignores_empty_x_next_page() {
+    let next = "https://gitlab.com/api/v4/projects/5/notes?page=2";
+    let link = format!("<{next}>; rel=next");
+
+    assert_eq!(
+        next_page(vec![("Link", &link), ("X-Next-Page", "")]).unwrap(),
+        Some(Url::parse(next).unwrap())
+    );
+}
+
+#[test]
+fn ignores_whitespace_only_x_next_page() {
+    let next = "https://gitlab.com/api/v4/projects/5/notes?page=2";
+    let link = format!("<{next}>; rel=next");
+
+    assert_eq!(
+        next_page(vec![("Link", &link), ("X-Next-Page", " \t ")]).unwrap(),
+        Some(Url::parse(next).unwrap())
+    );
+}
+
+#[test]
+fn ignores_non_numeric_x_next_page() {
+    let next = "https://gitlab.com/api/v4/projects/5/notes?page=2";
+    let link = format!("<{next}>; rel=next");
+
+    assert_eq!(
+        next_page(vec![("Link", &link), ("X-Next-Page", "invalid")]).unwrap(),
+        Some(Url::parse(next).unwrap())
+    );
+}
+
+#[test]
+fn ignores_first_page_links() {
+    assert_eq!(
+        next_page(vec![(
+            "Link",
+            "<https://gitlab.com/api/v4/projects/5/notes?page=1>; rel=first",
+        )])
+        .unwrap(),
+        None
+    );
+}
+
+#[test]
+fn ignores_last_page_links() {
+    assert_eq!(
+        next_page(vec![(
+            "Link",
+            "<https://gitlab.com/api/v4/projects/5/notes?page=3>; rel=last",
+        )])
+        .unwrap(),
+        None
+    );
+}
+
+#[tokio::test]
+async fn reports_forbidden_with_exhausted_quota_as_rate_limited() {
+    let server = Server::start(vec![
+        Reply::json(json!({}))
+            .status(403)
+            .header("RateLimit-Remaining: 0"),
+    ])
+    .await;
+
+    assert_matches!(
+        api::get::<Value>(&client(&server), "projects/5").await,
+        Err(CommandError::Api {
+            status: 403,
+            rate_limited: true,
+            ..
+        })
+    );
+}
+
+#[test]
+fn recognizes_multiple_validation_messages_for_a_position_field() {
+    let message = json!({
+        "position": ["is invalid", "is incomplete"]
+    });
+
+    assert!(position_error(&message));
+}
+
+#[test]
+fn rejects_null_position_error_messages() {
+    assert!(!position_error(&Value::Null));
+}
+
+#[test]
+fn rejects_plain_text_bracketed_position_errors() {
+    let message = json!("position[new_line] is missing");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_plain_text_body_errors_that_mention_position() {
+    let message = json!("body contains an invalid position");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_plain_text_mixed_position_and_body_errors() {
+    let message = json!("position is invalid and body can't be blank");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_bare_bad_request_error_strings() {
+    let message = json!("400 Bad request");
+
+    assert!(!position_error(&message));
+}
+
+#[test]
+fn rejects_null_commit_target_error_messages() {
+    assert!(!commit_error(&Value::Null));
+}
+
+#[tokio::test]
+async fn unauthorized_responses_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(401),
+    ])
+    .await;
+    let result = api::post::<Value>(
+        &client(&server),
+        "projects/5/notes",
+        &json!({
+            "body": "A note"
+        }),
+    )
+    .await;
+
+    assert_matches!(
+        result,
+        Err(CommandError::Api {
+            position_invalid: false,
+            ..
+        })
+    );
+}
+
+#[tokio::test]
+async fn too_many_requests_responses_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(429),
+    ])
+    .await;
+    let result = api::post::<Value>(
+        &client(&server),
+        "projects/5/notes",
+        &json!({
+            "body": "A note"
+        }),
+    )
+    .await;
+
+    assert_matches!(
+        result,
+        Err(CommandError::Api {
+            position_invalid: false,
+            ..
+        })
+    );
+}
+
+#[tokio::test]
+async fn internal_server_error_responses_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": ["is invalid"]
+            }
+        }))
+        .status(500),
+    ])
+    .await;
+    let result = api::post::<Value>(
+        &client(&server),
+        "projects/5/notes",
+        &json!({
+            "body": "A note"
+        }),
+    )
+    .await;
+
+    assert_matches!(
+        result,
+        Err(CommandError::Api {
+            position_invalid: false,
+            ..
+        })
+    );
+}
+
+#[tokio::test]
+async fn body_validation_errors_are_not_position_failures() {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "body": ["can't be blank"]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let result = api::post::<Value>(
+        &client(&server),
+        "projects/5/notes",
+        &json!({
+            "body": "A note"
+        }),
+    )
+    .await;
+
+    assert_matches!(
+        result,
+        Err(CommandError::Api {
+            position_invalid: false,
+            ..
+        })
+    );
+}
+
+#[tokio::test]
+async fn api_error_display_omits_malformed_response_bodies() {
+    let secret = "private-response-message";
+    let mut reply = Reply::json(json!({})).status(400);
+    reply.body = format!("invalid-json {secret}");
+    let server = Server::start(vec![reply]).await;
+    let error = api::post::<Value>(
+        &client(&server),
+        "projects/5/notes",
+        &json!({
+            "body": "A note"
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(!error.to_string().contains(secret));
+}
+
+#[tokio::test]
+async fn api_error_debug_omits_body_validation_messages() {
+    let secret = "private-response-message";
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "body": [secret]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = api::post::<Value>(
+        &client(&server),
+        "projects/5/notes",
+        &json!({
+            "body": "A note"
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(!format!("{error:?}").contains(secret));
+}
+
+#[tokio::test]
+async fn api_error_display_omits_body_validation_messages() {
+    let secret = "private-response-message";
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "body": [secret]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = api::post::<Value>(
+        &client(&server),
+        "projects/5/notes",
+        &json!({
+            "body": "A note"
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(!error.to_string().contains(secret));
+}
+
+#[tokio::test]
+async fn api_error_debug_omits_position_validation_messages() {
+    let secret = "private-response-message";
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "message": {
+                "position": [secret]
+            }
+        }))
+        .status(400),
+    ])
+    .await;
+    let error = api::post::<Value>(
+        &client(&server),
+        "projects/5/notes",
+        &json!({
+            "body": "A note"
+        }),
+    )
+    .await
+    .unwrap_err();
+
+    assert!(!format!("{error:?}").contains(secret));
+}
