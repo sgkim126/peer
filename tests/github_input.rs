@@ -175,11 +175,10 @@ fn gitlab_review_does_not_check_gh_availability() {
     let mut command = command(&directory);
     support::configure_glab(&mut command, directory.path(), true);
     let output = command
-        .env_remove("GITLAB_TOKEN")
         .args(["--gitlab", "123", "--repo", "owner/repo"])
         .output()
         .unwrap();
-    assert_error(output, "GitLab access requires a non-empty GITLAB_TOKEN");
+    assert_error(output, "glab command failed");
     assert!(!directory.path().join("gh-calls").exists());
 }
 

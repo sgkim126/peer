@@ -1,139 +1,13 @@
 use super::*;
 
+use serde_json::{Value, json};
 use std::assert_matches;
-use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use reqwest::Url;
-use serde_json::Value;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::net::TcpListener;
-use tokio::task::JoinHandle;
+use crate::gitlab::test_support::{Reply, Server};
 
 const HEAD: &str = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
 const OLD: &str = "dddddddddddddddddddddddddddddddddddddddd";
-
-struct Reply {
-    status: u16,
-    body: String,
-    headers: Vec<String>,
-    disconnect: bool,
-}
-
-impl Reply {
-    fn json(body: Value) -> Self {
-        Self {
-            status: 200,
-            body: body.to_string(),
-            headers: Vec::new(),
-            disconnect: false,
-        }
-    }
-
-    fn failure(status: u16, body: Value) -> Self {
-        Self {
-            status,
-            ..Self::json(body)
-        }
-    }
-}
-
-struct Server {
-    base: Url,
-    requests: Arc<Mutex<Vec<String>>>,
-    task: JoinHandle<()>,
-}
-
-impl Server {
-    async fn start(replies: Vec<Reply>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let base = Url::parse(&format!("http://{}/", listener.local_addr().unwrap())).unwrap();
-        let address = base.to_string();
-        let requests = Arc::new(Mutex::new(Vec::new()));
-        let received = requests.clone();
-        let task = tokio::spawn(async move {
-            for reply in replies {
-                let (mut stream, _) = listener.accept().await.unwrap();
-                let mut request = Vec::new();
-                let mut buffer = [0; 1024];
-                while !request.windows(4).any(|bytes| bytes == b"\r\n\r\n") {
-                    let count = stream.read(&mut buffer).await.unwrap();
-                    assert_ne!(count, 0);
-                    request.extend_from_slice(&buffer[..count]);
-                }
-                let header_end = request
-                    .windows(4)
-                    .position(|bytes| bytes == b"\r\n\r\n")
-                    .unwrap()
-                    + 4;
-                let content_length = String::from_utf8_lossy(&request[..header_end])
-                    .lines()
-                    .filter_map(|line| line.split_once(':'))
-                    .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
-                    .map(|(_, value)| value.trim().parse::<usize>().unwrap())
-                    .unwrap_or(0);
-                while request.len() < header_end + content_length {
-                    let count = stream.read(&mut buffer).await.unwrap();
-                    assert_ne!(count, 0);
-                    request.extend_from_slice(&buffer[..count]);
-                }
-                received
-                    .lock()
-                    .unwrap()
-                    .push(String::from_utf8(request).unwrap());
-                if reply.disconnect {
-                    continue;
-                }
-                let headers = reply
-                    .headers
-                    .iter()
-                    .map(|header| format!("{}\r\n", header.replace("{base}", &address)))
-                    .collect::<String>();
-                let response = format!(
-                    "HTTP/1.1 {} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n{}",
-                    reply.status,
-                    reply.body.len(),
-                    headers,
-                    reply.body,
-                );
-                let _ = stream.write_all(response.as_bytes()).await;
-            }
-        });
-        Self {
-            base,
-            requests,
-            task,
-        }
-    }
-
-    fn client(&self) -> GitLabClient {
-        GitLabClient::new("test-token", self.base.clone(), Duration::from_secs(2)).unwrap()
-    }
-
-    fn requests(&self) -> Vec<String> {
-        self.requests.lock().unwrap().clone()
-    }
-
-    fn posts(&self) -> Vec<(String, Value)> {
-        self.requests()
-            .into_iter()
-            .filter(|request| request.starts_with("POST "))
-            .map(|request| {
-                let (headers, body) = request.split_once("\r\n\r\n").unwrap();
-                (
-                    headers.lines().next().unwrap().to_string(),
-                    serde_json::from_str(body).unwrap(),
-                )
-            })
-            .collect()
-    }
-}
-
-impl Drop for Server {
-    fn drop(&mut self) {
-        self.task.abort();
-    }
-}
 
 fn repository() -> Repository {
     Repository::parse("group/subgroup/project").unwrap()
@@ -1189,6 +1063,31 @@ async fn confirms_inline_posts_after_disconnects_without_fallback() {
     let server = Server::start(replies).await;
     let report = server
         .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.recovered, 1);
+    assert_eq!(report.inline, 1);
+    assert_eq!(server.posts().len(), 1);
+}
+
+#[tokio::test]
+async fn confirms_inline_posts_after_process_timeouts_without_fallback() {
+    let input = input(&["Issue"]);
+    let review = PreparedReview::for_gitlab(&input, &repository());
+    let mut replies = before_inline();
+    replies.extend([
+        merge_request(),
+        Reply {
+            delay: Duration::from_secs(6),
+            ..Reply::json(json!({}))
+        },
+        known(&inline_body(&review.items[0]), 17),
+    ]);
+    let server = Server::start(replies).await;
+    let client = GitLabClient::new(server.glab(Duration::from_secs(5)));
+    let report = client
         .publish(&repository(), number(), &input)
         .await
         .unwrap();

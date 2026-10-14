@@ -2,6 +2,7 @@ use std::fmt;
 
 use crate::glab::GlabRunError;
 
+#[derive(Debug)]
 pub enum CommandError {
     Run(GlabRunError),
     Api {
@@ -22,41 +23,7 @@ pub enum CommandError {
     Serialize(serde_json::Error),
 }
 
-impl fmt::Debug for CommandError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Run(error) => f.debug_tuple("Run").field(error).finish(),
-            Self::Api {
-                endpoint,
-                status,
-                rate_limited,
-                position_invalid,
-                commit_invalid,
-            } => f
-                .debug_struct("Api")
-                .field("endpoint", endpoint)
-                .field("status", status)
-                .field("rate_limited", rate_limited)
-                .field("position_invalid", position_invalid)
-                .field("commit_invalid", commit_invalid)
-                .finish(),
-            Self::Decode { endpoint, source } => f
-                .debug_struct("Decode")
-                .field("endpoint", endpoint)
-                .field("source", source)
-                .finish(),
-            Self::InvalidResponse { command } => f
-                .debug_struct("InvalidResponse")
-                .field("command", command)
-                .finish(),
-            Self::InvalidPagination => f.write_str("InvalidPagination"),
-            Self::Serialize(error) => f.debug_tuple("Serialize").field(error).finish(),
-        }
-    }
-}
-
 impl CommandError {
-    #[cfg_attr(not(test), expect(dead_code))]
     pub fn may_have_published(&self) -> bool {
         match self {
             Self::Run(error) => error.may_have_run(),

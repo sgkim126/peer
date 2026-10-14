@@ -9,18 +9,10 @@ use super::CommandError;
 
 const API_URL: &str = "https://gitlab.com/api/v4/";
 
+#[derive(Debug)]
 pub struct Collection<T> {
     pub items: Vec<T>,
     pub project_accessible: bool,
-}
-
-impl<T: std::fmt::Debug> std::fmt::Debug for Collection<T> {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Collection")
-            .field("items", &self.items)
-            .field("project_accessible", &self.project_accessible)
-            .finish()
-    }
 }
 
 #[derive(Debug)]
@@ -39,14 +31,12 @@ impl Response<'_> {
     }
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn get<T: DeserializeOwned>(client: &GlabClient, path: &str) -> Result<T, CommandError> {
     request(client, &endpoint(path)?, "GET", None, false)
         .await
         .map(|(value, _)| value)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn post<T: DeserializeOwned>(
     client: &GlabClient,
     path: &str,
@@ -58,7 +48,6 @@ pub async fn post<T: DeserializeOwned>(
         .map(|(value, _)| value)
 }
 
-#[cfg_attr(not(test), expect(dead_code))]
 pub async fn list<T: DeserializeOwned>(
     client: &GlabClient,
     path: &str,

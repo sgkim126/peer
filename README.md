@@ -112,8 +112,9 @@ peer review main..HEAD | peer render
 ```
 
 To review a GitLab.com merge request, set `[gitlab].repo` to its target
-project, such as `group/subgroup/project`, and provide `GITLAB_TOKEN` with
-the `read_api` scope:
+project, such as `group/subgroup/project`, and authenticate glab with access
+to that project. Read access is sufficient for reviews; publishing needs
+API write access:
 
 ```bash
 peer review --gitlab 123 > review.json
