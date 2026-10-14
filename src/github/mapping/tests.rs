@@ -108,7 +108,7 @@ fn unsupported_conversation_marker_version_is_not_recognized() {
 
 #[test]
 fn conversation_marker_contains_no_fingerprints() {
-    assert!(fingerprints(CONVERSATION_MARKER).is_empty());
+    assert_eq!(fingerprints(CONVERSATION_MARKER).len(), 0);
 }
 
 #[test]

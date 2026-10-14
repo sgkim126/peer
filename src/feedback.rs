@@ -383,8 +383,8 @@ mod tests {
         let mut question: KnowledgeQuestion = serde_json::from_value(question()).unwrap();
         question.location = None;
         let feedback = prepare_question(&question, "Question".into());
-        assert!(feedback.commit.is_none());
-        assert!(feedback.location.is_none());
+        assert_eq!(feedback.commit, None);
+        assert_eq!(feedback.location, None);
     }
 
     #[test]
@@ -679,23 +679,23 @@ mod tests {
     #[test]
     fn unsupported_marker_version_is_not_recognized() {
         let valid = marker(&"a".repeat(64));
-        assert!(fingerprints(&valid.replace(":v1:", ":v2:")).is_empty());
+        assert_eq!(fingerprints(&valid.replace(":v1:", ":v2:")), HashSet::new());
     }
 
     #[test]
     fn marker_with_uppercase_hash_is_not_recognized() {
         let valid = marker(&"a".repeat(64));
-        assert!(fingerprints(&valid.replace('a', "A")).is_empty());
+        assert_eq!(fingerprints(&valid.replace('a', "A")), HashSet::new());
     }
 
     #[test]
     fn quoted_marker_is_not_recognized() {
         let valid = marker(&"a".repeat(64));
-        assert!(fingerprints(&format!("> {valid}")).is_empty());
+        assert_eq!(fingerprints(&format!("> {valid}")), HashSet::new());
     }
 
     #[test]
     fn marker_with_short_hash_is_not_recognized() {
-        assert!(fingerprints("<!-- peer-review:v1:abc -->").is_empty());
+        assert_eq!(fingerprints("<!-- peer-review:v1:abc -->"), HashSet::new());
     }
 }

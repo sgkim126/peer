@@ -1041,13 +1041,8 @@ mod tests {
     fn gitlab_source_round_trips_without_changing_legacy_documents() {
         let legacy = serde_json::json!({"ordered_commits": [], "stages": []});
         let document: RenderDocument = serde_json::from_value(legacy.clone()).unwrap();
-        assert!(document.source.is_none());
-        assert!(
-            serde_json::to_value(document)
-                .unwrap()
-                .get("source")
-                .is_none()
-        );
+        assert_eq!(document.source, None);
+        assert_eq!(serde_json::to_value(document).unwrap().get("source"), None);
         let mut input = legacy;
         input["source"] = serde_json::json!({
             "provider": "gitlab", "project_id": 12, "iid": 34, "source_project_id": 56,
@@ -1204,7 +1199,7 @@ mod tests {
 
         assert_eq!(document.questions.len(), 1);
         assert_eq!(document.recommendations.len(), 1);
-        assert!(document.findings.is_empty());
+        assert_eq!(document.findings, []);
         assert_matches!(
             &document.stages[0].outcome,
             RenderStageOutcome::Issues { .. }
@@ -1756,7 +1751,7 @@ mod tests {
 
         let value = serde_json::to_value(failure).unwrap();
 
-        assert!(value["usage"].is_array());
+        assert_matches!(&value["usage"], serde_json::Value::Array(_));
     }
 
     #[test]

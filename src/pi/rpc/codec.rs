@@ -199,6 +199,6 @@ mod tests {
                 max_bytes: MAX_RECORD_BYTES
             })
         );
-        assert!(output.is_empty());
+        assert_matches!(output.as_slice(), []);
     }
 }

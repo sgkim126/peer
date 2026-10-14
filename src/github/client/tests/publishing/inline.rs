@@ -60,8 +60,8 @@ async fn publishes_file_comment_at_the_current_head_with_a_hidden_fingerprint() 
     assert_eq!(params["commit_id"], "abc1234");
     assert_eq!(params["path"], "src/main.rs");
     assert_eq!(params["subject_type"], "file");
-    assert!(params.get("line").is_none());
-    assert!(params.get("side").is_none());
+    assert_matches!(params.get("line"), None);
+    assert_matches!(params.get("side"), None);
     assert!(
         !params["body"]
             .as_str()
@@ -250,7 +250,7 @@ async fn question_with_multiple_related_commits_is_published_inline() {
     assert_eq!(params["path"], "src/main.rs");
     assert_eq!(params["line"], 5);
     assert_eq!(params["side"], "RIGHT");
-    assert!(params.get("subject_type").is_none());
+    assert_matches!(params.get("subject_type"), None);
     let body = params["body"].as_str().unwrap();
     assert!(body.contains("**question/rationale**"));
     assert!(!body.contains(CONVERSATION_MARKER));
@@ -280,7 +280,7 @@ async fn question_with_a_mismatched_location_commit_is_published_inline() {
     assert_eq!(params["path"], "src/main.rs");
     assert_eq!(params["line"], 5);
     assert_eq!(params["side"], "RIGHT");
-    assert!(params.get("subject_type").is_none());
+    assert_matches!(params.get("subject_type"), None);
     let body = params["body"].as_str().unwrap();
     assert!(body.contains("**question/rationale**"));
     assert!(!body.contains(CONVERSATION_MARKER));
@@ -310,7 +310,7 @@ async fn question_without_related_commits_is_published_inline() {
     assert_eq!(params["path"], "src/main.rs");
     assert_eq!(params["line"], 5);
     assert_eq!(params["side"], "RIGHT");
-    assert!(params.get("subject_type").is_none());
+    assert_matches!(params.get("subject_type"), None);
     let body = params["body"].as_str().unwrap();
     assert!(body.contains("**question/rationale**"));
     assert!(!body.contains(CONVERSATION_MARKER));
@@ -414,7 +414,7 @@ async fn publishes_inline_on_a_changed_line() {
     assert_eq!(params["path"], "src/main.rs");
     assert_eq!(params["line"], 5);
     assert_eq!(params["side"], "RIGHT");
-    assert!(params.get("subject_type").is_none());
+    assert_matches!(params.get("subject_type"), None);
     assert!(
         !params["body"]
             .as_str()

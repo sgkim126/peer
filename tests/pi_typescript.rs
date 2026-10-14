@@ -1,3 +1,4 @@
+use std::assert_matches;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
@@ -20,7 +21,7 @@ fn typescript_tests_pass() {
         })
         .collect::<Vec<_>>();
     tests.sort();
-    assert!(!tests.is_empty(), "no Pi TypeScript tests found");
+    assert_matches!(tests.as_slice(), [_, ..], "no Pi TypeScript tests found");
 
     let output = Command::new("node")
         .arg("--test")
@@ -28,8 +29,9 @@ fn typescript_tests_pass() {
         .output()
         .expect("Node.js is required to run the Pi TypeScript tests");
 
-    assert!(
-        output.status.success(),
+    assert_eq!(
+        output.status.code(),
+        Some(0),
         "Pi TypeScript tests failed:\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr),

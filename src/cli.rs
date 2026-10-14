@@ -498,27 +498,39 @@ mod tests {
 
     #[test]
     fn github_rejects_zero_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github", "0"]).is_err());
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--github", "0"]),
+            Err(_)
+        );
     }
 
     #[test]
     fn github_rejects_negative_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github", "-1"]).is_err());
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--github", "-1"]),
+            Err(_)
+        );
     }
 
     #[test]
     fn github_rejects_nonnumeric_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github", "abc"]).is_err());
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--github", "abc"]),
+            Err(_)
+        );
     }
 
     #[test]
     fn github_rejects_fractional_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github", "1.5"]).is_err());
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--github", "1.5"]),
+            Err(_)
+        );
     }
 
     #[test]
     fn github_requires_a_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github"]).is_err());
+        assert_matches!(Cli::try_parse_from(["peer", "review", "--github"]), Err(_));
     }
 
     #[test]

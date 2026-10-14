@@ -30,7 +30,7 @@ const FINDING: &str = r#"{
 #[test]
 fn github_output_without_publishing_does_not_require_authentication_or_a_checkout() {
     let output = render(&["--format", "github", "--repo", "owner/repo"], FINDING);
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&output.stdout).contains("**finding/high**"));
 }
 
@@ -116,7 +116,7 @@ fn publishing_without_repo_rejects_terminal_before_reading_input() {
 fn publishing_with_default_format_reports_gh_authentication_failure() {
     let output = render(&["--github", "123", "--repo", "owner/repo"], FINDING);
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_matches!(output.stdout[..], []);
     assert!(String::from_utf8_lossy(&output.stderr).contains("gh command failed"));
 }
 
@@ -150,7 +150,7 @@ fn publishing_requires_gh_before_reading_stdin_or_configuration() {
     drop(stdin);
     let output = child.wait_with_output().unwrap();
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_matches!(output.stdout[..], []);
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("--github requires GitHub CLI (gh)"),

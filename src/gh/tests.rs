@@ -33,7 +33,7 @@ async fn passes_arguments_without_shell_interpretation() {
         .await
         .unwrap();
 
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(0));
     assert_eq!(output.stdout, b"a b\n$(echo unsafe)\nx; echo unsafe\n");
 }
 
@@ -51,7 +51,7 @@ async fn drains_large_output_while_writing_large_binary_input() {
         .await
         .unwrap();
 
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(0));
     let mut expected_stdout = vec![0; 196_608];
     expected_stdout.extend(stdin);
     assert_eq!(output.stdout, expected_stdout);

@@ -412,12 +412,12 @@ async fn rerunning_after_summary_failure_posts_only_the_summary() {
         Reply::json(json!([])),
     ]);
     let first = Server::start(replies).await;
-    assert!(
+    assert_matches!(
         first
             .client()
             .publish(&repository(), number(), &input)
-            .await
-            .is_err()
+            .await,
+        Err(_)
     );
     let bodies = posted_bodies(&first);
     assert_eq!(bodies.len(), 3);
@@ -494,12 +494,12 @@ async fn individual_feedback_retries_only_the_unpublished_items() {
     rejected.status = 403;
     replies.extend([created(), rejected]);
     let first = Server::start(replies).await;
-    assert!(
+    assert_matches!(
         first
             .client()
             .publish(&repository(), number(), &input)
-            .await
-            .is_err()
+            .await,
+        Err(_)
     );
     let bodies = posted_bodies(&first);
     assert_eq!(bodies.len(), 2);

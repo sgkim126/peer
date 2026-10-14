@@ -140,7 +140,7 @@ async fn publishes_head_findings_as_discussions_with_gitlab_positions() {
     assert_eq!(posts[0].1["position"]["start_sha"], OLD);
     assert_eq!(posts[0].1["position"]["head_sha"], HEAD);
     assert_eq!(posts[0].1["position"]["new_line"], 5);
-    assert!(posts[0].1["position"].get("old_line").is_none());
+    assert_matches!(posts[0].1["position"].get("old_line"), None);
 }
 
 #[tokio::test]
@@ -201,7 +201,7 @@ async fn unlocated_questions_with_one_related_commit_use_commit_threads() {
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[0].1.get("position").is_none());
+    assert_matches!(posts[0].1.get("position"), None);
     let body = posts[0].1["body"].as_str().unwrap();
     assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
@@ -270,7 +270,7 @@ async fn questions_in_unchanged_files_fall_back_to_commit_threads() {
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[0].1.get("position").is_none());
+    assert_matches!(posts[0].1.get("position"), None);
     let body = posts[0].1["body"].as_str().unwrap();
     assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
@@ -303,7 +303,7 @@ async fn questions_outside_diff_hunks_fall_back_to_file_threads() {
     assert!(posts[0].0.contains("/merge_requests/42/discussions "));
     assert_eq!(posts[0].1["position"]["position_type"], "file");
     assert_eq!(posts[0].1["commit_id"], HEAD);
-    assert!(posts[0].1["position"].get("new_line").is_none());
+    assert_matches!(posts[0].1["position"].get("new_line"), None);
     let body = posts[0].1["body"].as_str().unwrap();
     assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
@@ -807,8 +807,8 @@ async fn bad_request_commit_validation_failures_fall_back_to_the_commit() {
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[2].1.get("position").is_none());
-    assert!(posts[2].1.get("commit_id").is_none());
+    assert_matches!(posts[2].1.get("position"), None);
+    assert_matches!(posts[2].1.get("commit_id"), None);
     assert!(
         posts
             .iter()
@@ -849,8 +849,8 @@ async fn unprocessable_entity_commit_validation_failures_fall_back_to_the_commit
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[2].1.get("position").is_none());
-    assert!(posts[2].1.get("commit_id").is_none());
+    assert_matches!(posts[2].1.get("position"), None);
+    assert_matches!(posts[2].1.get("commit_id"), None);
     assert!(
         posts
             .iter()
@@ -1302,7 +1302,7 @@ async fn fallback_items_are_separate_from_each_other_and_the_summary() {
                 .0
                 .contains(&format!("/repository/commits/{HEAD}/discussions "))
         );
-        assert!(posts[index].1.get("position").is_none());
+        assert_matches!(posts[index].1.get("position"), None);
         let body = posts[index].1["body"].as_str().unwrap();
         assert!(body.contains(message));
         assert!(!body.contains(CONVERSATION_MARKER));
@@ -1578,8 +1578,8 @@ async fn rejected_line_and_file_positions_fall_back_to_the_commit() {
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[2].1.get("position").is_none());
-    assert!(posts[2].1.get("commit_id").is_none());
+    assert_matches!(posts[2].1.get("position"), None);
+    assert_matches!(posts[2].1.get("commit_id"), None);
     assert_eq!(posts[0].1["body"], posts[1].1["body"]);
     assert_eq!(posts[1].1["body"], posts[2].1["body"]);
 }
@@ -1676,8 +1676,8 @@ async fn unavailable_line_file_and_commit_targets_fall_back_to_an_independent_mr
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
     assert!(posts[3].0.contains("/merge_requests/42/discussions "));
-    assert!(posts[3].1.get("position").is_none());
-    assert!(posts[3].1.get("commit_id").is_none());
+    assert_matches!(posts[3].1.get("position"), None);
+    assert_matches!(posts[3].1.get("commit_id"), None);
     assert!(
         posts
             .iter()
@@ -1717,7 +1717,7 @@ async fn unprocessable_commit_validation_failure_falls_back_to_an_independent_mr
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
     assert!(posts[1].0.contains("/merge_requests/42/discussions "));
-    assert!(posts[1].1.get("position").is_none());
+    assert_matches!(posts[1].1.get("position"), None);
 }
 
 #[tokio::test]
@@ -1741,7 +1741,7 @@ async fn unlocated_questions_with_multiple_related_commits_use_independent_mr_th
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
     assert!(posts[0].0.contains("/merge_requests/42/discussions "));
-    assert!(posts[0].1.get("commit_id").is_none());
+    assert_matches!(posts[0].1.get("commit_id"), None);
     assert!(
         !server
             .requests()

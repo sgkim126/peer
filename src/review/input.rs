@@ -87,6 +87,8 @@ impl ReviewInput {
 mod tests {
     use super::*;
 
+    use std::assert_matches;
+
     use crate::git::run_git;
     use crate::stage::{ReviewContextStage, ReviewStage};
 
@@ -179,8 +181,8 @@ mod tests {
         .await
         .unwrap();
 
-        assert!(input.cumulative_diff.is_empty());
-        assert!(input.target_diff_files.is_empty());
+        assert_eq!(input.cumulative_diff, "");
+        assert_matches!(input.target_diff_files.as_slice(), []);
         let stage = ReviewContextStage::new(&input);
         assert!(!stage.request().prompt.contains("target.diff:file.txt"));
     }

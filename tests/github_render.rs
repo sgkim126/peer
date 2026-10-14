@@ -54,8 +54,9 @@ fn render(directory: &Path, arguments: &[&str], input: &str) -> Output {
 }
 
 fn assert_rendered(output: Output, expected: &str) {
-    assert!(
-        output.status.success(),
+    assert_eq!(
+        output.status.code(),
+        Some(0),
         "unexpected stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -65,7 +66,7 @@ fn assert_rendered(output: Output, expected: &str) {
 
 fn assert_error(output: Output, expected: &str) {
     assert!(!output.status.success());
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, Vec::<u8>::new());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains(expected), "unexpected stderr: {stderr}");
 }
@@ -328,8 +329,9 @@ fn terminal_renders_model_usage_arrays_and_derives_totals_from_stages() {
         &["--format", "terminal"],
         &input.to_string(),
     );
-    assert!(
-        output.status.success(),
+    assert_eq!(
+        output.status.code(),
+        Some(0),
         "stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );

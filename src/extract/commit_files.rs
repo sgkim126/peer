@@ -309,7 +309,7 @@ mod tests {
 
     #[test]
     fn parse_binary_paths_empty_input() {
-        assert!(parse_binary_paths("").unwrap().is_empty());
+        assert_eq!(parse_binary_paths("").unwrap(), HashSet::new());
     }
 
     struct Repo {
