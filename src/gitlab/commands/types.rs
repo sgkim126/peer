@@ -6,8 +6,19 @@ use crate::git::CommitHash;
 use crate::gitlab::DiffRefs;
 
 #[derive(Debug, Deserialize)]
+pub struct CommitRef {
+    pub id: CommitHash,
+    pub parent_ids: Option<Vec<CommitHash>>,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct PublishedNote {
     pub id: NonZeroU64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PublishedDiscussion {
+    pub notes: Vec<PublishedNote>,
 }
 
 #[derive(Debug, Deserialize)]

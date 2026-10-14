@@ -1,6 +1,8 @@
 mod api;
+mod create_commit_discussion;
 mod create_note;
 mod get_merge_request;
+mod list_mr_commits;
 
 use std::num::NonZeroU64;
 use std::time::Duration;
@@ -20,7 +22,6 @@ fn repository() -> Repository {
     Repository::parse("group/project").unwrap()
 }
 
-#[expect(dead_code)]
 fn commit() -> CommitHash {
     CommitHash::new(&"a".repeat(40)).unwrap()
 }

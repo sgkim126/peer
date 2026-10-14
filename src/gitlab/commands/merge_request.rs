@@ -1,9 +1,10 @@
 use std::num::NonZeroU64;
 
+use crate::git::CommitHash;
 use crate::glab::GlabClient;
 
 use super::super::Repository;
-use super::{CommandError, MergeRequest, api};
+use super::{CommandError, CommitRef, MergeRequest, api};
 
 #[derive(Clone, Copy)]
 pub struct MergeRequestInput<'a> {
@@ -21,9 +22,32 @@ impl MergeRequestInput<'_> {
     }
 }
 
+#[derive(Clone, Copy)]
+pub struct CommitInput<'a> {
+    pub repository: &'a Repository,
+    pub commit: &'a CommitHash,
+}
+
+impl CommitInput<'_> {
+    pub fn path(self) -> String {
+        format!(
+            "{}/repository/commits/{}",
+            self.repository.api_path(),
+            self.commit
+        )
+    }
+}
+
 pub async fn get_merge_request(
     client: &GlabClient,
     input: MergeRequestInput<'_>,
 ) -> Result<MergeRequest, CommandError> {
     api::get(client, &input.path()).await
+}
+
+pub async fn list_mr_commits(
+    client: &GlabClient,
+    input: MergeRequestInput<'_>,
+) -> Result<Vec<CommitRef>, CommandError> {
+    api::list(client, &format!("{}/commits", input.path())).await
 }

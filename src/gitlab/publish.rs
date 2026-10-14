@@ -10,7 +10,10 @@ use crate::git::CommitHash;
 use crate::render::RenderDocument;
 use crate::stage::StageTarget;
 
-use super::commands::{self, CreateNoteInput, MergeRequest, MergeRequestInput, PublishedNote};
+use super::commands::{
+    self, CommitInput, CommitRef, CreateCommitDiscussionInput, CreateNoteInput, MergeRequest,
+    MergeRequestInput, PublishedDiscussion,
+};
 use super::position::{ChangedFile, comment_position};
 use super::{
     CONVERSATION_MARKER, DiffRefs, GitLabClient, GitLabError, GitLabReviewSource, Repository,
@@ -157,12 +160,6 @@ impl From<GitLabError> for PublishFailure {
     }
 }
 
-#[derive(Deserialize)]
-struct CommitRef {
-    id: CommitHash,
-    parent_ids: Option<Vec<CommitHash>>,
-}
-
 impl CommitRef {
     fn diff_refs(&self) -> Option<DiffRefs> {
         let parents = self.parent_ids.as_ref()?;
@@ -176,11 +173,6 @@ impl CommitRef {
             head_sha: self.id.clone(),
         })
     }
-}
-
-#[derive(Deserialize)]
-struct PublishedDiscussion {
-    notes: Vec<PublishedNote>,
 }
 
 #[derive(Deserialize)]
@@ -245,7 +237,9 @@ impl GitLabClient {
         }
         let prefix = format!("{}/merge_requests/{number}", repository.api_path());
         let merge_request_input = MergeRequestInput { repository, number };
-        let commits = self.list::<CommitRef>(&format!("{prefix}/commits")).await?;
+        let commits = commands::list_mr_commits(&self.glab, merge_request_input)
+            .await
+            .map_err(GitLabError::from)?;
         validate_commits(input, &commits, &source)?;
 
         let mut seen = self
@@ -379,7 +373,18 @@ impl GitLabClient {
             for (path, payload, commit_target, inline) in candidates {
                 self.assert_current(repository, number, &merge_request)
                     .await?;
-                let result = self.post::<PublishedDiscussion>(&path, &payload).await;
+                let result = match commit_target {
+                    Some(commit) => commands::create_commit_discussion(
+                        &self.glab,
+                        CreateCommitDiscussionInput {
+                            commit: CommitInput { repository, commit },
+                            body: &body,
+                        },
+                    )
+                    .await
+                    .map_err(GitLabError::from),
+                    None => self.post::<PublishedDiscussion>(&path, &payload).await,
+                };
                 match result {
                     Ok(discussion) => match discussion.notes.first() {
                         Some(note) => report.record(

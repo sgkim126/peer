@@ -8,7 +8,7 @@ use crate::context::ReviewContext;
 use crate::git::CommitHash;
 use crate::glab::GlabClient;
 
-use super::commands::{self, Collection, MergeRequest, MergeRequestInput};
+use super::commands::{self, Collection, CommitRef, MergeRequest, MergeRequestInput};
 use super::{GitLabError, Repository, mapping};
 use serde::de::DeserializeOwned;
 
@@ -241,11 +241,6 @@ impl MergeRequest {
 
 #[cfg(test)]
 mod tests;
-
-#[derive(Debug, Deserialize)]
-struct CommitRef {
-    id: CommitHash,
-}
 
 #[derive(Debug, Deserialize)]
 pub struct Discussion {

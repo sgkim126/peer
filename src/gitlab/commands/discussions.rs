@@ -2,7 +2,26 @@ use serde::Serialize;
 
 use crate::glab::GlabClient;
 
-use super::{CommandError, MergeRequestInput, PublishedNote, api};
+use super::{
+    CommandError, CommitInput, MergeRequestInput, PublishedDiscussion, PublishedNote, api,
+};
+
+pub struct CreateCommitDiscussionInput<'a> {
+    pub commit: CommitInput<'a>,
+    pub body: &'a str,
+}
+
+pub async fn create_commit_discussion(
+    client: &GlabClient,
+    input: CreateCommitDiscussionInput<'_>,
+) -> Result<PublishedDiscussion, CommandError> {
+    api::post(
+        client,
+        &format!("{}/discussions", input.commit.path()),
+        &NoteBody { body: input.body },
+    )
+    .await
+}
 
 pub struct CreateNoteInput<'a> {
     pub merge_request: MergeRequestInput<'a>,
