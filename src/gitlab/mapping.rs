@@ -5,8 +5,7 @@ use crate::context::{
 };
 
 use super::CONVERSATION_MARKER;
-use super::client::{Discussion, Note};
-use super::commands::MergeRequest;
+use super::commands::{Discussion, MergeRequest, Note};
 
 pub fn review_context(merge_request: MergeRequest, discussions: Vec<Discussion>) -> ReviewContext {
     // Merge repeated discussion entries before sorting and filtering. A reply

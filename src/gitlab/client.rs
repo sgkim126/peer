@@ -1,16 +1,15 @@
 use std::collections::HashSet;
-use std::num::{NonZeroU32, NonZeroU64};
+use std::num::NonZeroU64;
 
 use log::debug;
-use serde::{Deserialize, Deserializer, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de::DeserializeOwned};
 
 use crate::context::ReviewContext;
 use crate::git::CommitHash;
 use crate::glab::GlabClient;
 
-use super::commands::{self, Collection, CommitRef, MergeRequest, MergeRequestInput};
+use super::commands::{self, ListCommitDiscussionsInput, MergeRequest, MergeRequestInput};
 use super::{GitLabError, Repository, mapping};
-use serde::de::DeserializeOwned;
 
 pub struct GitLabClient {
     pub glab: GlabClient,
@@ -35,9 +34,8 @@ impl GitLabClient {
         debug!("loading GitLab review input: repository={repository} merge_request={number}");
         let merge_request = self.merge_request(repository, number).await?;
         let source = merge_request.source(number)?;
-        let prefix = format!("{}/merge_requests/{number}", repository.api_path());
-        let commits: Vec<_> = self
-            .list::<CommitRef>(&format!("{prefix}/commits"))
+        let input = MergeRequestInput { repository, number };
+        let commits: Vec<_> = commands::list_mr_commits(&self.glab, input)
             .await?
             .into_iter()
             .map(|commit| commit.id)
@@ -49,9 +47,7 @@ impl GitLabClient {
         {
             return Err(GitLabError::IncompleteCommits);
         }
-        let mut discussions = self
-            .list::<Discussion>(&format!("{prefix}/discussions"))
-            .await?;
+        let mut discussions = commands::list_mr_discussions(&self.glab, input).await?;
         let source_project_id = source
             .source_project_id
             .filter(|project_id| *project_id != source.project_id);
@@ -59,9 +55,16 @@ impl GitLabClient {
         let mut first_source_request = true;
         for commit in &commits {
             discussions.extend(
-                self.commit_discussions(source.project_id, commit, false)
-                    .await?
-                    .items,
+                commands::list_commit_discussions(
+                    &self.glab,
+                    ListCommitDiscussionsInput {
+                        project_id: source.project_id,
+                        commit,
+                        skip_inaccessible_project: false,
+                    },
+                )
+                .await?
+                .items,
             );
             if let Some(project_id) = source_project_id
                 && source_project_accessible
@@ -69,9 +72,15 @@ impl GitLabClient {
                 // A token scoped to the target may not be able to read the fork.
                 // Only the first request can skip an inaccessible fork; later failures
                 // must abort the review so partially loaded comments are never used.
-                let comments = self
-                    .commit_discussions(project_id, commit, first_source_request)
-                    .await?;
+                let comments = commands::list_commit_discussions(
+                    &self.glab,
+                    ListCommitDiscussionsInput {
+                        project_id,
+                        commit,
+                        skip_inaccessible_project: first_source_request,
+                    },
+                )
+                .await?;
                 first_source_request = false;
                 source_project_accessible = comments.project_accessible;
                 discussions.extend(comments.items);
@@ -114,44 +123,12 @@ impl GitLabClient {
         Ok(commands::api::list(&self.glab, path).await?)
     }
 
-    async fn list_with_access<T: DeserializeOwned>(
-        &self,
-        path: &str,
-        skip_inaccessible_project: bool,
-    ) -> Result<Collection<T>, GitLabError> {
-        Ok(commands::api::pages(&self.glab, path, skip_inaccessible_project).await?)
-    }
-
     pub async fn post<T: DeserializeOwned>(
         &self,
         path: &str,
         body: &impl Serialize,
     ) -> Result<T, GitLabError> {
         Ok(commands::api::post(&self.glab, path, body).await?)
-    }
-
-    async fn commit_discussions(
-        &self,
-        project_id: u64,
-        commit: &CommitHash,
-        skip_inaccessible_project: bool,
-    ) -> Result<Collection<Discussion>, GitLabError> {
-        let mut discussions = self
-            .list_with_access::<Discussion>(
-                &format!("projects/{project_id}/repository/commits/{commit}/discussions"),
-                skip_inaccessible_project,
-            )
-            .await?;
-        // Commit notes omit commit_id, so preserve the requested SHA
-        // on every note, including replies whose root was deleted.
-        for note in discussions
-            .items
-            .iter_mut()
-            .flat_map(|discussion| &mut discussion.notes)
-        {
-            note.commit_id.get_or_insert_with(|| commit.clone());
-        }
-        Ok(discussions)
     }
 }
 
@@ -241,39 +218,3 @@ impl MergeRequest {
 
 #[cfg(test)]
 mod tests;
-
-#[derive(Debug, Deserialize)]
-pub struct Discussion {
-    pub id: String,
-    pub notes: Vec<Note>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Note {
-    pub id: u64,
-    pub body: String,
-    pub author: Option<User>,
-    pub created_at: String,
-    pub system: bool,
-    #[serde(default)]
-    pub internal: bool,
-    #[serde(default)]
-    pub confidential: bool,
-    pub commit_id: Option<CommitHash>,
-    pub position: Option<Position>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct User {
-    pub username: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct Position {
-    pub position_type: String,
-    pub head_sha: Option<CommitHash>,
-    pub new_path: Option<String>,
-    pub old_path: Option<String>,
-    pub new_line: Option<NonZeroU32>,
-    pub old_line: Option<NonZeroU32>,
-}

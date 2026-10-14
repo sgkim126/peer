@@ -1,4 +1,4 @@
-use std::num::NonZeroU64;
+use std::num::{NonZeroU32, NonZeroU64};
 
 use serde::{Deserialize, Deserializer};
 
@@ -54,4 +54,40 @@ where
             start_sha: refs.start_sha?,
         })
     }))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Discussion {
+    pub id: String,
+    pub notes: Vec<Note>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Note {
+    pub id: u64,
+    pub body: String,
+    pub author: Option<User>,
+    pub created_at: String,
+    pub system: bool,
+    #[serde(default)]
+    pub internal: bool,
+    #[serde(default)]
+    pub confidential: bool,
+    pub commit_id: Option<CommitHash>,
+    pub position: Option<Position>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct User {
+    pub username: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct Position {
+    pub position_type: String,
+    pub head_sha: Option<CommitHash>,
+    pub new_path: Option<String>,
+    pub old_path: Option<String>,
+    pub new_line: Option<NonZeroU32>,
+    pub old_line: Option<NonZeroU32>,
 }
