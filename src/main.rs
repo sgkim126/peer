@@ -12,6 +12,7 @@ mod gitlab;
 mod glab;
 mod init;
 mod llm;
+mod patch;
 mod pi;
 mod render;
 mod review;
