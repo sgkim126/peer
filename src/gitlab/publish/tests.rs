@@ -143,31 +143,48 @@ async fn publishes_head_findings_as_discussions_with_gitlab_positions() {
     assert_matches!(posts[0].1["position"].get("old_line"), None);
 }
 
+async fn assert_head_question_uses_its_location(related_commits: &[&str]) {
+    let mut input = question_input();
+    input.questions[0].related_commits = related_commits
+        .iter()
+        .map(|commit| CommitHash::new(commit).unwrap())
+        .collect();
+    let mut replies = before_inline();
+    replies.extend([merge_request(), created(17)]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.inline, 1);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 1);
+    assert!(posts[0].0.contains("/discussions "));
+    assert_eq!(posts[0].1["position"]["head_sha"], HEAD);
+    assert_eq!(posts[0].1["position"]["new_line"], 5);
+    assert!(posts[0].1["body"].as_str().unwrap().contains("Why?"));
+}
+
 #[tokio::test]
-async fn publishes_head_questions_regardless_of_related_commits() {
-    for related_commits in [&[HEAD][..], &[OLD, HEAD], &[], &[OLD]] {
-        let mut input = question_input();
-        input.questions[0].related_commits = related_commits
-            .iter()
-            .map(|commit| CommitHash::new(commit).unwrap())
-            .collect();
-        let mut replies = before_inline();
-        replies.extend([merge_request(), created(17)]);
-        let server = Server::start(replies).await;
-        let report = server
-            .client()
-            .publish(&repository(), number(), &input)
-            .await
-            .unwrap();
-        assert_eq!(report.published, 1, "{related_commits:?}");
-        assert_eq!(report.inline, 1, "{related_commits:?}");
-        let posts = server.posts();
-        assert_eq!(posts.len(), 1);
-        assert!(posts[0].0.contains("/discussions "));
-        assert_eq!(posts[0].1["position"]["head_sha"], HEAD);
-        assert_eq!(posts[0].1["position"]["new_line"], 5);
-        assert!(posts[0].1["body"].as_str().unwrap().contains("Why?"));
-    }
+async fn publishes_head_questions_with_a_matching_related_commit() {
+    assert_head_question_uses_its_location(&[HEAD]).await;
+}
+
+#[tokio::test]
+async fn publishes_head_questions_with_multiple_related_commits() {
+    assert_head_question_uses_its_location(&[OLD, HEAD]).await;
+}
+
+#[tokio::test]
+async fn publishes_head_questions_without_related_commits() {
+    assert_head_question_uses_its_location(&[]).await;
+}
+
+#[tokio::test]
+async fn publishes_head_questions_with_a_different_related_commit() {
+    assert_head_question_uses_its_location(&[OLD]).await;
 }
 
 #[tokio::test]
@@ -1520,27 +1537,34 @@ async fn absent_parent_metadata_skips_positions_without_assuming_a_root_commit()
     );
 }
 
+async fn assert_unavailable_commit_diff_uses_a_commit_thread(status: u16) {
+    let mut replies = before_inline();
+    replies[5] = Reply::failure(status, json!({ "message": "diff unavailable" }));
+    replies.extend([merge_request(), created(17)]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input(&["Issue"]))
+        .await
+        .unwrap();
+    assert_eq!(report.inline, 0);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 1);
+    assert!(
+        posts[0]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
+}
+
 #[tokio::test]
-async fn unavailable_commit_diffs_fall_back_to_commit_threads() {
-    for status in [404, 413] {
-        let mut replies = before_inline();
-        replies[5] = Reply::failure(status, json!({ "message": "diff unavailable" }));
-        replies.extend([merge_request(), created(17)]);
-        let server = Server::start(replies).await;
-        let report = server
-            .client()
-            .publish(&repository(), number(), &input(&["Issue"]))
-            .await
-            .unwrap();
-        assert_eq!(report.inline, 0, "{status}");
-        let posts = server.posts();
-        assert_eq!(posts.len(), 1, "{status}");
-        assert!(
-            posts[0]
-                .0
-                .contains(&format!("/repository/commits/{HEAD}/discussions "))
-        );
-    }
+async fn missing_commit_diffs_fall_back_to_commit_threads() {
+    assert_unavailable_commit_diff_uses_a_commit_thread(404).await;
+}
+
+#[tokio::test]
+async fn oversized_commit_diffs_fall_back_to_commit_threads() {
+    assert_unavailable_commit_diff_uses_a_commit_thread(413).await;
 }
 
 #[tokio::test]
@@ -1774,56 +1798,63 @@ async fn existing_commit_threads_suppress_items_before_fetching_diffs() {
     assert_matches!(server.posts()[..], []);
 }
 
-#[tokio::test]
-async fn earlier_commit_threads_suppress_questions_after_their_target_changes() {
+async fn assert_earlier_commit_thread_suppresses_question(related_commits: &[&str]) {
     let mut previous = question_input();
     previous.questions[0].location = None;
     previous.questions[0].related_commits = vec![CommitHash::new(OLD).unwrap()];
     let previous_review = PreparedReview::for_gitlab(&previous, &repository());
     let previous_body = inline_body(&previous_review.items[0]);
 
-    for related_commits in [&[HEAD][..], &[HEAD, OLD]] {
-        let mut input = question_input();
-        input.questions[0].location = None;
-        input.questions[0].related_commits = related_commits
-            .iter()
-            .map(|commit| CommitHash::new(commit).unwrap())
-            .collect();
-        let mut first_page = empty_discussions();
-        first_page.headers.push(format!(
-            "Link: <{{base}}projects/group%2Fsubgroup%2Fproject/repository/commits/{OLD}/discussions?per_page=100&page=2>; rel=\"next\"",
-        ));
-        let server = Server::start(vec![
-            merge_request(),
-            commits(),
-            empty_discussions(),
-            empty_discussions(),
-            first_page,
-            Reply::json(json!([{
-                "notes": [
-                    { "id": 16, "body": "Existing discussion" },
-                    { "id": 17, "body": previous_body, "resolved": true },
-                ],
-            }])),
-        ])
-        .await;
+    let mut input = question_input();
+    input.questions[0].location = None;
+    input.questions[0].related_commits = related_commits
+        .iter()
+        .map(|commit| CommitHash::new(commit).unwrap())
+        .collect();
+    let mut first_page = empty_discussions();
+    first_page.headers.push(format!(
+        "Link: <{{base}}projects/group%2Fsubgroup%2Fproject/repository/commits/{OLD}/discussions?per_page=100&page=2>; rel=\"next\"",
+    ));
+    let server = Server::start(vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        empty_discussions(),
+        first_page,
+        Reply::json(json!([{
+            "notes": [
+                { "id": 16, "body": "Existing discussion" },
+                { "id": 17, "body": previous_body, "resolved": true },
+            ],
+        }])),
+    ])
+    .await;
 
-        let report = server
-            .client()
-            .publish(&repository(), number(), &input)
-            .await
-            .unwrap();
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
 
-        assert_eq!(report.published, 0, "{related_commits:?}");
-        assert_eq!(report.skipped, 1, "{related_commits:?}");
-        assert_matches!(server.posts()[..], []);
-        let requests = server.requests();
-        assert_eq!(requests.len(), 6);
-        assert!(requests[3].contains(&format!("/repository/commits/{HEAD}/discussions?")));
-        assert!(requests[4].contains(&format!("/repository/commits/{OLD}/discussions?")));
-        assert!(requests[5].contains(&format!("/repository/commits/{OLD}/discussions?")));
-        assert!(requests[5].contains("page=2"));
-    }
+    assert_eq!(report.published, 0);
+    assert_eq!(report.skipped, 1);
+    assert_matches!(server.posts()[..], []);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 6);
+    assert!(requests[3].contains(&format!("/repository/commits/{HEAD}/discussions?")));
+    assert!(requests[4].contains(&format!("/repository/commits/{OLD}/discussions?")));
+    assert!(requests[5].contains(&format!("/repository/commits/{OLD}/discussions?")));
+    assert!(requests[5].contains("page=2"));
+}
+
+#[tokio::test]
+async fn earlier_commit_threads_suppress_questions_retargeted_to_the_head() {
+    assert_earlier_commit_thread_suppresses_question(&[HEAD]).await;
+}
+
+#[tokio::test]
+async fn earlier_commit_threads_suppress_questions_with_multiple_related_commits() {
+    assert_earlier_commit_thread_suppresses_question(&[HEAD, OLD]).await;
 }
 
 #[tokio::test]

@@ -488,56 +488,83 @@ mod tests {
         );
     }
 
-    #[test]
-    fn reorder_and_merge_recommendations_require_two_related_commits() {
-        let (input, context) = input();
-        let stage = KnowledgeStage::new(&input, &context);
-        for kind in [
-            StructuralRecommendationKind::ReorderCommits,
-            StructuralRecommendationKind::MergeSquash,
-        ] {
-            let report = KnowledgeReport {
-                summary: "The commits need structural changes".to_string(),
-                questions: vec![],
-                recommendations: vec![StructuralRecommendation {
-                    kind,
-                    message: "Update the commit structure".to_string(),
-                    rationale: "This recommendation operates on multiple commits".to_string(),
-                    related_commits: vec![CommitHash::new("abc1234").unwrap()],
-                }],
-            };
-
-            assert_eq!(
-                stage.validate_report(&report).unwrap_err(),
-                "reorder and merge/squash recommendations require at least two distinct related commits"
-            );
+    fn structural_recommendation_report(
+        kind: StructuralRecommendationKind,
+        related_commits: Vec<CommitHash>,
+    ) -> KnowledgeReport {
+        KnowledgeReport {
+            summary: "The commits need structural changes".to_string(),
+            questions: vec![],
+            recommendations: vec![StructuralRecommendation {
+                kind,
+                message: "Update the commit structure".to_string(),
+                rationale: "This recommendation operates on multiple commits".to_string(),
+                related_commits,
+            }],
         }
     }
 
     #[test]
-    fn reorder_and_merge_recommendations_reject_duplicate_related_commits() {
+    fn reorder_recommendations_require_two_related_commits() {
         let (input, context) = input();
         let stage = KnowledgeStage::new(&input, &context);
-        for kind in [
+        let related = CommitHash::new("abc1234").unwrap();
+        let report = structural_recommendation_report(
             StructuralRecommendationKind::ReorderCommits,
-            StructuralRecommendationKind::MergeSquash,
-        ] {
-            let related = CommitHash::new("abc1234").unwrap();
-            let report = KnowledgeReport {
-                summary: "The commits need structural changes".to_string(),
-                questions: vec![],
-                recommendations: vec![StructuralRecommendation {
-                    kind,
-                    message: "Update the commit structure".to_string(),
-                    rationale: "This recommendation operates on multiple commits".to_string(),
-                    related_commits: vec![related.clone(), related],
-                }],
-            };
+            vec![related],
+        );
 
-            assert_eq!(
-                stage.validate_report(&report).unwrap_err(),
-                "reorder and merge/squash recommendations require at least two distinct related commits"
-            );
-        }
+        assert_eq!(
+            stage.validate_report(&report),
+            Err("reorder and merge/squash recommendations require at least two distinct related commits".to_string())
+        );
+    }
+
+    #[test]
+    fn reorder_recommendations_reject_duplicate_related_commits() {
+        let (input, context) = input();
+        let stage = KnowledgeStage::new(&input, &context);
+        let related = CommitHash::new("abc1234").unwrap();
+        let report = structural_recommendation_report(
+            StructuralRecommendationKind::ReorderCommits,
+            vec![related.clone(), related],
+        );
+
+        assert_eq!(
+            stage.validate_report(&report),
+            Err("reorder and merge/squash recommendations require at least two distinct related commits".to_string())
+        );
+    }
+
+    #[test]
+    fn merge_recommendations_require_two_related_commits() {
+        let (input, context) = input();
+        let stage = KnowledgeStage::new(&input, &context);
+        let related = CommitHash::new("abc1234").unwrap();
+        let report = structural_recommendation_report(
+            StructuralRecommendationKind::MergeSquash,
+            vec![related],
+        );
+
+        assert_eq!(
+            stage.validate_report(&report),
+            Err("reorder and merge/squash recommendations require at least two distinct related commits".to_string())
+        );
+    }
+
+    #[test]
+    fn merge_recommendations_reject_duplicate_related_commits() {
+        let (input, context) = input();
+        let stage = KnowledgeStage::new(&input, &context);
+        let related = CommitHash::new("abc1234").unwrap();
+        let report = structural_recommendation_report(
+            StructuralRecommendationKind::MergeSquash,
+            vec![related.clone(), related],
+        );
+
+        assert_eq!(
+            stage.validate_report(&report),
+            Err("reorder and merge/squash recommendations require at least two distinct related commits".to_string())
+        );
     }
 }

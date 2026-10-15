@@ -481,14 +481,21 @@ mod tests {
     }
 
     #[test]
-    fn locates_context_before_and_after_replaced_lines() {
+    fn locates_context_before_replaced_lines() {
         let files = [file("@@ -4,3 +4,3 @@ name\n context\n-old\n+new\n context")];
-        for line in [4, 5, 6] {
-            assert_eq!(
-                comment_position(&files, &location(Some(line))),
-                Some(right(line))
-            );
-        }
+        assert_eq!(comment_position(&files, &location(Some(4))), Some(right(4)));
+    }
+
+    #[test]
+    fn locates_added_lines_after_a_deletion() {
+        let files = [file("@@ -4,3 +4,3 @@ name\n context\n-old\n+new\n context")];
+        assert_eq!(comment_position(&files, &location(Some(5))), Some(right(5)));
+    }
+
+    #[test]
+    fn locates_context_after_replaced_lines() {
+        let files = [file("@@ -4,3 +4,3 @@ name\n context\n-old\n+new\n context")];
+        assert_eq!(comment_position(&files, &location(Some(6))), Some(right(6)));
     }
 
     #[test]
@@ -521,11 +528,21 @@ mod tests {
     }
 
     #[test]
-    fn rejects_zero_and_lines_outside_hunks() {
+    fn rejects_zero_line_numbers() {
         let files = [file("@@ -4,3 +4,3 @@\n context\n-old\n+new\n context")];
-        for line in [0, 3, 7] {
-            assert_eq!(comment_position(&files, &location(Some(line))), None);
-        }
+        assert_eq!(comment_position(&files, &location(Some(0))), None);
+    }
+
+    #[test]
+    fn rejects_lines_before_hunks() {
+        let files = [file("@@ -4,3 +4,3 @@\n context\n-old\n+new\n context")];
+        assert_eq!(comment_position(&files, &location(Some(3))), None);
+    }
+
+    #[test]
+    fn rejects_lines_after_hunks() {
+        let files = [file("@@ -4,3 +4,3 @@\n context\n-old\n+new\n context")];
+        assert_eq!(comment_position(&files, &location(Some(7))), None);
     }
 
     #[test]

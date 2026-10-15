@@ -241,35 +241,49 @@ fn retains_replies_when_the_root_or_author_is_missing() {
     assert_eq!(comments[1].body, "Inline 12");
 }
 
+fn assert_inline_location(comment: Value, expected_commit: &str, expected_line: Option<u32>) {
+    let context = with_inline(vec![comment]);
+    let thread = &context.comments[0];
+    assert_eq!(thread.commit.as_ref().unwrap().as_ref(), expected_commit);
+    let location = thread.location.as_ref().unwrap();
+    assert_eq!(location.path, "src/root.rs");
+    assert_eq!(location.line.map(|line| line.get()), expected_line);
+}
+
 #[test]
-fn pairs_right_side_lines_with_the_matching_commit() {
-    let current = inline(1, None);
+fn pairs_current_right_side_lines_with_the_current_commit() {
+    assert_inline_location(inline(1, None), "abc1234", Some(42));
+}
+
+#[test]
+fn pairs_outdated_right_side_lines_with_the_original_commit() {
     let mut outdated = inline(2, None);
     outdated["line"] = Value::Null;
+    assert_inline_location(outdated, "def5678", Some(7));
+}
+
+#[test]
+fn left_side_comments_keep_the_current_commit_without_a_new_side_line() {
     let mut left = inline(3, None);
     left["side"] = json!("LEFT");
+    assert_inline_location(left, "abc1234", None);
+}
+
+#[test]
+fn file_comments_keep_the_current_commit_without_a_line() {
     let mut file = inline(4, None);
     file["line"] = Value::Null;
     file["original_line"] = Value::Null;
     file["side"] = Value::Null;
+    assert_inline_location(file, "abc1234", None);
+}
+
+#[test]
+fn outdated_comments_without_an_original_commit_do_not_reuse_the_original_line() {
     let mut unknown_original = inline(5, None);
     unknown_original["line"] = Value::Null;
     unknown_original["original_commit_id"] = Value::Null;
-
-    for (comment, expected_commit, expected_line) in [
-        (current, "abc1234", Some(42)),
-        (outdated, "def5678", Some(7)),
-        (left, "abc1234", None),
-        (file, "abc1234", None),
-        (unknown_original, "abc1234", None),
-    ] {
-        let context = with_inline(vec![comment]);
-        let thread = &context.comments[0];
-        assert_eq!(thread.commit.as_ref().unwrap().as_ref(), expected_commit);
-        let location = thread.location.as_ref().unwrap();
-        assert_eq!(location.path, "src/root.rs");
-        assert_eq!(location.line.map(|line| line.get()), expected_line);
-    }
+    assert_inline_location(unknown_original, "abc1234", None);
 }
 
 #[test]

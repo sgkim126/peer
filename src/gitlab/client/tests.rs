@@ -145,111 +145,180 @@ async fn loads_every_commit_and_discussion_page_without_assuming_commit_order() 
     assert!(server.requests()[4].contains("discussions?per_page=100&page=2"));
 }
 
+async fn assert_merge_request_is_not_ready(merge_request: Value) {
+    let server = Server::start(vec![Reply::json(merge_request)]).await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitLabError::MergeRequestNotReady)
+    );
+    assert_eq!(server.requests().len(), 1);
+}
+
 #[tokio::test]
-async fn rejects_unready_refs_before_loading_commits() {
-    for refs in [Value::Null, json!({}), json!({"base_sha": "0123456"})] {
-        let mut merge_request = merge_request();
-        merge_request["diff_refs"] = refs;
-        let server = Server::start(vec![Reply::json(merge_request)]).await;
-        assert_matches!(
-            server.client().review_input(&repository(), number()).await,
-            Err(GitLabError::MergeRequestNotReady)
-        );
-        assert_eq!(server.requests().len(), 1);
-    }
+async fn rejects_null_diff_refs_before_loading_commits() {
+    let mut merge_request = merge_request();
+    merge_request["diff_refs"] = Value::Null;
+    assert_merge_request_is_not_ready(merge_request).await;
+}
+
+#[tokio::test]
+async fn rejects_empty_diff_refs_before_loading_commits() {
+    let mut merge_request = merge_request();
+    merge_request["diff_refs"] = json!({});
+    assert_merge_request_is_not_ready(merge_request).await;
+}
+
+#[tokio::test]
+async fn rejects_partial_diff_refs_before_loading_commits() {
+    let mut merge_request = merge_request();
+    merge_request["diff_refs"] = json!({"base_sha": "0123456"});
+    assert_merge_request_is_not_ready(merge_request).await;
+}
+
+#[tokio::test]
+async fn rejects_a_merge_request_with_a_null_head() {
+    let mut merge_request = merge_request();
+    merge_request["sha"] = Value::Null;
+    assert_merge_request_is_not_ready(merge_request).await;
 }
 
 #[tokio::test]
 async fn rejects_a_head_whose_diff_refs_have_not_caught_up() {
-    for sha in [Value::Null, json!("def5678")] {
-        let mut merge_request = merge_request();
-        merge_request["sha"] = sha;
-        let server = Server::start(vec![Reply::json(merge_request)]).await;
-        assert_matches!(
-            server.client().review_input(&repository(), number()).await,
-            Err(GitLabError::MergeRequestNotReady)
-        );
-    }
+    let mut merge_request = merge_request();
+    merge_request["sha"] = json!("def5678");
+    assert_merge_request_is_not_ready(merge_request).await;
+}
+
+async fn assert_merge_request_identity_is_invalid(merge_request: Value) {
+    let server = Server::start(vec![Reply::json(merge_request)]).await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitLabError::InvalidMergeRequest)
+    );
 }
 
 #[tokio::test]
-async fn rejects_inconsistent_merge_request_identity() {
-    for (field, value) in [
-        ("iid", 9876),
-        ("project_id", 0),
-        ("target_project_id", 9),
-        ("source_project_id", 0),
-    ] {
-        let mut merge_request = merge_request();
-        merge_request[field] = json!(value);
-        let server = Server::start(vec![Reply::json(merge_request)]).await;
-        assert_matches!(
-            server.client().review_input(&repository(), number()).await,
-            Err(GitLabError::InvalidMergeRequest)
-        );
-    }
+async fn rejects_a_different_merge_request_iid() {
+    let mut merge_request = merge_request();
+    merge_request["iid"] = json!(9876);
+    assert_merge_request_identity_is_invalid(merge_request).await;
 }
 
 #[tokio::test]
-async fn revalidates_all_diff_refs_project_identity_and_branch_names() {
-    for field in [
-        "base_sha",
-        "head_sha",
-        "start_sha",
-        "project",
-        "source_project_id",
-        "source_branch",
-        "target_branch",
-    ] {
-        let mut current = merge_request();
-        match field {
-            "base_sha" | "start_sha" => current["diff_refs"][field] = json!("def5678"),
-            "head_sha" => {
-                current["diff_refs"][field] = json!("def5678");
-                current["sha"] = json!("def5678");
-            }
-            "project" => {
-                current["project_id"] = json!(7);
-                current["target_project_id"] = json!(7);
-            }
-            "source_project_id" => current[field] = json!(10),
-            _ => current[field] = json!("another-branch"),
-        }
-        let server = Server::start(vec![
-            Reply::json(merge_request()),
-            commits(),
-            discussions(),
-            discussions(),
-            discussions(),
-            Reply::json(current),
-        ])
-        .await;
-        assert_matches!(
-            server.client().review_input(&repository(), number()).await,
-            Err(GitLabError::MergeRequestChanged)
-        );
-        assert_eq!(server.requests().len(), 6, "{field}");
-        assert!(
-            server.requests()[5]
-                .starts_with("GET /api/v4/projects/group%2Fsubgroup%2Fproject/merge_requests/123 ")
-        );
-    }
+async fn rejects_a_zero_project_id() {
+    let mut merge_request = merge_request();
+    merge_request["project_id"] = json!(0);
+    assert_merge_request_identity_is_invalid(merge_request).await;
 }
 
 #[tokio::test]
-async fn rejects_missing_duplicate_or_empty_commit_lists() {
-    for commits in [
-        json!([]),
-        json!([{"id": "def5678"}]),
-        json!([{"id": "abc1234"}, {"id": "abc1234"}]),
-    ] {
-        let server = Server::start(vec![Reply::json(merge_request()), Reply::json(commits)]).await;
-        assert_matches!(
-            server.client().review_input(&repository(), number()).await,
-            Err(GitLabError::IncompleteCommits)
-        );
-        assert_eq!(server.requests().len(), 2);
-    }
+async fn rejects_a_target_project_id_that_differs_from_the_project_id() {
+    let mut merge_request = merge_request();
+    merge_request["target_project_id"] = json!(9);
+    assert_merge_request_identity_is_invalid(merge_request).await;
+}
+
+#[tokio::test]
+async fn rejects_a_zero_source_project_id() {
+    let mut merge_request = merge_request();
+    merge_request["source_project_id"] = json!(0);
+    assert_merge_request_identity_is_invalid(merge_request).await;
+}
+
+async fn assert_merge_request_changed(current: Value) {
+    let server = Server::start(vec![
+        Reply::json(merge_request()),
+        commits(),
+        discussions(),
+        discussions(),
+        discussions(),
+        Reply::json(current),
+    ])
+    .await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitLabError::MergeRequestChanged)
+    );
+    assert_eq!(server.requests().len(), 6);
+    assert!(
+        server.requests()[5]
+            .starts_with("GET /api/v4/projects/group%2Fsubgroup%2Fproject/merge_requests/123 ")
+    );
+}
+
+#[tokio::test]
+async fn revalidates_the_diff_base_sha() {
+    let mut current = merge_request();
+    current["diff_refs"]["base_sha"] = json!("def5678");
+    assert_merge_request_changed(current).await;
+}
+
+#[tokio::test]
+async fn revalidates_the_diff_head_sha() {
+    let mut current = merge_request();
+    current["diff_refs"]["head_sha"] = json!("def5678");
+    current["sha"] = json!("def5678");
+    assert_merge_request_changed(current).await;
+}
+
+#[tokio::test]
+async fn revalidates_the_diff_start_sha() {
+    let mut current = merge_request();
+    current["diff_refs"]["start_sha"] = json!("def5678");
+    assert_merge_request_changed(current).await;
+}
+
+#[tokio::test]
+async fn revalidates_the_target_project_identity() {
+    let mut current = merge_request();
+    current["project_id"] = json!(7);
+    current["target_project_id"] = json!(7);
+    assert_merge_request_changed(current).await;
+}
+
+#[tokio::test]
+async fn revalidates_the_source_project_identity() {
+    let mut current = merge_request();
+    current["source_project_id"] = json!(10);
+    assert_merge_request_changed(current).await;
+}
+
+#[tokio::test]
+async fn revalidates_the_source_branch() {
+    let mut current = merge_request();
+    current["source_branch"] = json!("another-branch");
+    assert_merge_request_changed(current).await;
+}
+
+#[tokio::test]
+async fn revalidates_the_target_branch() {
+    let mut current = merge_request();
+    current["target_branch"] = json!("another-branch");
+    assert_merge_request_changed(current).await;
+}
+
+async fn assert_commit_list_is_incomplete(commits: Value) {
+    let server = Server::start(vec![Reply::json(merge_request()), Reply::json(commits)]).await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitLabError::IncompleteCommits)
+    );
+    assert_eq!(server.requests().len(), 2);
+}
+
+#[tokio::test]
+async fn rejects_an_empty_commit_list() {
+    assert_commit_list_is_incomplete(json!([])).await;
+}
+
+#[tokio::test]
+async fn rejects_a_commit_list_without_the_head() {
+    assert_commit_list_is_incomplete(json!([{"id": "def5678"}])).await;
+}
+
+#[tokio::test]
+async fn rejects_duplicate_commits() {
+    assert_commit_list_is_incomplete(json!([{"id": "abc1234"}, {"id": "abc1234"}])).await;
 }
 
 #[tokio::test]
@@ -330,19 +399,36 @@ fn source_snapshot_round_trips_with_its_provider_tag() {
     );
 }
 
-#[test]
-fn source_snapshot_requires_the_gitlab_provider_and_known_fields() {
+fn source_snapshot_value() -> Value {
     let merge_request: MergeRequest = serde_json::from_value(merge_request()).unwrap();
     let source = merge_request.source(number()).unwrap();
-    for provider in [json!("github"), Value::Null] {
-        let mut value = serde_json::to_value(&source).unwrap();
-        value["provider"] = provider;
-        assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
-    }
-    let mut value = serde_json::to_value(&source).unwrap();
+    serde_json::to_value(source).unwrap()
+}
+
+#[test]
+fn source_snapshot_rejects_a_different_provider() {
+    let mut value = source_snapshot_value();
+    value["provider"] = json!("github");
+    assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
+}
+
+#[test]
+fn source_snapshot_rejects_a_null_provider() {
+    let mut value = source_snapshot_value();
+    value["provider"] = Value::Null;
+    assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
+}
+
+#[test]
+fn source_snapshot_requires_a_provider() {
+    let mut value = source_snapshot_value();
     value.as_object_mut().unwrap().remove("provider");
     assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
-    let mut value = serde_json::to_value(&source).unwrap();
+}
+
+#[test]
+fn source_snapshot_rejects_unknown_fields() {
+    let mut value = source_snapshot_value();
     value["unknown"] = json!(true);
     assert_matches!(serde_json::from_value::<GitLabReviewSource>(value), Err(_));
 }

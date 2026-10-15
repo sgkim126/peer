@@ -320,32 +320,39 @@ async fn question_without_related_commits_is_published_inline() {
     assert_eq!(report.urls.len(), 1);
 }
 
+async fn assert_question_outside_diff_falls_back_to_file(line: u32) {
+    let mut input = file_question(&["abc1234", "def5678"], "abc1234");
+    input.questions[0].location.as_mut().unwrap().file.line = Some(line);
+    let mut replies = before_inline();
+    replies.push(created());
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    let requests = server.requests();
+    let request = requests.last().unwrap();
+    assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
+    let params = request_body(request);
+    let body = params["body"].as_str().unwrap();
+    assert!(body.contains("**question/rationale**"));
+    assert!(!body.contains(CONVERSATION_MARKER));
+    assert_eq!(params["subject_type"], "file");
+    assert_eq!(report.inline, 1);
+    assert_eq!(report.published, 1);
+    assert_eq!(report.urls.len(), 1);
+    assert_eq!(requests.len(), 7);
+}
+
 #[tokio::test]
-async fn questions_outside_diff_lines_fall_back_to_file_comments() {
-    for line in [3, 99] {
-        let mut input = file_question(&["abc1234", "def5678"], "abc1234");
-        input.questions[0].location.as_mut().unwrap().file.line = Some(line);
-        let mut replies = before_inline();
-        replies.push(created());
-        let server = Server::start(replies).await;
-        let report = server
-            .client()
-            .publish(&repository(), number(), &input)
-            .await
-            .unwrap();
-        let requests = server.requests();
-        let request = requests.last().unwrap();
-        assert!(request.starts_with("POST /repos/owner/repo/pulls/123/comments "));
-        let params = request_body(request);
-        let body = params["body"].as_str().unwrap();
-        assert!(body.contains("**question/rationale**"));
-        assert!(!body.contains(CONVERSATION_MARKER));
-        assert_eq!(params["subject_type"], "file");
-        assert_eq!(report.inline, 1);
-        assert_eq!(report.published, 1);
-        assert_eq!(report.urls.len(), 1);
-        assert_eq!(requests.len(), 7);
-    }
+async fn questions_before_diff_lines_fall_back_to_file_comments() {
+    assert_question_outside_diff_falls_back_to_file(3).await;
+}
+
+#[tokio::test]
+async fn questions_after_diff_lines_fall_back_to_file_comments() {
+    assert_question_outside_diff_falls_back_to_file(99).await;
 }
 
 #[tokio::test]

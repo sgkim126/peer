@@ -34,27 +34,34 @@ async fn changed_head_prevents_publication() {
     assert_eq!(server.requests().len(), 6);
 }
 
+async fn assert_empty_files_with_changed_revision_prevent_publication(revision: &str) {
+    let mut current: Value = serde_json::from_str(&pull().body).unwrap();
+    current[revision]["sha"] = json!("fedcba9");
+    let mut replies = before_inline();
+    replies[4] = Reply::json(json!([]));
+    *replies.last_mut().unwrap() = Reply::json(current);
+    let server = Server::start(replies).await;
+    assert_matches!(
+        server
+            .client()
+            .publish(&repository(), number(), &finding())
+            .await,
+        Err(GitHubError::PullRequestChanged)
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 6);
+    assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
+    assert!(requests.iter().all(|request| request.starts_with("GET ")));
+}
+
 #[tokio::test]
-async fn empty_files_with_changed_revision_prevent_publication() {
-    for revision in ["base", "head"] {
-        let mut current: Value = serde_json::from_str(&pull().body).unwrap();
-        current[revision]["sha"] = json!("fedcba9");
-        let mut replies = before_inline();
-        replies[4] = Reply::json(json!([]));
-        *replies.last_mut().unwrap() = Reply::json(current);
-        let server = Server::start(replies).await;
-        assert_matches!(
-            server
-                .client()
-                .publish(&repository(), number(), &finding())
-                .await,
-            Err(GitHubError::PullRequestChanged)
-        );
-        let requests = server.requests();
-        assert_eq!(requests.len(), 6);
-        assert!(requests[5].starts_with("GET /repos/owner/repo/pulls/123 "));
-        assert!(requests.iter().all(|request| request.starts_with("GET ")));
-    }
+async fn empty_files_with_changed_base_prevent_publication() {
+    assert_empty_files_with_changed_revision_prevent_publication("base").await;
+}
+
+#[tokio::test]
+async fn empty_files_with_changed_head_prevent_publication() {
+    assert_empty_files_with_changed_revision_prevent_publication("head").await;
 }
 
 #[tokio::test]

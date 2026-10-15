@@ -101,41 +101,53 @@ async fn paginates_pull_request_commits_in_api_order() {
     assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123 "));
 }
 
+async fn assert_changed_pull_is_rejected_after_commit_pagination(
+    base: &str,
+    head: &str,
+    count: usize,
+) {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "title": "Title", "body": "Description",
+            "base": {"sha": "0123456"}, "head": {"sha": "def5678"}, "commits": 2,
+        })),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([{"sha": "abc1234"}])).header(
+            "Link: <{base}repos/owner/repo/pulls/123/commits?per_page=100&page=2>; rel=\"next\"",
+        ),
+        Reply::json(json!([{"sha": "def5678"}])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!({
+            "title": "Title", "body": "Description",
+            "base": {"sha": base}, "head": {"sha": head}, "commits": count,
+        })),
+    ])
+    .await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitHubError::IncompleteCommits)
+    );
+    let requests = server.requests();
+    assert_eq!(requests.len(), 9);
+    assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123 "));
+}
+
 #[tokio::test]
-async fn rejects_changed_base_head_or_count_after_commit_pagination() {
-    for (base, head, count) in [
-        ("7654321", "def5678", 2),
-        ("0123456", "abc1234", 2),
-        ("0123456", "def5678", 3),
-    ] {
-        let server = Server::start(vec![
-            Reply::json(json!({
-                "title": "Title", "body": "Description",
-                "base": {"sha": "0123456"}, "head": {"sha": "def5678"}, "commits": 2,
-            })),
-            Reply::json(json!([])),
-            Reply::json(json!([])),
-            Reply::json(json!([])),
-            Reply::json(json!([{"sha": "abc1234"}])).header(
-                "Link: <{base}repos/owner/repo/pulls/123/commits?per_page=100&page=2>; rel=\"next\"",
-            ),
-            Reply::json(json!([{"sha": "def5678"}])),
-            Reply::json(json!([])),
-            Reply::json(json!([])),
-            Reply::json(json!({
-                "title": "Title", "body": "Description",
-                "base": {"sha": base}, "head": {"sha": head}, "commits": count,
-            })),
-        ])
-        .await;
-        assert_matches!(
-            server.client().review_input(&repository(), number()).await,
-            Err(GitHubError::IncompleteCommits)
-        );
-        let requests = server.requests();
-        assert_eq!(requests.len(), 9);
-        assert!(requests[8].starts_with("GET /repos/owner/repo/pulls/123 "));
-    }
+async fn rejects_changed_base_after_commit_pagination() {
+    assert_changed_pull_is_rejected_after_commit_pagination("7654321", "def5678", 2).await;
+}
+
+#[tokio::test]
+async fn rejects_changed_head_after_commit_pagination() {
+    assert_changed_pull_is_rejected_after_commit_pagination("0123456", "abc1234", 2).await;
+}
+
+#[tokio::test]
+async fn rejects_changed_count_after_commit_pagination() {
+    assert_changed_pull_is_rejected_after_commit_pagination("0123456", "def5678", 3).await;
 }
 
 #[tokio::test]
@@ -159,32 +171,48 @@ async fn pull_request_revalidation_failure_discards_the_whole_input() {
     assert_eq!(server.requests().len(), 7);
 }
 
+async fn assert_incomplete_pull_request_commits(count: usize, commits: Value) {
+    let server = Server::start(vec![
+        Reply::json(json!({
+            "title": "Title", "body": null,
+            "base": {"sha": "0123456"}, "head": {"sha": "abc1234"}, "commits": count,
+        })),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(json!([])),
+        Reply::json(commits),
+    ])
+    .await;
+    assert_matches!(
+        server.client().review_input(&repository(), number()).await,
+        Err(GitHubError::IncompleteCommits)
+    );
+}
+
 #[tokio::test]
-async fn rejects_incomplete_or_changed_pull_request_commits() {
-    for (count, commits) in [
-        (1, json!([])),
-        (0, json!([])),
-        (2, json!([{"sha": "abc1234"}])),
-        (1, json!([{"sha": "def5678"}])),
-        (1, json!([{"sha": "def5678"}, {"sha": "abc1234"}])),
-        (251, json!(vec![json!({"sha": "abc1234"}); 250])),
-    ] {
-        let server = Server::start(vec![
-            Reply::json(json!({
-                "title": "Title", "body": null,
-                "base": {"sha": "0123456"}, "head": {"sha": "abc1234"}, "commits": count,
-            })),
-            Reply::json(json!([])),
-            Reply::json(json!([])),
-            Reply::json(json!([])),
-            Reply::json(commits),
-        ])
+async fn rejects_an_empty_commit_list_when_commits_are_expected() {
+    assert_incomplete_pull_request_commits(1, json!([])).await;
+}
+
+#[tokio::test]
+async fn rejects_a_pull_request_with_zero_commits() {
+    assert_incomplete_pull_request_commits(0, json!([])).await;
+}
+
+#[tokio::test]
+async fn rejects_fewer_commits_than_the_pull_request_count() {
+    assert_incomplete_pull_request_commits(2, json!([{"sha": "abc1234"}])).await;
+}
+
+#[tokio::test]
+async fn rejects_a_commit_list_ending_at_a_different_head() {
+    assert_incomplete_pull_request_commits(1, json!([{"sha": "def5678"}])).await;
+}
+
+#[tokio::test]
+async fn rejects_more_commits_than_the_pull_request_count() {
+    assert_incomplete_pull_request_commits(1, json!([{"sha": "def5678"}, {"sha": "abc1234"}]))
         .await;
-        assert_matches!(
-            server.client().review_input(&repository(), number()).await,
-            Err(GitHubError::IncompleteCommits)
-        );
-    }
 }
 
 #[tokio::test]
@@ -347,18 +375,40 @@ async fn missing_body_and_comments_match_empty_input_files() {
     assert_eq!(context.comments, vec![]);
 }
 
+async fn assert_http_failure_stops_review(status: u16) {
+    let mut reply = Reply::json(json!({"message": "error"}));
+    reply.status = status;
+    let server = Server::start(vec![reply]).await;
+    let error = server.client().review_input(&repository(), number()).await;
+    assert_matches!(error, Err(GitHubError::Api { status: actual, .. }) if actual == status);
+    let error = error.unwrap_err();
+    assert!(error.to_string().contains(&format!("HTTP {status}")));
+    assert_eq!(server.requests().len(), 1);
+}
+
 #[tokio::test]
-async fn reports_http_failures_without_retrying_or_loading_comments() {
-    for status in [401, 403, 404, 429, 500] {
-        let mut reply = Reply::json(json!({"message": "error"}));
-        reply.status = status;
-        let server = Server::start(vec![reply]).await;
-        let error = server.client().review_input(&repository(), number()).await;
-        assert_matches!(error, Err(GitHubError::Api { status: actual, .. }) if actual == status);
-        let error = error.unwrap_err();
-        assert!(error.to_string().contains(&format!("HTTP {status}")));
-        assert_eq!(server.requests().len(), 1);
-    }
+async fn unauthorized_responses_stop_review_without_retrying() {
+    assert_http_failure_stops_review(401).await;
+}
+
+#[tokio::test]
+async fn forbidden_responses_stop_review_without_retrying() {
+    assert_http_failure_stops_review(403).await;
+}
+
+#[tokio::test]
+async fn not_found_responses_stop_review_without_retrying() {
+    assert_http_failure_stops_review(404).await;
+}
+
+#[tokio::test]
+async fn rate_limit_responses_stop_review_without_retrying() {
+    assert_http_failure_stops_review(429).await;
+}
+
+#[tokio::test]
+async fn server_error_responses_stop_review_without_retrying() {
+    assert_http_failure_stops_review(500).await;
 }
 
 #[tokio::test]

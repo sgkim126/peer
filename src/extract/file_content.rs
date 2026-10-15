@@ -328,13 +328,20 @@ mod tests {
     }
 
     #[test]
-    fn file_content_range_deserialization_rejects_invalid_line_ranges() {
-        for value in [
-            serde_json::json!({ "start_line": 0, "end_line": 1 }),
-            serde_json::json!({ "start_line": 1, "end_line": 0 }),
-            serde_json::json!({ "start_line": 2, "end_line": 1 }),
-        ] {
-            assert_matches!(serde_json::from_value::<FileContentRange>(value), Err(_));
-        }
+    fn file_content_range_deserialization_rejects_zero_start_line() {
+        let value = serde_json::json!({ "start_line": 0, "end_line": 1 });
+        assert_matches!(serde_json::from_value::<FileContentRange>(value), Err(_));
+    }
+
+    #[test]
+    fn file_content_range_deserialization_rejects_zero_end_line() {
+        let value = serde_json::json!({ "start_line": 1, "end_line": 0 });
+        assert_matches!(serde_json::from_value::<FileContentRange>(value), Err(_));
+    }
+
+    #[test]
+    fn file_content_range_deserialization_rejects_reversed_line_range() {
+        let value = serde_json::json!({ "start_line": 2, "end_line": 1 });
+        assert_matches!(serde_json::from_value::<FileContentRange>(value), Err(_));
     }
 }

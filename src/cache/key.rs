@@ -87,18 +87,42 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_cache_versions() {
-        for value in [
-            "",
-            "1",
-            "1.",
-            ".1",
-            "1.2.3",
-            "v1.2",
-            "1.x",
-            "18446744073709551616.0",
-        ] {
-            assert_eq!(CacheVersion::parse(value), None, "{value}");
-        }
+    fn rejects_empty_cache_version() {
+        assert_eq!(CacheVersion::parse(""), None);
+    }
+
+    #[test]
+    fn rejects_cache_version_without_minor_component() {
+        assert_eq!(CacheVersion::parse("1"), None);
+    }
+
+    #[test]
+    fn rejects_cache_version_with_empty_minor_component() {
+        assert_eq!(CacheVersion::parse("1."), None);
+    }
+
+    #[test]
+    fn rejects_cache_version_with_empty_major_component() {
+        assert_eq!(CacheVersion::parse(".1"), None);
+    }
+
+    #[test]
+    fn rejects_cache_version_with_patch_component() {
+        assert_eq!(CacheVersion::parse("1.2.3"), None);
+    }
+
+    #[test]
+    fn rejects_cache_version_with_nonnumeric_major_component() {
+        assert_eq!(CacheVersion::parse("v1.2"), None);
+    }
+
+    #[test]
+    fn rejects_cache_version_with_nonnumeric_minor_component() {
+        assert_eq!(CacheVersion::parse("1.x"), None);
+    }
+
+    #[test]
+    fn rejects_cache_version_with_overflowing_major_component() {
+        assert_eq!(CacheVersion::parse("18446744073709551616.0"), None);
     }
 }
