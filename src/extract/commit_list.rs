@@ -142,22 +142,20 @@ mod tests {
         let repo = Repo::new().await;
         let hash1 = repo.commit("a.txt", "first").await;
         let range = format!("{hash1}...HEAD");
-        let err = Extractor::new(repo.path.clone())
-            .commit_list(&range)
-            .await
-            .unwrap_err();
-        assert_matches!(err, ExtractError::InvalidTwoDotRange(value) if value == range);
+        assert_matches!(
+            Extractor::new(repo.path.clone()).commit_list(&range).await,
+            Err(ExtractError::InvalidTwoDotRange(value)) if value == range
+        );
     }
 
     #[tokio::test]
     async fn commit_list_fails_for_non_range() {
         let repo = Repo::new().await;
         let hash1 = repo.commit("a.txt", "first").await;
-        let err = Extractor::new(repo.path.clone())
-            .commit_list(hash1.as_ref())
-            .await
-            .unwrap_err();
-        assert_matches!(err, ExtractError::InvalidTwoDotRange(value) if value == hash1.as_ref());
+        assert_matches!(
+            Extractor::new(repo.path.clone()).commit_list(hash1.as_ref()).await,
+            Err(ExtractError::InvalidTwoDotRange(value)) if value == hash1.as_ref()
+        );
     }
 
     #[tokio::test]
@@ -166,11 +164,10 @@ mod tests {
         repo.commit("a.txt", "first").await;
         let from = "deadbeef1234567";
         let range = format!("{from}..HEAD");
-        let err = Extractor::new(repo.path.clone())
-            .commit_list(&range)
-            .await
-            .unwrap_err();
-        assert_matches!(err, ExtractError::Git(GitError::InvalidRevision(value)) if value == from);
+        assert_matches!(
+            Extractor::new(repo.path.clone()).commit_list(&range).await,
+            Err(ExtractError::Git(GitError::InvalidRevision(value))) if value == from
+        );
     }
 
     #[tokio::test]
@@ -179,10 +176,9 @@ mod tests {
         let hash1 = repo.commit("a.txt", "first").await;
         let to = "deadbeef1234567";
         let range = format!("{hash1}..{to}");
-        let err = Extractor::new(repo.path.clone())
-            .commit_list(&range)
-            .await
-            .unwrap_err();
-        assert_matches!(err, ExtractError::Git(GitError::InvalidRevision(value)) if value == to);
+        assert_matches!(
+            Extractor::new(repo.path.clone()).commit_list(&range).await,
+            Err(ExtractError::Git(GitError::InvalidRevision(value))) if value == to
+        );
     }
 }

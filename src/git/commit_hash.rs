@@ -152,9 +152,10 @@ mod tests {
             .await
             .unwrap();
 
-        let err = CommitHash::resolve("1.0.0", tmp.path()).await.unwrap_err();
-
-        assert_matches!(err, GitError::InvalidRevision(rev) if rev == "1.0.0");
+        assert_matches!(
+            CommitHash::resolve("1.0.0", tmp.path()).await,
+            Err(GitError::InvalidRevision(rev)) if rev == "1.0.0"
+        );
     }
 
     #[test]

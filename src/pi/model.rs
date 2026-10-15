@@ -75,24 +75,50 @@ mod tests {
     }
 
     #[test]
-    fn rejects_empty_and_untrimmed_provider_values() {
-        for provider in ["", " provider", "provider "] {
-            assert_eq!(
-                ModelRef::try_new(provider, "model"),
-                Err(ModelRefError::InvalidProvider(provider.to_string())),
-                "{provider:?}"
-            );
-        }
+    fn rejects_empty_provider() {
+        assert_eq!(
+            ModelRef::try_new("", "model"),
+            Err(ModelRefError::InvalidProvider("".into()))
+        );
     }
 
     #[test]
-    fn rejects_empty_and_untrimmed_model_values() {
-        for model in ["", " model", "model "] {
-            assert_eq!(
-                ModelRef::try_new("provider", model),
-                Err(ModelRefError::InvalidModel(model.to_string())),
-                "{model:?}"
-            );
-        }
+    fn rejects_provider_with_leading_whitespace() {
+        assert_eq!(
+            ModelRef::try_new(" provider", "model"),
+            Err(ModelRefError::InvalidProvider(" provider".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_provider_with_trailing_whitespace() {
+        assert_eq!(
+            ModelRef::try_new("provider ", "model"),
+            Err(ModelRefError::InvalidProvider("provider ".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_empty_model() {
+        assert_eq!(
+            ModelRef::try_new("provider", ""),
+            Err(ModelRefError::InvalidModel("".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_model_with_leading_whitespace() {
+        assert_eq!(
+            ModelRef::try_new("provider", " model"),
+            Err(ModelRefError::InvalidModel(" model".into()))
+        );
+    }
+
+    #[test]
+    fn rejects_model_with_trailing_whitespace() {
+        assert_eq!(
+            ModelRef::try_new("provider", "model "),
+            Err(ModelRefError::InvalidModel("model ".into()))
+        );
     }
 }

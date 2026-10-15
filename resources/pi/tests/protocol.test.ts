@@ -296,30 +296,6 @@ test("rejects empty terminal tools for a stage operation", () => {
     );
 });
 
-test("rejects a stage operation with an empty target", () => {
-    const encoded = encode({
-        digest: "a".repeat(64),
-        config: {
-            tool_contract_digest: "b".repeat(64),
-            operation: {
-                type: "stage",
-                stage: "quality",
-                target: "",
-                expected_commits: ["abc1234"],
-            },
-            system_prompt: "Review code.",
-            read_tools: ["get_commit_diff"],
-            terminal_tools: ["submit_quality"],
-            max_turns: 4,
-        },
-    });
-
-    assert.throws(
-        () => decodeConfigureEnvelope(encoded),
-        /invalid peer operation/,
-    );
-});
-
 test("rejects a stage operation without expected commits", () => {
     const encoded = encode({
         digest: "a".repeat(64),

@@ -42,28 +42,44 @@ async fn conversation_creation_keeps_body_on_stdin_and_parses_url() {
     assert_eq!(gh.stdin(1), body.as_bytes());
 }
 
+async fn assert_conversation_write_may_have_published(reply: Reply) {
+    let gh = FakeGh::new(vec![reply]);
+    let error = create_conversation_comment(
+        &gh.client,
+        CreateConversationCommentInput {
+            repository: &repository(),
+            number: number(),
+            body: "feedback",
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(error.may_have_published());
+    assert_eq!(gh.requests(), 1);
+}
+
 #[tokio::test]
-async fn ambiguous_conversation_write_failures_may_have_published() {
-    for reply in [
-        Reply::plain("", 0),
-        Reply::plain("not a URL", 0),
-        Reply::plain("https://github.com/a\nhttps://github.com/b", 0),
-        Reply::plain("", 1),
-    ] {
-        let gh = FakeGh::new(vec![reply]);
-        let error = create_conversation_comment(
-            &gh.client,
-            CreateConversationCommentInput {
-                repository: &repository(),
-                number: number(),
-                body: "feedback",
-            },
-        )
-        .await
-        .unwrap_err();
-        assert!(error.may_have_published());
-        assert_eq!(gh.requests(), 1);
-    }
+async fn conversation_write_with_empty_output_may_have_published() {
+    assert_conversation_write_may_have_published(Reply::plain("", 0)).await;
+}
+
+#[tokio::test]
+async fn conversation_write_with_an_invalid_url_may_have_published() {
+    assert_conversation_write_may_have_published(Reply::plain("not a URL", 0)).await;
+}
+
+#[tokio::test]
+async fn conversation_write_with_multiple_urls_may_have_published() {
+    assert_conversation_write_may_have_published(Reply::plain(
+        "https://github.com/a\nhttps://github.com/b",
+        0,
+    ))
+    .await;
+}
+
+#[tokio::test]
+async fn conversation_write_with_a_failed_exit_status_may_have_published() {
+    assert_conversation_write_may_have_published(Reply::plain("", 1)).await;
 }
 
 #[tokio::test]

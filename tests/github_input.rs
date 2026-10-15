@@ -1,3 +1,4 @@
+use std::assert_matches;
 use std::process::{Command, Output};
 
 mod support;
@@ -32,7 +33,7 @@ fn command(directory: &tempfile::TempDir) -> Command {
 
 fn assert_error(output: Output, message: &str) {
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_matches!(output.stdout[..], []);
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(stderr.contains(message), "unexpected stderr: {stderr}");
 }

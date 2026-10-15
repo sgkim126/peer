@@ -166,16 +166,6 @@ mod tests {
     }
 
     #[test]
-    fn normalizes_trailing_separators_before_prefixing_paths() {
-        let normalized_path = Path::new("src///").components().collect::<PathBuf>();
-        let listing =
-            parse_tree_listing("100644 blob abc123\tlib.rs\0", Some(&normalized_path)).unwrap();
-
-        assert_eq!(normalized_path, Path::new("src"));
-        assert_eq!(listing.entries[0].path, "src/lib.rs");
-    }
-
-    #[test]
     fn parses_submodules() {
         let listing = parse_tree_listing("160000 commit abc123\tvendor/lib\0", None).unwrap();
 
@@ -184,9 +174,10 @@ mod tests {
 
     #[test]
     fn rejects_malformed_records() {
-        let error = parse_tree_listing("not-a-tree-record\0", None).unwrap_err();
-
-        assert_matches!(error, ExtractError::MalformedGitOutput(_));
+        assert_matches!(
+            parse_tree_listing("not-a-tree-record\0", None),
+            Err(ExtractError::MalformedGitOutput(_))
+        );
     }
 
     #[test]
@@ -199,29 +190,5 @@ mod tests {
 
         assert_eq!(listing.entries.len(), MAX_TREE_ENTRIES);
         assert!(listing.truncated);
-    }
-
-    #[test]
-    fn rejects_empty_path() {
-        assert_matches!(
-            validate_repository_relative_path(Path::new("")),
-            Err(ExtractError::InvalidRepositoryRelativePath(_))
-        );
-    }
-
-    #[test]
-    fn rejects_absolute_path() {
-        assert_matches!(
-            validate_repository_relative_path(Path::new("/tmp")),
-            Err(ExtractError::InvalidRepositoryRelativePath(_))
-        );
-    }
-
-    #[test]
-    fn rejects_parent_path() {
-        assert_matches!(
-            validate_repository_relative_path(Path::new("src/../secret")),
-            Err(ExtractError::InvalidRepositoryRelativePath(_))
-        );
     }
 }

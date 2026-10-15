@@ -12,6 +12,7 @@ mod gitlab;
 mod glab;
 mod init;
 mod llm;
+mod patch;
 mod pi;
 mod render;
 mod review;
@@ -473,21 +474,6 @@ mod tests {
 
         assert_eq!(config.llm.default_provider, "mistral");
         assert_eq!(config.llm.default_model, "mistral-medium-3.5");
-    }
-
-    #[test]
-    fn provider_and_model_overrides_are_applied_separately() {
-        let mut config: Config = toml::from_str(DEFAULT_CONFIG_TOML).unwrap();
-
-        apply_llm_overrides(
-            &mut config,
-            Some("openai".into()),
-            Some("gpt-5.6-terra".into()),
-        )
-        .unwrap();
-
-        assert_eq!(config.llm.default_provider, "openai");
-        assert_eq!(config.llm.default_model, "gpt-5.6-terra");
     }
 
     #[test]

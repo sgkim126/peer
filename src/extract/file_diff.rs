@@ -34,6 +34,8 @@ impl Extractor {
                 "--literal-pathspecs",
                 "diff",
                 "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
                 from.as_ref(),
                 to.as_ref(),
                 "--",
@@ -69,32 +71,6 @@ fn truncate_file_diff(diff: String) -> FileDiff {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    use std::assert_matches;
-
-    #[test]
-    fn rejects_empty_path() {
-        assert_matches!(
-            validate_repository_relative_path(Path::new("")),
-            Err(ExtractError::InvalidRepositoryRelativePath(_))
-        );
-    }
-
-    #[test]
-    fn rejects_absolute_path() {
-        assert_matches!(
-            validate_repository_relative_path(Path::new("/tmp/file.rs")),
-            Err(ExtractError::InvalidRepositoryRelativePath(_))
-        );
-    }
-
-    #[test]
-    fn rejects_parent_path() {
-        assert_matches!(
-            validate_repository_relative_path(Path::new("src/../file.rs")),
-            Err(ExtractError::InvalidRepositoryRelativePath(_))
-        );
-    }
 
     #[test]
     fn truncates_at_a_character_boundary() {

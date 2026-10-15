@@ -30,7 +30,7 @@ const FINDING: &str = r#"{
 #[test]
 fn gitlab_output_without_publishing_does_not_require_authentication_or_a_checkout() {
     let output = render(&["--format", "gitlab", "--repo", "owner/repo"], FINDING);
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(0));
     assert!(String::from_utf8_lossy(&output.stdout).contains("**finding/high**"));
 }
 

@@ -58,49 +58,25 @@ impl Server {
             )
             .unwrap();
 
-            // gh pr view owns its pagination and emits JSON only after every page succeeds.
-            let mut comments = Vec::new();
-            let mut end = index;
-            let mut view_exit = exit;
-            loop {
-                let page = &replies[end];
-                if !(200..300).contains(&page.status) {
-                    view_exit = "1\n";
-                    break;
-                }
-                match serde_json::from_str::<Vec<Value>>(&page.body) {
-                    Ok(page_comments) => {
-                        comments.extend(page_comments.into_iter().map(|mut comment| {
+            let (comments, view_exit) = match serde_json::from_str::<Vec<Value>>(&reply.body) {
+                Ok(comments) => (
+                    comments
+                        .into_iter()
+                        .map(|mut comment| {
                             if let Some(object) = comment.as_object_mut()
                                 && let Some(url) = object.remove("html_url")
                             {
                                 object.insert("url".into(), url);
                             }
                             comment
-                        }))
-                    }
-                    Err(_) => {
-                        view_exit = "1\n";
-                        break;
-                    }
-                }
-                if !page
-                    .headers
-                    .iter()
-                    .any(|header| header.contains("rel=\"next\""))
-                {
-                    break;
-                }
-                end += 1;
-                if end == replies.len() {
-                    end -= 1;
-                    view_exit = "1\n";
-                    break;
-                }
-            }
+                        })
+                        .collect::<Vec<_>>(),
+                    exit,
+                ),
+                Err(_) => (Vec::new(), "1\n"),
+            };
             fs::write(path.join("view"), json!({"comments": comments}).to_string()).unwrap();
             fs::write(path.join("view-exit"), view_exit).unwrap();
-            fs::write(path.join("view-next"), format!("{}\n", end + 1)).unwrap();
         }
         let executable = directory.path().join("gh");
         fs::write(&executable, SCRIPT).unwrap();
@@ -198,8 +174,6 @@ fi
 read -r code < "$reply/exit"
 if [ "$response" = view ]; then
     read -r code < "$reply/view-exit"
-    read -r next < "$reply/view-next"
-    printf '%s\n' "$next" > "$root/cursor"
 fi
 for arg in "$@"; do
     if [ "$arg" = --input ] || [ "$arg" = --body-file ]; then

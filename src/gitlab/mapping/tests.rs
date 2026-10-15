@@ -158,23 +158,35 @@ fn skips_peer_summary_notes_but_keeps_human_replies_and_inline_feedback() {
     assert!(context.comments[1].comments[0].body.starts_with("Finding"));
 }
 
+fn assert_note_with_body_is_retained(body: &str) {
+    let mut note = note(1);
+    note["body"] = json!(body);
+    assert_eq!(
+        context(json!([{"id": "a", "notes": [note]}]))
+            .comments
+            .len(),
+        1
+    );
+}
+
 #[test]
-fn does_not_treat_quoted_or_embedded_markers_as_peer_summary_notes() {
-    for body in [
-        format!("> {CONVERSATION_MARKER}"),
-        format!("prefix {CONVERSATION_MARKER}"),
-        format!("{CONVERSATION_MARKER} suffix"),
-        "<!-- peer-review:conversation:v2 -->".into(),
-    ] {
-        let mut note = note(1);
-        note["body"] = json!(body);
-        assert_eq!(
-            context(json!([{"id": "a", "notes": [note]}]))
-                .comments
-                .len(),
-            1
-        );
-    }
+fn does_not_treat_a_quoted_marker_as_a_peer_summary_note() {
+    assert_note_with_body_is_retained(&format!("> {CONVERSATION_MARKER}"));
+}
+
+#[test]
+fn does_not_treat_a_marker_after_other_text_as_a_peer_summary_note() {
+    assert_note_with_body_is_retained(&format!("prefix {CONVERSATION_MARKER}"));
+}
+
+#[test]
+fn does_not_treat_a_marker_before_other_text_as_a_peer_summary_note() {
+    assert_note_with_body_is_retained(&format!("{CONVERSATION_MARKER} suffix"));
+}
+
+#[test]
+fn does_not_treat_an_unsupported_marker_version_as_a_peer_summary_note() {
+    assert_note_with_body_is_retained("<!-- peer-review:conversation:v2 -->");
 }
 
 #[test]
@@ -235,24 +247,32 @@ fn old_side_rename_positions_keep_the_old_path_without_a_head_line() {
     assert_eq!(location.line, None);
 }
 
+fn assert_position_has_no_line(position: Value) {
+    let mut root = note(1);
+    root["position"] = position;
+    let context = context(json!([{"id": "a", "notes": [root]}]));
+    assert_eq!(context.comments[0].location.as_ref().unwrap().line, None);
+}
+
 #[test]
-fn image_and_incomplete_positions_do_not_invent_line_locations() {
-    for field in ["position_type", "head_sha", "new_path"] {
-        let mut root = note(1);
-        let mut incomplete = position();
-        incomplete[field] = if field == "position_type" {
-            json!("image")
-        } else {
-            Value::Null
-        };
-        root["position"] = incomplete;
-        let context = context(json!([{"id": "a", "notes": [root]}]));
-        assert_eq!(
-            context.comments[0].location.as_ref().unwrap().line,
-            None,
-            "{field}"
-        );
-    }
+fn image_positions_do_not_invent_line_locations() {
+    let mut position = position();
+    position["position_type"] = json!("image");
+    assert_position_has_no_line(position);
+}
+
+#[test]
+fn positions_without_a_head_sha_do_not_invent_line_locations() {
+    let mut position = position();
+    position["head_sha"] = Value::Null;
+    assert_position_has_no_line(position);
+}
+
+#[test]
+fn positions_without_a_new_path_do_not_invent_line_locations() {
+    let mut position = position();
+    position["new_path"] = Value::Null;
+    assert_position_has_no_line(position);
 }
 
 #[test]
@@ -292,15 +312,25 @@ fn merges_repeated_discussion_entries_and_deduplicates_note_ids() {
 }
 
 #[test]
-fn rejects_zero_lines_and_invalid_commit_hashes() {
-    for (field, value) in [("new_line", json!(0)), ("head_sha", json!("invalid"))] {
-        let mut root = note(1);
-        let mut invalid = position();
-        invalid[field] = value;
-        root["position"] = invalid;
-        assert_matches!(
-            serde_json::from_value::<Discussion>(json!({"id": "a", "notes": [root]})),
-            Err(_)
-        );
-    }
+fn rejects_zero_lines() {
+    let mut root = note(1);
+    let mut invalid = position();
+    invalid["new_line"] = json!(0);
+    root["position"] = invalid;
+    assert_matches!(
+        serde_json::from_value::<Discussion>(json!({"id": "a", "notes": [root]})),
+        Err(_)
+    );
+}
+
+#[test]
+fn rejects_invalid_commit_hashes() {
+    let mut root = note(1);
+    let mut invalid = position();
+    invalid["head_sha"] = json!("invalid");
+    root["position"] = invalid;
+    assert_matches!(
+        serde_json::from_value::<Discussion>(json!({"id": "a", "notes": [root]})),
+        Err(_)
+    );
 }

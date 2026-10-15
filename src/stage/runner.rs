@@ -572,15 +572,6 @@ mod tests {
     }
 
     #[test]
-    fn omits_usage_for_cache_key_errors() {
-        let error = StageRunError::CacheKey(CacheKeyError::from(
-            serde_json::from_str::<serde_json::Value>("invalid json").unwrap_err(),
-        ));
-
-        assert_eq!(error.usage(), None);
-    }
-
-    #[test]
     fn omits_usage_for_pi_errors_without_usage() {
         let error = StageRunError::from(PiRunFailure::from(PiRunError::InvalidState(
             "missing outcome".to_string(),

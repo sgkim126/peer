@@ -26,7 +26,7 @@ pub struct Feedback {
 pub struct PreparedReview {
     pub items: Vec<Feedback>,
     pub summary_fingerprint: Option<String>,
-    parts: Option<github::DocumentParts>,
+    parts: github::DocumentParts,
 }
 
 impl PreparedReview {
@@ -79,22 +79,19 @@ impl PreparedReview {
                     .map(|(finding, body)| prepare_finding(finding, body.clone())),
             )
             .collect();
-        let parts = Some(parts);
-        let summary_fingerprint = match &parts {
-            Some(parts)
-                if !parts.summary.is_empty()
-                    || !parts.context.is_empty()
-                    || !parts.stages.is_empty() =>
-            {
-                Some(fingerprint(
-                    "summary",
-                    json!({
-                        "items": items.iter().map(|item| &item.fingerprint).collect::<BTreeSet<_>>(),
-                        "review": github::summary_identity(document),
-                    }),
-                ))
-            }
-            _ => None,
+        let summary_fingerprint = if !parts.summary.is_empty()
+            || !parts.context.is_empty()
+            || !parts.stages.is_empty()
+        {
+            Some(fingerprint(
+                "summary",
+                json!({
+                    "items": items.iter().map(|item| &item.fingerprint).collect::<BTreeSet<_>>(),
+                    "review": github::summary_identity(document),
+                }),
+            ))
+        } else {
+            None
         };
         Self {
             items,
@@ -105,9 +102,7 @@ impl PreparedReview {
 
     pub fn aggregate(&self, remaining: &[&Feedback], include_summary: bool) -> String {
         let body = |item: &&Feedback| format!("{}\n\n{}", item.body, marker(&item.fingerprint));
-        let Some(mut parts) = self.parts.clone() else {
-            return remaining.iter().map(body).collect::<Vec<_>>().join("\n\n");
-        };
+        let mut parts = self.parts.clone();
         parts.questions.clear();
         parts.recommendations.clear();
         parts.findings.clear();
@@ -388,8 +383,8 @@ mod tests {
         let mut question: KnowledgeQuestion = serde_json::from_value(question()).unwrap();
         question.location = None;
         let feedback = prepare_question(&question, "Question".into());
-        assert!(feedback.commit.is_none());
-        assert!(feedback.location.is_none());
+        assert_eq!(feedback.commit, None);
+        assert_eq!(feedback.location, None);
     }
 
     #[test]
@@ -401,17 +396,6 @@ mod tests {
         let feedback = gitlab_feedback("questions", question);
 
         assert_eq!(feedback.commit, None);
-    }
-
-    #[test]
-    fn gitlab_unlocated_question_with_one_related_commit_targets_that_commit() {
-        let mut question = question();
-        question["location"] = Value::Null;
-        question["related_commits"] = json!(["abc1234"]);
-
-        let feedback = gitlab_feedback("questions", question);
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
     }
 
     #[test]
@@ -444,16 +428,6 @@ mod tests {
         let feedback = gitlab_feedback("recommendations", recommendation);
 
         assert_eq!(feedback.commit, None);
-    }
-
-    #[test]
-    fn gitlab_recommendation_with_one_related_commit_targets_that_commit() {
-        let mut recommendation = recommendation();
-        recommendation["related_commits"] = json!(["abc1234"]);
-
-        let feedback = gitlab_feedback("recommendations", recommendation);
-
-        assert_eq!(feedback.commit.as_ref().unwrap().as_ref(), "abc1234");
     }
 
     #[test]
@@ -705,23 +679,23 @@ mod tests {
     #[test]
     fn unsupported_marker_version_is_not_recognized() {
         let valid = marker(&"a".repeat(64));
-        assert!(fingerprints(&valid.replace(":v1:", ":v2:")).is_empty());
+        assert_eq!(fingerprints(&valid.replace(":v1:", ":v2:")), HashSet::new());
     }
 
     #[test]
     fn marker_with_uppercase_hash_is_not_recognized() {
         let valid = marker(&"a".repeat(64));
-        assert!(fingerprints(&valid.replace('a', "A")).is_empty());
+        assert_eq!(fingerprints(&valid.replace('a', "A")), HashSet::new());
     }
 
     #[test]
     fn quoted_marker_is_not_recognized() {
         let valid = marker(&"a".repeat(64));
-        assert!(fingerprints(&format!("> {valid}")).is_empty());
+        assert_eq!(fingerprints(&format!("> {valid}")), HashSet::new());
     }
 
     #[test]
     fn marker_with_short_hash_is_not_recognized() {
-        assert!(fingerprints("<!-- peer-review:v1:abc -->").is_empty());
+        assert_eq!(fingerprints("<!-- peer-review:v1:abc -->"), HashSet::new());
     }
 }

@@ -68,13 +68,17 @@ async fn assert_inaccessible_source_is_skipped(reply: Reply) {
 }
 
 #[tokio::test]
-async fn skips_a_forbidden_source_and_preserves_all_target_comments() {
-    for message in [
-        "Resource not accessible by integration",
+async fn skips_a_source_denied_to_an_integration_and_preserves_all_target_comments() {
+    assert_inaccessible_source_is_skipped(forbidden("Resource not accessible by integration"))
+        .await;
+}
+
+#[tokio::test]
+async fn skips_a_source_denied_to_a_personal_token_and_preserves_all_target_comments() {
+    assert_inaccessible_source_is_skipped(forbidden(
         "Resource not accessible by personal access token",
-    ] {
-        assert_inaccessible_source_is_skipped(forbidden(message)).await;
-    }
+    ))
+    .await;
 }
 
 #[tokio::test]
@@ -171,20 +175,44 @@ async fn rejects_initial_source_secondary_rate_limit_even_when_sso_is_required()
 }
 
 #[tokio::test]
-async fn rejects_initial_source_forbidden_without_a_known_permission_error() {
+async fn rejects_initial_source_forbidden_without_an_error_message() {
+    assert_matches!(
+        initial_source_error(failure(403)).await,
+        GitHubError::Api {
+            status: 403,
+            rate_limited: false,
+            permission_denied: false,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn rejects_initial_source_forbidden_with_an_unknown_permission_error() {
+    assert_matches!(
+        initial_source_error(forbidden("Forbidden")).await,
+        GitHubError::Api {
+            status: 403,
+            rate_limited: false,
+            permission_denied: false,
+            ..
+        }
+    );
+}
+
+#[tokio::test]
+async fn rejects_initial_source_forbidden_with_malformed_error_json() {
     let mut malformed = failure(403);
     malformed.body = "{invalid json".to_string();
-    for reply in [failure(403), forbidden("Forbidden"), malformed] {
-        assert_matches!(
-            initial_source_error(reply).await,
-            GitHubError::Api {
-                status: 403,
-                rate_limited: false,
-                permission_denied: false,
-                ..
-            }
-        );
-    }
+    assert_matches!(
+        initial_source_error(malformed).await,
+        GitHubError::Api {
+            status: 403,
+            rate_limited: false,
+            permission_denied: false,
+            ..
+        }
+    );
 }
 
 #[tokio::test]
@@ -225,12 +253,9 @@ async fn rejects_a_forbidden_source_commit_after_loading_no_comments() {
     ]);
     let server = Server::start(replies).await;
 
-    let error = server
-        .client()
-        .review_input(&repository(), number())
-        .await
-        .unwrap_err();
-    assert_matches!(error, GitHubError::Api { status: 403, .. });
+    let result = server.client().review_input(&repository(), number()).await;
+
+    assert_matches!(result, Err(GitHubError::Api { status: 403, .. }));
     let requests = server.requests();
     assert_eq!(requests.len(), 9);
     assert!(

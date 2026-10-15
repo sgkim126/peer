@@ -1041,13 +1041,8 @@ mod tests {
     fn gitlab_source_round_trips_without_changing_legacy_documents() {
         let legacy = serde_json::json!({"ordered_commits": [], "stages": []});
         let document: RenderDocument = serde_json::from_value(legacy.clone()).unwrap();
-        assert!(document.source.is_none());
-        assert!(
-            serde_json::to_value(document)
-                .unwrap()
-                .get("source")
-                .is_none()
-        );
+        assert_eq!(document.source, None);
+        assert_eq!(serde_json::to_value(document).unwrap().get("source"), None);
         let mut input = legacy;
         input["source"] = serde_json::json!({
             "provider": "gitlab", "project_id": 12, "iid": 34, "source_project_id": 56,
@@ -1204,7 +1199,7 @@ mod tests {
 
         assert_eq!(document.questions.len(), 1);
         assert_eq!(document.recommendations.len(), 1);
-        assert!(document.findings.is_empty());
+        assert_eq!(document.findings, []);
         assert_matches!(
             &document.stages[0].outcome,
             RenderStageOutcome::Issues { .. }
@@ -1231,8 +1226,7 @@ mod tests {
         assert!(output.contains("**recommendation/split_commit**"));
     }
 
-    #[test]
-    fn pipeline_outputs_preserve_separate_stage_data_without_duplicating_knowledge_items() {
+    fn pipeline_review_with_knowledge_and_findings() -> PipelineReviewResult {
         let first = CommitHash::new("abc1234").unwrap();
         let second = CommitHash::new("def5678").unwrap();
         let ordered_commits = vec![first.clone(), second.clone()];
@@ -1288,7 +1282,7 @@ mod tests {
         }))
         .unwrap();
         let usage = LlmUsage::zero("test-provider", "test-model");
-        let review = PipelineReviewResult {
+        PipelineReviewResult {
             summary: review_summary(),
             ordered_commits: ordered_commits.clone(),
             stages: vec![
@@ -1318,9 +1312,12 @@ mod tests {
                 }),
             ],
             errors: Vec::new(),
-        };
+        }
+    }
 
-        let document = RenderDocument::from(review);
+    #[test]
+    fn pipeline_json_preserves_separate_stage_data_without_duplicating_knowledge_items() {
+        let document = RenderDocument::from(pipeline_review_with_knowledge_and_findings());
 
         assert_eq!(document.questions.len(), 1);
         assert_eq!(document.recommendations.len(), 1);
@@ -1334,7 +1331,7 @@ mod tests {
             }
         );
 
-        let json = render_json(document.clone()).unwrap();
+        let json = render_json(document).unwrap();
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(value.get("feedback"), None);
         assert_eq!(
@@ -1359,28 +1356,64 @@ mod tests {
             value["findings"][1]["security"]["impact"],
             "Arbitrary command execution."
         );
+    }
 
-        for (format, repo) in [
-            (OutputFormat::Terminal, None),
-            (OutputFormat::Markdown, None),
-            (OutputFormat::Github, Some("owner/repo".to_string())),
-        ] {
-            let output = render(
-                document.clone(),
-                RenderOptions::from_cli(format, repo).unwrap(),
-            )
-            .unwrap();
-            assert_eq!(output.matches("question/rationale").count(), 1);
-            assert_eq!(output.matches("recommendation/split_commit").count(), 1);
-            assert!(output.contains("finding/"));
-            assert!(output.contains("high"));
-            assert!(output.contains("Attacker control:"));
-            assert!(output.contains("Sensitive operation:"));
-            assert!(output.contains("Impact:"));
-            assert!(output.contains("Review questions"));
-            assert!(output.contains("Structural recommendations"));
-            assert!(output.contains("Review findings"));
-        }
+    #[test]
+    fn terminal_pipeline_output_preserves_separate_stage_data() {
+        let document = RenderDocument::from(pipeline_review_with_knowledge_and_findings());
+        let options = RenderOptions::from_cli(OutputFormat::Terminal, None).unwrap();
+
+        let output = render(document, options).unwrap();
+
+        assert_eq!(output.matches("question/rationale").count(), 1);
+        assert_eq!(output.matches("recommendation/split_commit").count(), 1);
+        assert!(output.contains("finding/"));
+        assert!(output.contains("high"));
+        assert!(output.contains("Attacker control:"));
+        assert!(output.contains("Sensitive operation:"));
+        assert!(output.contains("Impact:"));
+        assert!(output.contains("Review questions"));
+        assert!(output.contains("Structural recommendations"));
+        assert!(output.contains("Review findings"));
+    }
+
+    #[test]
+    fn markdown_pipeline_output_preserves_separate_stage_data() {
+        let document = RenderDocument::from(pipeline_review_with_knowledge_and_findings());
+        let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
+
+        let output = render(document, options).unwrap();
+
+        assert_eq!(output.matches("question/rationale").count(), 1);
+        assert_eq!(output.matches("recommendation/split_commit").count(), 1);
+        assert!(output.contains("finding/"));
+        assert!(output.contains("high"));
+        assert!(output.contains("Attacker control:"));
+        assert!(output.contains("Sensitive operation:"));
+        assert!(output.contains("Impact:"));
+        assert!(output.contains("Review questions"));
+        assert!(output.contains("Structural recommendations"));
+        assert!(output.contains("Review findings"));
+    }
+
+    #[test]
+    fn github_pipeline_output_preserves_separate_stage_data() {
+        let document = RenderDocument::from(pipeline_review_with_knowledge_and_findings());
+        let options =
+            RenderOptions::from_cli(OutputFormat::Github, Some("owner/repo".to_string())).unwrap();
+
+        let output = render(document, options).unwrap();
+
+        assert_eq!(output.matches("question/rationale").count(), 1);
+        assert_eq!(output.matches("recommendation/split_commit").count(), 1);
+        assert!(output.contains("finding/"));
+        assert!(output.contains("high"));
+        assert!(output.contains("Attacker control:"));
+        assert!(output.contains("Sensitive operation:"));
+        assert!(output.contains("Impact:"));
+        assert!(output.contains("Review questions"));
+        assert!(output.contains("Structural recommendations"));
+        assert!(output.contains("Review findings"));
     }
 
     #[test]
@@ -1554,37 +1587,54 @@ mod tests {
     }
 
     #[test]
-    fn renders_review_context_usage_once_and_includes_it_in_totals() {
-        for (format, repo, expected_context_usage, expected_total_usage) in [
-            (
-                OutputFormat::Terminal,
-                None,
-                "- Context usage: 40 input, 10 output, $0.000400 (test-provider/test-model)",
-                "  - test-provider/test-model: 240 input, 50 output, $0.002400",
-            ),
-            (
-                OutputFormat::Markdown,
-                None,
-                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-provider/test\\-model)",
-                "- **test\\-provider/test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
-            ),
-            (
-                OutputFormat::Github,
-                Some("owner/repo".to_string()),
-                "- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\\-provider/test\\-model)",
-                "- **test\\-provider/test\\-model:** 240 input tokens, 50 output tokens, $0.002400",
-            ),
-        ] {
-            let mut second = result();
-            second.stage = "quality".into();
-            let review = review_document(vec![result(), second], Some(review_context_usage()));
-            let options = RenderOptions::from_cli(format, repo).unwrap();
+    fn terminal_renders_context_usage_once_and_includes_it_in_totals() {
+        let mut second = result();
+        second.stage = "quality".into();
+        let review = review_document(vec![result(), second], Some(review_context_usage()));
+        let options = RenderOptions::from_cli(OutputFormat::Terminal, None).unwrap();
 
-            let output = render(review, options).unwrap();
+        let output = render(review, options).unwrap();
 
-            assert_eq!(output.matches(expected_context_usage).count(), 1);
-            assert!(output.contains(expected_total_usage));
-        }
+        assert_eq!(
+            output
+                .matches(
+                    r"- Context usage: 40 input, 10 output, $0.000400 (test-provider/test-model)"
+                )
+                .count(),
+            1
+        );
+        assert!(output.contains(r"  - test-provider/test-model: 240 input, 50 output, $0.002400"));
+    }
+
+    #[test]
+    fn markdown_renders_context_usage_once_and_includes_it_in_totals() {
+        let mut second = result();
+        second.stage = "quality".into();
+        let review = review_document(vec![result(), second], Some(review_context_usage()));
+        let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
+
+        let output = render(review, options).unwrap();
+
+        assert_eq!(output.matches(r"- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\-provider/test\-model)").count(), 1);
+        assert!(output.contains(
+            r"- **test\-provider/test\-model:** 240 input tokens, 50 output tokens, $0.002400"
+        ));
+    }
+
+    #[test]
+    fn github_renders_context_usage_once_and_includes_it_in_totals() {
+        let mut second = result();
+        second.stage = "quality".into();
+        let review = review_document(vec![result(), second], Some(review_context_usage()));
+        let options =
+            RenderOptions::from_cli(OutputFormat::Github, Some("owner/repo".to_string())).unwrap();
+
+        let output = render(review, options).unwrap();
+
+        assert_eq!(output.matches(r"- **Context usage:** 40 input tokens, 10 output tokens, $0.000400 (test\-provider/test\-model)").count(), 1);
+        assert!(output.contains(
+            r"- **test\-provider/test\-model:** 240 input tokens, 50 output tokens, $0.002400"
+        ));
     }
 
     #[test]
@@ -1603,45 +1653,74 @@ mod tests {
     }
 
     #[test]
-    fn renders_review_summary_before_stages_in_human_readable_formats() {
+    fn terminal_renders_review_summary_before_stages() {
         let mut second = result();
         second.stage = "quality".into();
-        for (format, repo, expected_usage) in [
-            (
-                OutputFormat::Terminal,
-                None,
-                "  - test-provider/test-model: 200 input, 40 output, $0.002000",
-            ),
-            (
-                OutputFormat::Markdown,
-                None,
-                "- **test\\-provider/test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
-            ),
-            (
-                OutputFormat::Github,
-                Some("owner/repo".to_string()),
-                "- **test\\-provider/test\\-model:** 200 input tokens, 40 output tokens, $0.002000",
-            ),
-        ] {
-            let review = review_document(vec![result(), second.clone()], None);
-            let options = RenderOptions::from_cli(format, repo).unwrap();
+        let review = review_document(vec![result(), second], None);
+        let options = RenderOptions::from_cli(OutputFormat::Terminal, None).unwrap();
 
-            let output = render(review, options).unwrap();
+        let output = render(review, options).unwrap();
 
-            assert!(output.contains("security"));
-            assert!(output.contains("quality"));
-            assert!(output.contains("Total token usage"));
-            assert!(output.contains(expected_usage));
-            assert!(output.contains("Review summary"));
-            assert!(output.contains("Peer version:"));
-            let summary = &output[..output.find("Total token usage").unwrap()];
-            assert!(!summary.contains("Provider:"));
-            assert!(!summary.contains("Model:"));
-            assert!(
-                output.find("Review summary").unwrap() < output.find("Total token usage").unwrap()
-            );
-            assert!(output.find("Total token usage").unwrap() < output.find("security").unwrap());
-        }
+        assert!(output.contains("security"));
+        assert!(output.contains("quality"));
+        assert!(output.contains("Total token usage"));
+        assert!(output.contains(r"  - test-provider/test-model: 200 input, 40 output, $0.002000"));
+        assert!(output.contains("Review summary"));
+        assert!(output.contains("Peer version:"));
+        let summary = &output[..output.find("Total token usage").unwrap()];
+        assert!(!summary.contains("Provider:"));
+        assert!(!summary.contains("Model:"));
+        assert!(output.find("Review summary").unwrap() < output.find("Total token usage").unwrap());
+        assert!(output.find("Total token usage").unwrap() < output.find("security").unwrap());
+    }
+
+    #[test]
+    fn markdown_renders_review_summary_before_stages() {
+        let mut second = result();
+        second.stage = "quality".into();
+        let review = review_document(vec![result(), second], None);
+        let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
+
+        let output = render(review, options).unwrap();
+
+        assert!(output.contains("security"));
+        assert!(output.contains("quality"));
+        assert!(output.contains("Total token usage"));
+        assert!(output.contains(
+            r"- **test\-provider/test\-model:** 200 input tokens, 40 output tokens, $0.002000"
+        ));
+        assert!(output.contains("Review summary"));
+        assert!(output.contains("Peer version:"));
+        let summary = &output[..output.find("Total token usage").unwrap()];
+        assert!(!summary.contains("Provider:"));
+        assert!(!summary.contains("Model:"));
+        assert!(output.find("Review summary").unwrap() < output.find("Total token usage").unwrap());
+        assert!(output.find("Total token usage").unwrap() < output.find("security").unwrap());
+    }
+
+    #[test]
+    fn github_renders_review_summary_before_stages() {
+        let mut second = result();
+        second.stage = "quality".into();
+        let review = review_document(vec![result(), second], None);
+        let options =
+            RenderOptions::from_cli(OutputFormat::Github, Some("owner/repo".to_string())).unwrap();
+
+        let output = render(review, options).unwrap();
+
+        assert!(output.contains("security"));
+        assert!(output.contains("quality"));
+        assert!(output.contains("Total token usage"));
+        assert!(output.contains(
+            r"- **test\-provider/test\-model:** 200 input tokens, 40 output tokens, $0.002000"
+        ));
+        assert!(output.contains("Review summary"));
+        assert!(output.contains("Peer version:"));
+        let summary = &output[..output.find("Total token usage").unwrap()];
+        assert!(!summary.contains("Provider:"));
+        assert!(!summary.contains("Model:"));
+        assert!(output.find("Review summary").unwrap() < output.find("Total token usage").unwrap());
+        assert!(output.find("Total token usage").unwrap() < output.find("security").unwrap());
     }
 
     #[test]
@@ -1737,24 +1816,24 @@ mod tests {
     }
 
     #[test]
-    fn render_input_deserializes_render_document() {
-        let document = RenderDocument::from(result());
-        let document_json = serde_json::to_string(&document).unwrap();
+    fn render_input_rejects_an_individual_knowledge_question() {
+        let input = r#"{"category":"rationale","question":"Why?","evidence":"The choice is not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#;
 
-        let input = serde_json::from_str::<RenderDocument>(&document_json).unwrap();
-
-        assert_eq!(input, document);
+        assert_matches!(serde_json::from_str::<RenderDocument>(input), Err(_));
     }
 
     #[test]
-    fn render_input_rejects_individual_review_items() {
-        for input in [
-            r#"{"category":"rationale","question":"Why?","evidence":"The choice is not documented.","why_it_matters":"Future changes depend on it.","related_commits":["abc1234"]}"#,
-            r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#,
-            r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#,
-        ] {
-            assert_matches!(serde_json::from_str::<RenderDocument>(input), Err(_));
-        }
+    fn render_input_rejects_an_individual_structural_recommendation() {
+        let input = r#"{"kind":"split_commit","message":"Split this commit.","rationale":"The changes are independent.","related_commits":["abc1234"]}"#;
+
+        assert_matches!(serde_json::from_str::<RenderDocument>(input), Err(_));
+    }
+
+    #[test]
+    fn render_input_rejects_an_individual_finding() {
+        let input = r#"{"commit":"abc1234","severity":"high","message":"Validate the input."}"#;
+
+        assert_matches!(serde_json::from_str::<RenderDocument>(input), Err(_));
     }
 
     #[test]
@@ -1766,7 +1845,7 @@ mod tests {
 
         let value = serde_json::to_value(failure).unwrap();
 
-        assert!(value["usage"].is_array());
+        assert_matches!(&value["usage"], serde_json::Value::Array(_));
     }
 
     #[test]
@@ -1820,46 +1899,54 @@ mod tests {
     }
 
     #[test]
-    fn renders_counts_in_human_readable_review_summaries() {
-        for (format, repo, expected) in [
-            (
-                OutputFormat::Terminal,
-                None,
-                [
-                    "- Info findings: 1",
-                    "- High findings: 1",
-                    "- Critical findings: 0",
-                    "- Failed stages: 0",
-                ],
-            ),
-            (
-                OutputFormat::Markdown,
-                None,
-                [
-                    "- **Info findings:** 1",
-                    "- **High findings:** 1",
-                    "- **Critical findings:** 0",
-                    "- **Failed stages:** 0",
-                ],
-            ),
-            (
-                OutputFormat::Github,
-                Some("owner/repo".to_string()),
-                [
-                    "- **Info findings:** 1",
-                    "- **High findings:** 1",
-                    "- **Critical findings:** 0",
-                    "- **Failed stages:** 0",
-                ],
-            ),
+    fn terminal_renders_counts_in_review_summary() {
+        let document = review_document(vec![result()], None);
+        let options = RenderOptions::from_cli(OutputFormat::Terminal, None).unwrap();
+
+        let output = render(document, options).unwrap();
+
+        for line in [
+            "- Info findings: 1",
+            "- High findings: 1",
+            "- Critical findings: 0",
+            "- Failed stages: 0",
         ] {
-            let document = review_document(vec![result()], None);
+            assert!(output.contains(line));
+        }
+    }
 
-            let output = render(document, RenderOptions::from_cli(format, repo).unwrap()).unwrap();
+    #[test]
+    fn markdown_renders_counts_in_review_summary() {
+        let document = review_document(vec![result()], None);
+        let options = RenderOptions::from_cli(OutputFormat::Markdown, None).unwrap();
 
-            for line in expected {
-                assert!(output.contains(line));
-            }
+        let output = render(document, options).unwrap();
+
+        for line in [
+            "- **Info findings:** 1",
+            "- **High findings:** 1",
+            "- **Critical findings:** 0",
+            "- **Failed stages:** 0",
+        ] {
+            assert!(output.contains(line));
+        }
+    }
+
+    #[test]
+    fn github_renders_counts_in_review_summary() {
+        let document = review_document(vec![result()], None);
+        let options =
+            RenderOptions::from_cli(OutputFormat::Github, Some("owner/repo".to_string())).unwrap();
+
+        let output = render(document, options).unwrap();
+
+        for line in [
+            "- **Info findings:** 1",
+            "- **High findings:** 1",
+            "- **Critical findings:** 0",
+            "- **Failed stages:** 0",
+        ] {
+            assert!(output.contains(line));
         }
     }
 
@@ -1898,65 +1985,6 @@ mod tests {
             RenderStageOutcome::Failed {
                 failure: RenderStageFailure::Stage { .. }
             }
-        );
-    }
-
-    #[test]
-    fn review_stages_are_combined_and_sorted_by_stage_then_commit() {
-        let first = CommitHash::new("abc1234").unwrap();
-        let second = CommitHash::new("def5678").unwrap();
-        let mut security_second = result();
-        security_second.target = StageTarget::Commit(second.clone());
-        let mut knowledge_second = result();
-        knowledge_second.stage = "knowledge".into();
-        knowledge_second.target = StageTarget::Commit(second.clone());
-        let mut security_first = result();
-        security_first.target = StageTarget::Commit(first.clone());
-        let ordered_commits = vec![first.clone(), second];
-        let mut stages = vec![security_second, knowledge_second, security_first]
-            .into_iter()
-            .map(|result| RenderStageParts::from(result).stage)
-            .collect::<Vec<_>>();
-        stages.push(RenderStage {
-            stage: "quality".to_string(),
-            target: StageTarget::Commit(first),
-            outcome: RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution {
-                    reason: "missing api key".to_string(),
-                    usage: None,
-                },
-            },
-        });
-        stages.sort_by_key(|stage| render_stage_order(stage, &ordered_commits));
-        let document = RenderDocument {
-            source: None,
-            summary: Some(review_summary()),
-            context_usage: None,
-            ordered_commits,
-            questions: Vec::new(),
-            recommendations: Vec::new(),
-            findings: Vec::new(),
-            stages,
-        };
-
-        assert_eq!(
-            document
-                .stages
-                .iter()
-                .map(|stage| (stage.stage.as_str(), stage.target.to_string()))
-                .collect::<Vec<_>>(),
-            [
-                ("knowledge", "def5678".to_string()),
-                ("quality", "abc1234".to_string()),
-                ("security", "abc1234".to_string()),
-                ("security", "def5678".to_string()),
-            ]
-        );
-        assert_matches!(
-            &document.stages[1].outcome,
-            RenderStageOutcome::Failed {
-                failure: RenderStageFailure::Execution { reason, .. }
-            } if reason == "missing api key"
         );
     }
 

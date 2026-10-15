@@ -42,19 +42,19 @@ pub struct SecurityReport {
     pub findings: Vec<SecurityFinding>,
 }
 
-pub struct SecurityStage {
-    commit: ReviewCommitInput,
-    review_head: CommitHash,
-    context: ReviewContextReport,
-    knowledge: KnowledgeReport,
+pub struct SecurityStage<'a> {
+    commit: &'a ReviewCommitInput,
+    review_head: &'a CommitHash,
+    context: &'a ReviewContextReport,
+    knowledge: &'a KnowledgeReport,
 }
 
-impl SecurityStage {
+impl<'a> SecurityStage<'a> {
     pub fn new(
-        commit: ReviewCommitInput,
-        review_head: CommitHash,
-        context: ReviewContextReport,
-        knowledge: KnowledgeReport,
+        commit: &'a ReviewCommitInput,
+        review_head: &'a CommitHash,
+        context: &'a ReviewContextReport,
+        knowledge: &'a KnowledgeReport,
     ) -> Self {
         Self {
             commit,
@@ -65,7 +65,7 @@ impl SecurityStage {
     }
 }
 
-impl ReviewStage for SecurityStage {
+impl ReviewStage for SecurityStage<'_> {
     type Report = SecurityReport;
 
     fn kind(&self) -> StageKind {

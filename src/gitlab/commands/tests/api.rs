@@ -678,7 +678,7 @@ async fn bad_request_responses_can_report_commit_target_failures() {
         .status(400),
     ])
     .await;
-    let error = api::post::<Value>(
+    let result = api::post::<Value>(
         &client(&server),
         "projects/5/merge_requests/1/discussions",
         &json!({
@@ -686,17 +686,16 @@ async fn bad_request_responses_can_report_commit_target_failures() {
             "commit_id": "abc1234"
         }),
     )
-    .await
-    .unwrap_err();
+    .await;
 
     assert_matches!(
-        error,
-        CommandError::Api {
+        result,
+        Err(CommandError::Api {
             status: 400,
             position_invalid: false,
             commit_invalid: true,
             ..
-        }
+        })
     );
 }
 
@@ -713,7 +712,7 @@ async fn forbidden_responses_are_not_commit_target_failures() {
         .status(403),
     ])
     .await;
-    let error = api::post::<Value>(
+    let result = api::post::<Value>(
         &client(&server),
         "projects/5/merge_requests/1/discussions",
         &json!({
@@ -721,17 +720,16 @@ async fn forbidden_responses_are_not_commit_target_failures() {
             "commit_id": "abc1234"
         }),
     )
-    .await
-    .unwrap_err();
+    .await;
 
     assert_matches!(
-        error,
-        CommandError::Api {
+        result,
+        Err(CommandError::Api {
             status: 403,
             position_invalid: false,
             commit_invalid: false,
             ..
-        }
+        })
     );
 }
 
@@ -784,22 +782,21 @@ async fn bad_request_responses_can_report_position_failures() {
         .status(400),
     ])
     .await;
-    let error = api::post::<Value>(
+    let result = api::post::<Value>(
         &client(&server),
         "projects/5/notes",
         &json!({
             "body": "A note"
         }),
     )
-    .await
-    .unwrap_err();
+    .await;
 
     assert_matches!(
-        error,
-        CommandError::Api {
+        result,
+        Err(CommandError::Api {
             position_invalid: true,
             ..
-        }
+        })
     );
 }
 
@@ -816,22 +813,21 @@ async fn unprocessable_entity_responses_can_report_position_failures() {
         .status(422),
     ])
     .await;
-    let error = api::post::<Value>(
+    let result = api::post::<Value>(
         &client(&server),
         "projects/5/notes",
         &json!({
             "body": "A note"
         }),
     )
-    .await
-    .unwrap_err();
+    .await;
 
     assert_matches!(
-        error,
-        CommandError::Api {
+        result,
+        Err(CommandError::Api {
             position_invalid: true,
             ..
-        }
+        })
     );
 }
 
@@ -848,22 +844,21 @@ async fn forbidden_responses_are_not_position_failures() {
         .status(403),
     ])
     .await;
-    let error = api::post::<Value>(
+    let result = api::post::<Value>(
         &client(&server),
         "projects/5/notes",
         &json!({
             "body": "A note"
         }),
     )
-    .await
-    .unwrap_err();
+    .await;
 
     assert_matches!(
-        error,
-        CommandError::Api {
+        result,
+        Err(CommandError::Api {
             position_invalid: false,
             ..
-        }
+        })
     );
 }
 
@@ -872,22 +867,21 @@ async fn malformed_error_json_is_not_a_position_failure() {
     let mut reply = Reply::json(json!({})).status(400);
     reply.body = "invalid-json".into();
     let server = Server::start(vec![reply]).await;
-    let error = api::post::<Value>(
+    let result = api::post::<Value>(
         &client(&server),
         "projects/5/notes",
         &json!({
             "body": "A note"
         }),
     )
-    .await
-    .unwrap_err();
+    .await;
 
     assert_matches!(
-        error,
-        CommandError::Api {
+        result,
+        Err(CommandError::Api {
             position_invalid: false,
             ..
-        }
+        })
     );
 }
 

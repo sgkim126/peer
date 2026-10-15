@@ -158,8 +158,10 @@ mod tests {
         )
         .unwrap();
 
-        let error = ReviewContext::load(None, None, Some(&comments_path)).unwrap_err();
-        assert_matches!(error, ReviewContextError::ParseComments { .. });
+        assert_matches!(
+            ReviewContext::load(None, None, Some(&comments_path)),
+            Err(ReviewContextError::ParseComments { .. })
+        );
     }
 
     #[test]
@@ -172,8 +174,10 @@ mod tests {
         )
         .unwrap();
 
-        let error = ReviewContext::load(None, None, Some(&comments_path)).unwrap_err();
-        assert_matches!(error, ReviewContextError::ParseComments { .. });
+        assert_matches!(
+            ReviewContext::load(None, None, Some(&comments_path)),
+            Err(ReviewContextError::ParseComments { .. })
+        );
     }
 
     #[test]

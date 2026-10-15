@@ -39,7 +39,7 @@ async fn historical_line_location_is_not_retargeted_to_the_pull_request_head() {
     let requests = server.requests();
     let post = requests.last().unwrap();
     assert!(post.starts_with("POST /repos/owner/repo/issues/123/comments "));
-    assert!(request_body(post).get("commit_id").is_none());
+    assert_matches!(request_body(post).get("commit_id"), None);
     assert_eq!(
         requests
             .iter()

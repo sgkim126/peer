@@ -29,8 +29,9 @@ fn render(directory: &Path, arguments: &[&str]) -> Output {
 }
 
 fn assert_rendered(output: Output, repository: &str) {
-    assert!(
-        output.status.success(),
+    assert_eq!(
+        output.status.code(),
+        Some(0),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -113,7 +114,7 @@ fn gitlab_without_a_repository_flag_requires_configuration() {
     let output = render(directory.path(), &["--format", "gitlab"]);
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, Vec::<u8>::new());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains("no .peer/config.toml found"),
@@ -134,7 +135,7 @@ fn gitlab_rejects_missing_repository_configuration() {
     let output = render(directory.path(), &["--format", "gitlab"]);
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, Vec::<u8>::new());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains(
@@ -153,7 +154,7 @@ fn gitlab_rejects_repository_paths_with_empty_components() {
     );
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, Vec::<u8>::new());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains(
@@ -177,7 +178,7 @@ fn gitlab_rejects_repository_urls() {
     );
 
     assert_eq!(output.status.code(), Some(1));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, Vec::<u8>::new());
     let stderr = String::from_utf8(output.stderr).unwrap();
     assert!(
         stderr.contains(

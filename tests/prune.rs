@@ -1,3 +1,4 @@
+use std::assert_matches;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -40,8 +41,8 @@ fn prune_removes_only_outdated_cache_versions() {
 
     let output = run_prune(&nested, false);
 
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.status.code(), Some(0));
+    assert_matches!(output.stderr.as_slice(), []);
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         "pruned 1 old cache version directories\n"
@@ -66,8 +67,8 @@ fn prune_all_removes_every_cache_entry() {
 
     let output = run_prune(&nested, true);
 
-    assert!(output.status.success());
-    assert!(output.stderr.is_empty());
+    assert_eq!(output.status.code(), Some(0));
+    assert_matches!(output.stderr.as_slice(), []);
     assert_eq!(
         String::from_utf8(output.stdout).unwrap(),
         "pruned 2 cache entries\n"

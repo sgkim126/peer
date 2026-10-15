@@ -140,34 +140,51 @@ async fn publishes_head_findings_as_discussions_with_gitlab_positions() {
     assert_eq!(posts[0].1["position"]["start_sha"], OLD);
     assert_eq!(posts[0].1["position"]["head_sha"], HEAD);
     assert_eq!(posts[0].1["position"]["new_line"], 5);
-    assert!(posts[0].1["position"].get("old_line").is_none());
+    assert_matches!(posts[0].1["position"].get("old_line"), None);
+}
+
+async fn assert_head_question_uses_its_location(related_commits: &[&str]) {
+    let mut input = question_input();
+    input.questions[0].related_commits = related_commits
+        .iter()
+        .map(|commit| CommitHash::new(commit).unwrap())
+        .collect();
+    let mut replies = before_inline();
+    replies.extend([merge_request(), created(17)]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
+    assert_eq!(report.published, 1);
+    assert_eq!(report.inline, 1);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 1);
+    assert!(posts[0].0.contains("/discussions "));
+    assert_eq!(posts[0].1["position"]["head_sha"], HEAD);
+    assert_eq!(posts[0].1["position"]["new_line"], 5);
+    assert!(posts[0].1["body"].as_str().unwrap().contains("Why?"));
 }
 
 #[tokio::test]
-async fn publishes_head_questions_regardless_of_related_commits() {
-    for related_commits in [&[HEAD][..], &[OLD, HEAD], &[], &[OLD]] {
-        let mut input = question_input();
-        input.questions[0].related_commits = related_commits
-            .iter()
-            .map(|commit| CommitHash::new(commit).unwrap())
-            .collect();
-        let mut replies = before_inline();
-        replies.extend([merge_request(), created(17)]);
-        let server = Server::start(replies).await;
-        let report = server
-            .client()
-            .publish(&repository(), number(), &input)
-            .await
-            .unwrap();
-        assert_eq!(report.published, 1, "{related_commits:?}");
-        assert_eq!(report.inline, 1, "{related_commits:?}");
-        let posts = server.posts();
-        assert_eq!(posts.len(), 1);
-        assert!(posts[0].0.contains("/discussions "));
-        assert_eq!(posts[0].1["position"]["head_sha"], HEAD);
-        assert_eq!(posts[0].1["position"]["new_line"], 5);
-        assert!(posts[0].1["body"].as_str().unwrap().contains("Why?"));
-    }
+async fn publishes_head_questions_with_a_matching_related_commit() {
+    assert_head_question_uses_its_location(&[HEAD]).await;
+}
+
+#[tokio::test]
+async fn publishes_head_questions_with_multiple_related_commits() {
+    assert_head_question_uses_its_location(&[OLD, HEAD]).await;
+}
+
+#[tokio::test]
+async fn publishes_head_questions_without_related_commits() {
+    assert_head_question_uses_its_location(&[]).await;
+}
+
+#[tokio::test]
+async fn publishes_head_questions_with_a_different_related_commit() {
+    assert_head_question_uses_its_location(&[OLD]).await;
 }
 
 #[tokio::test]
@@ -201,7 +218,7 @@ async fn unlocated_questions_with_one_related_commit_use_commit_threads() {
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[0].1.get("position").is_none());
+    assert_matches!(posts[0].1.get("position"), None);
     let body = posts[0].1["body"].as_str().unwrap();
     assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
@@ -270,7 +287,7 @@ async fn questions_in_unchanged_files_fall_back_to_commit_threads() {
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[0].1.get("position").is_none());
+    assert_matches!(posts[0].1.get("position"), None);
     let body = posts[0].1["body"].as_str().unwrap();
     assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
@@ -303,7 +320,7 @@ async fn questions_outside_diff_hunks_fall_back_to_file_threads() {
     assert!(posts[0].0.contains("/merge_requests/42/discussions "));
     assert_eq!(posts[0].1["position"]["position_type"], "file");
     assert_eq!(posts[0].1["commit_id"], HEAD);
-    assert!(posts[0].1["position"].get("new_line").is_none());
+    assert_matches!(posts[0].1["position"].get("new_line"), None);
     let body = posts[0].1["body"].as_str().unwrap();
     assert!(!body.contains(CONVERSATION_MARKER));
     assert!(body.contains("Why?"));
@@ -456,13 +473,16 @@ async fn rejects_mismatched_base_sha_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -474,13 +494,16 @@ async fn rejects_mismatched_head_sha_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -492,13 +515,16 @@ async fn rejects_mismatched_start_sha_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -510,13 +536,16 @@ async fn rejects_mismatched_project_ids_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -528,13 +557,16 @@ async fn rejects_mismatched_merge_request_numbers_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -546,13 +578,16 @@ async fn rejects_mismatched_source_project_ids_before_writes() {
     input.source = Some(serde_json::from_value(stale).unwrap());
     let server = Server::start(vec![merge_request()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -563,13 +598,16 @@ async fn rejects_legacy_input_when_ordered_commits_do_not_end_at_head() {
     input.ordered_commits = vec![CommitHash::new(OLD).unwrap()];
     let server = Server::start(vec![merge_request(), commits()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::InvalidReviewCommits);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::InvalidReviewCommits)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -580,13 +618,16 @@ async fn rejects_legacy_findings_outside_the_merge_request() {
     input.findings[0].commit = CommitHash::new(&"e".repeat(40)).unwrap();
     let server = Server::start(vec![merge_request(), commits()]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
+        .await;
 
-    assert_matches!(error.reason.as_ref(), PublishFailure::InvalidReviewCommits);
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::InvalidReviewCommits)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -594,15 +635,15 @@ async fn rejects_legacy_findings_outside_the_merge_request() {
 async fn rejects_empty_remote_commit_lists_before_writes() {
     let server = Server::start(vec![merge_request(), Reply::json(json!([]))]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input(&["Issue"]))
-        .await
-        .unwrap_err();
+        .await;
 
     assert_matches!(
-        error.reason.as_ref(),
-        PublishFailure::Api(GitLabError::IncompleteCommits)
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::Api(GitLabError::IncompleteCommits))
     );
     assert_eq!(server.posts(), vec![]);
 }
@@ -611,15 +652,15 @@ async fn rejects_empty_remote_commit_lists_before_writes() {
 async fn rejects_remote_commit_lists_without_head_before_writes() {
     let server = Server::start(vec![merge_request(), Reply::json(json!([{ "id": OLD }]))]).await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input(&["Issue"]))
-        .await
-        .unwrap_err();
+        .await;
 
     assert_matches!(
-        error.reason.as_ref(),
-        PublishFailure::Api(GitLabError::IncompleteCommits)
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::Api(GitLabError::IncompleteCommits))
     );
     assert_eq!(server.posts(), vec![]);
 }
@@ -632,15 +673,15 @@ async fn rejects_duplicate_remote_commits_before_writes() {
     ])
     .await;
 
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input(&["Issue"]))
-        .await
-        .unwrap_err();
+        .await;
 
     assert_matches!(
-        error.reason.as_ref(),
-        PublishFailure::Api(GitLabError::IncompleteCommits)
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::Api(GitLabError::IncompleteCommits))
     );
     assert_eq!(server.posts(), vec![]);
 }
@@ -652,12 +693,16 @@ async fn detects_merge_request_changes_after_loading_diffs() {
     changed["diff_refs"]["base_sha"] = json!("e".repeat(40));
     replies[6] = Reply::json(changed);
     let server = Server::start(replies).await;
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input(&["Issue"]))
-        .await
-        .unwrap_err();
-    assert_matches!(error.reason.as_ref(), PublishFailure::SnapshotMismatch);
+        .await;
+
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::SnapshotMismatch)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -779,8 +824,8 @@ async fn bad_request_commit_validation_failures_fall_back_to_the_commit() {
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[2].1.get("position").is_none());
-    assert!(posts[2].1.get("commit_id").is_none());
+    assert_matches!(posts[2].1.get("position"), None);
+    assert_matches!(posts[2].1.get("commit_id"), None);
     assert!(
         posts
             .iter()
@@ -821,8 +866,8 @@ async fn unprocessable_entity_commit_validation_failures_fall_back_to_the_commit
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[2].1.get("position").is_none());
-    assert!(posts[2].1.get("commit_id").is_none());
+    assert_matches!(posts[2].1.get("position"), None);
+    assert_matches!(posts[2].1.get("commit_id"), None);
     assert!(
         posts
             .iter()
@@ -1210,12 +1255,16 @@ async fn uncertain_fallback_posts_are_confirmed_separately_before_remaining_feed
 async fn rejects_oversized_feedback_before_writes() {
     let input = input(&[&"x".repeat(MAX_NOTE_CHARACTERS)]);
     let server = Server::start(vec![merge_request(), commits(), empty_discussions()]).await;
-    let error = server
+    let result = server
         .client()
         .publish(&repository(), number(), &input)
-        .await
-        .unwrap_err();
-    assert_matches!(error.reason.as_ref(), PublishFailure::NoteTooLong);
+        .await;
+
+    assert_matches!(
+        result,
+        Err(PublishError { reason, .. })
+            if matches!(reason.as_ref(), PublishFailure::NoteTooLong)
+    );
     assert_eq!(server.posts(), vec![]);
 }
 
@@ -1270,7 +1319,7 @@ async fn fallback_items_are_separate_from_each_other_and_the_summary() {
                 .0
                 .contains(&format!("/repository/commits/{HEAD}/discussions "))
         );
-        assert!(posts[index].1.get("position").is_none());
+        assert_matches!(posts[index].1.get("position"), None);
         let body = posts[index].1["body"].as_str().unwrap();
         assert!(body.contains(message));
         assert!(!body.contains(CONVERSATION_MARKER));
@@ -1488,27 +1537,34 @@ async fn absent_parent_metadata_skips_positions_without_assuming_a_root_commit()
     );
 }
 
+async fn assert_unavailable_commit_diff_uses_a_commit_thread(status: u16) {
+    let mut replies = before_inline();
+    replies[5] = Reply::failure(status, json!({ "message": "diff unavailable" }));
+    replies.extend([merge_request(), created(17)]);
+    let server = Server::start(replies).await;
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input(&["Issue"]))
+        .await
+        .unwrap();
+    assert_eq!(report.inline, 0);
+    let posts = server.posts();
+    assert_eq!(posts.len(), 1);
+    assert!(
+        posts[0]
+            .0
+            .contains(&format!("/repository/commits/{HEAD}/discussions "))
+    );
+}
+
 #[tokio::test]
-async fn unavailable_commit_diffs_fall_back_to_commit_threads() {
-    for status in [404, 413] {
-        let mut replies = before_inline();
-        replies[5] = Reply::failure(status, json!({ "message": "diff unavailable" }));
-        replies.extend([merge_request(), created(17)]);
-        let server = Server::start(replies).await;
-        let report = server
-            .client()
-            .publish(&repository(), number(), &input(&["Issue"]))
-            .await
-            .unwrap();
-        assert_eq!(report.inline, 0, "{status}");
-        let posts = server.posts();
-        assert_eq!(posts.len(), 1, "{status}");
-        assert!(
-            posts[0]
-                .0
-                .contains(&format!("/repository/commits/{HEAD}/discussions "))
-        );
-    }
+async fn missing_commit_diffs_fall_back_to_commit_threads() {
+    assert_unavailable_commit_diff_uses_a_commit_thread(404).await;
+}
+
+#[tokio::test]
+async fn oversized_commit_diffs_fall_back_to_commit_threads() {
+    assert_unavailable_commit_diff_uses_a_commit_thread(413).await;
 }
 
 #[tokio::test]
@@ -1546,8 +1602,8 @@ async fn rejected_line_and_file_positions_fall_back_to_the_commit() {
             .0
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
-    assert!(posts[2].1.get("position").is_none());
-    assert!(posts[2].1.get("commit_id").is_none());
+    assert_matches!(posts[2].1.get("position"), None);
+    assert_matches!(posts[2].1.get("commit_id"), None);
     assert_eq!(posts[0].1["body"], posts[1].1["body"]);
     assert_eq!(posts[1].1["body"], posts[2].1["body"]);
 }
@@ -1644,8 +1700,8 @@ async fn unavailable_line_file_and_commit_targets_fall_back_to_an_independent_mr
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
     assert!(posts[3].0.contains("/merge_requests/42/discussions "));
-    assert!(posts[3].1.get("position").is_none());
-    assert!(posts[3].1.get("commit_id").is_none());
+    assert_matches!(posts[3].1.get("position"), None);
+    assert_matches!(posts[3].1.get("commit_id"), None);
     assert!(
         posts
             .iter()
@@ -1685,7 +1741,7 @@ async fn unprocessable_commit_validation_failure_falls_back_to_an_independent_mr
             .contains(&format!("/repository/commits/{HEAD}/discussions "))
     );
     assert!(posts[1].0.contains("/merge_requests/42/discussions "));
-    assert!(posts[1].1.get("position").is_none());
+    assert_matches!(posts[1].1.get("position"), None);
 }
 
 #[tokio::test]
@@ -1709,7 +1765,7 @@ async fn unlocated_questions_with_multiple_related_commits_use_independent_mr_th
     let posts = server.posts();
     assert_eq!(posts.len(), 1);
     assert!(posts[0].0.contains("/merge_requests/42/discussions "));
-    assert!(posts[0].1.get("commit_id").is_none());
+    assert_matches!(posts[0].1.get("commit_id"), None);
     assert!(
         !server
             .requests()
@@ -1742,56 +1798,63 @@ async fn existing_commit_threads_suppress_items_before_fetching_diffs() {
     assert_matches!(server.posts()[..], []);
 }
 
-#[tokio::test]
-async fn earlier_commit_threads_suppress_questions_after_their_target_changes() {
+async fn assert_earlier_commit_thread_suppresses_question(related_commits: &[&str]) {
     let mut previous = question_input();
     previous.questions[0].location = None;
     previous.questions[0].related_commits = vec![CommitHash::new(OLD).unwrap()];
     let previous_review = PreparedReview::for_gitlab(&previous, &repository());
     let previous_body = inline_body(&previous_review.items[0]);
 
-    for related_commits in [&[HEAD][..], &[HEAD, OLD]] {
-        let mut input = question_input();
-        input.questions[0].location = None;
-        input.questions[0].related_commits = related_commits
-            .iter()
-            .map(|commit| CommitHash::new(commit).unwrap())
-            .collect();
-        let mut first_page = empty_discussions();
-        first_page.headers.push(format!(
-            "Link: <{{base}}projects/group%2Fsubgroup%2Fproject/repository/commits/{OLD}/discussions?per_page=100&page=2>; rel=\"next\"",
-        ));
-        let server = Server::start(vec![
-            merge_request(),
-            commits(),
-            empty_discussions(),
-            empty_discussions(),
-            first_page,
-            Reply::json(json!([{
-                "notes": [
-                    { "id": 16, "body": "Existing discussion" },
-                    { "id": 17, "body": previous_body, "resolved": true },
-                ],
-            }])),
-        ])
-        .await;
+    let mut input = question_input();
+    input.questions[0].location = None;
+    input.questions[0].related_commits = related_commits
+        .iter()
+        .map(|commit| CommitHash::new(commit).unwrap())
+        .collect();
+    let mut first_page = empty_discussions();
+    first_page.headers.push(format!(
+        "Link: <{{base}}projects/group%2Fsubgroup%2Fproject/repository/commits/{OLD}/discussions?per_page=100&page=2>; rel=\"next\"",
+    ));
+    let server = Server::start(vec![
+        merge_request(),
+        commits(),
+        empty_discussions(),
+        empty_discussions(),
+        first_page,
+        Reply::json(json!([{
+            "notes": [
+                { "id": 16, "body": "Existing discussion" },
+                { "id": 17, "body": previous_body, "resolved": true },
+            ],
+        }])),
+    ])
+    .await;
 
-        let report = server
-            .client()
-            .publish(&repository(), number(), &input)
-            .await
-            .unwrap();
+    let report = server
+        .client()
+        .publish(&repository(), number(), &input)
+        .await
+        .unwrap();
 
-        assert_eq!(report.published, 0, "{related_commits:?}");
-        assert_eq!(report.skipped, 1, "{related_commits:?}");
-        assert_matches!(server.posts()[..], []);
-        let requests = server.requests();
-        assert_eq!(requests.len(), 6);
-        assert!(requests[3].contains(&format!("/repository/commits/{HEAD}/discussions?")));
-        assert!(requests[4].contains(&format!("/repository/commits/{OLD}/discussions?")));
-        assert!(requests[5].contains(&format!("/repository/commits/{OLD}/discussions?")));
-        assert!(requests[5].contains("page=2"));
-    }
+    assert_eq!(report.published, 0);
+    assert_eq!(report.skipped, 1);
+    assert_matches!(server.posts()[..], []);
+    let requests = server.requests();
+    assert_eq!(requests.len(), 6);
+    assert!(requests[3].contains(&format!("/repository/commits/{HEAD}/discussions?")));
+    assert!(requests[4].contains(&format!("/repository/commits/{OLD}/discussions?")));
+    assert!(requests[5].contains(&format!("/repository/commits/{OLD}/discussions?")));
+    assert!(requests[5].contains("page=2"));
+}
+
+#[tokio::test]
+async fn earlier_commit_threads_suppress_questions_retargeted_to_the_head() {
+    assert_earlier_commit_thread_suppresses_question(&[HEAD]).await;
+}
+
+#[tokio::test]
+async fn earlier_commit_threads_suppress_questions_with_multiple_related_commits() {
+    assert_earlier_commit_thread_suppresses_question(&[HEAD, OLD]).await;
 }
 
 #[tokio::test]

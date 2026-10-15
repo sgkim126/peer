@@ -484,41 +484,69 @@ mod tests {
     }
 
     #[test]
-    fn github_conflicts_with_each_direct_context_option_in_either_order() {
-        for option in ["--title", "--body-file", "--comments-file"] {
-            for args in [
-                vec!["peer", "review", "--github", "123", option, "value"],
-                vec!["peer", "review", option, "value", "--github", "123"],
-            ] {
-                let error = Cli::try_parse_from(args).unwrap_err();
-                assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-            }
-        }
+    fn github_conflicts_with_title() {
+        let error = Cli::try_parse_from(["peer", "review", "--github", "123", "--title", "value"])
+            .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn github_conflicts_with_body_file() {
+        let error =
+            Cli::try_parse_from(["peer", "review", "--github", "123", "--body-file", "value"])
+                .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
+    }
+
+    #[test]
+    fn github_conflicts_with_comments_file() {
+        let error = Cli::try_parse_from([
+            "peer",
+            "review",
+            "--github",
+            "123",
+            "--comments-file",
+            "value",
+        ])
+        .unwrap_err();
+        assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]
     fn github_rejects_zero_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github", "0"]).is_err());
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--github", "0"]),
+            Err(_)
+        );
     }
 
     #[test]
     fn github_rejects_negative_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github", "-1"]).is_err());
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--github", "-1"]),
+            Err(_)
+        );
     }
 
     #[test]
     fn github_rejects_nonnumeric_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github", "abc"]).is_err());
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--github", "abc"]),
+            Err(_)
+        );
     }
 
     #[test]
     fn github_rejects_fractional_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github", "1.5"]).is_err());
+        assert_matches!(
+            Cli::try_parse_from(["peer", "review", "--github", "1.5"]),
+            Err(_)
+        );
     }
 
     #[test]
     fn github_requires_a_pull_request_number() {
-        assert!(Cli::try_parse_from(["peer", "review", "--github"]).is_err());
+        assert_matches!(Cli::try_parse_from(["peer", "review", "--github"]), Err(_));
     }
 
     #[test]
@@ -611,18 +639,52 @@ mod tests {
     }
 
     #[test]
-    fn render_gitlab_defaults_its_format_and_rejects_other_publishers() {
+    fn render_gitlab_defaults_its_format() {
         let cli = parse(&["peer", "render", "--gitlab", "123"]);
         assert_matches!(cli.command, Command::Render { format: OutputFormat::Gitlab, github: None, gitlab: Some(number), .. } if number.get() == 123);
+    }
+
+    #[test]
+    fn render_gitlab_conflicts_with_github() {
         let error = Cli::try_parse_from(["peer", "render", "--gitlab", "123", "--github", "456"])
             .unwrap_err();
         assert_eq!(error.kind(), clap::error::ErrorKind::ArgumentConflict);
-        for value in ["0", "-1", "abc", "1.5"] {
-            assert_matches!(
-                Cli::try_parse_from(["peer", "render", "--gitlab", value]),
-                Err(_)
-            );
-        }
+    }
+
+    #[test]
+    fn render_gitlab_rejects_zero_merge_request_iid() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "render", "--gitlab", "0"]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn render_gitlab_rejects_negative_merge_request_iid() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "render", "--gitlab", "-1"]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn render_gitlab_rejects_nonnumeric_merge_request_iid() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "render", "--gitlab", "abc"]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn render_gitlab_rejects_fractional_merge_request_iid() {
+        assert_matches!(
+            Cli::try_parse_from(["peer", "render", "--gitlab", "1.5"]),
+            Err(_)
+        );
+    }
+
+    #[test]
+    fn render_gitlab_requires_a_merge_request_iid() {
         assert_matches!(Cli::try_parse_from(["peer", "render", "--gitlab"]), Err(_));
     }
 

@@ -47,19 +47,6 @@ mod tests {
 
     use std::assert_matches;
 
-    #[test]
-    fn format_argv_uses_debug_format() {
-        assert_eq!(
-            format_argv(&["log", "--oneline", "HEAD"]),
-            r#"git ["log", "--oneline", "HEAD"]"#
-        );
-    }
-
-    #[test]
-    fn format_argv_with_no_args() {
-        assert_eq!(format_argv(&[]), "git []");
-    }
-
     #[tokio::test]
     async fn run_git_succeeds_in_fresh_repo() {
         let tmp = tempfile::tempdir().unwrap();
@@ -67,16 +54,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_git_returns_non_zero_exit_on_failure() {
-        let tmp = tempfile::tempdir().unwrap();
-        let err = run_git(&["log"], tmp.path()).await.unwrap_err();
-        assert_matches!(err, GitError::NonZeroExit { .. });
-    }
-
-    #[tokio::test]
     async fn non_zero_exit_status_is_nonzero() {
         let tmp = tempfile::tempdir().unwrap();
-        let err = run_git(&["log"], tmp.path()).await.unwrap_err();
-        assert_matches!(err, GitError::NonZeroExit { status, .. } if status != 0);
+        assert_matches!(
+            run_git(&["log"], tmp.path()).await,
+            Err(GitError::NonZeroExit { status, .. }) if status != 0
+        );
     }
 }

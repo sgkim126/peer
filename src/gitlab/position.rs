@@ -1,5 +1,6 @@
 use std::num::NonZeroU32;
 
+use crate::patch::Hunk;
 use crate::stage::FileLocation;
 
 use super::DiffRefs;
@@ -71,60 +72,6 @@ pub fn comment_position(
 
 fn valid_path(path: &str) -> bool {
     !path.contains('\0') && path.split('/').all(|part| !matches!(part, "" | "." | ".."))
-}
-
-#[derive(Debug)]
-struct Hunk {
-    old: u64,
-    old_end: u64,
-    new: u64,
-    new_end: u64,
-}
-
-impl Hunk {
-    fn parse(header: &str) -> Option<Self> {
-        let header = header.strip_prefix("@@ -")?;
-        let (old, rest) = header.split_once(" +")?;
-        let (new, suffix) = rest.split_once(" @@")?;
-        if !suffix.is_empty() && !suffix.starts_with(' ') {
-            return None;
-        }
-        let (old, old_end) = range(old)?;
-        let (new, new_end) = range(new)?;
-        if old == old_end && new == new_end {
-            return None;
-        }
-        Some(Self {
-            old,
-            old_end,
-            new,
-            new_end,
-        })
-    }
-
-    fn complete(&self) -> bool {
-        self.old == self.old_end && self.new == self.new_end
-    }
-}
-
-fn range(value: &str) -> Option<(u64, u64)> {
-    let (start, count) = value.split_once(',').unwrap_or((value, "1"));
-    if ![start, count]
-        .iter()
-        .all(|value| !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()))
-    {
-        return None;
-    }
-    let start = u64::from(start.parse::<u32>().ok()?);
-    let count = u64::from(count.parse::<u32>().ok()?);
-    let end = start + count;
-    if start == 0 && count != 0 {
-        return None;
-    }
-    if end > u64::from(u32::MAX) + 1 {
-        return None;
-    }
-    Some((start, end))
 }
 
 /// Returns the old coordinate for context, or `None` for an added line.
@@ -508,11 +455,6 @@ mod tests {
     }
 
     #[test]
-    fn rejects_invalid_hunk_header_syntax() {
-        assert_matches!(Hunk::parse("@@ invalid @@"), None);
-    }
-
-    #[test]
     fn rejects_truncated_hunks_even_when_the_target_line_is_present() {
         let files = [file("@@ -0,0 +1,2 @@\n+first")];
 
@@ -545,21 +487,6 @@ mod tests {
         let files = [file("@@ -1 +1 @@\n-old\n+new\n@@ -1 +1 @@\n-old\n+new")];
 
         assert_matches!(comment_position(&files, &location(Some(1)), &refs()), None);
-    }
-
-    #[test]
-    fn rejects_hunks_with_two_empty_ranges() {
-        assert_matches!(Hunk::parse("@@ -0,0 +1,0 @@"), None);
-    }
-
-    #[test]
-    fn rejects_nonempty_hunk_ranges_starting_at_zero() {
-        assert_matches!(range("0"), None);
-    }
-
-    #[test]
-    fn rejects_hunk_range_starts_exceeding_u32_maximum() {
-        assert_matches!(range("4294967296"), None);
     }
 
     #[test]

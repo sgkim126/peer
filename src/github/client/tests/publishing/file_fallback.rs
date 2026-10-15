@@ -34,7 +34,7 @@ async fn missing_patches_fall_back_to_pr_file_comments() {
     assert_eq!(body["subject_type"], "file");
     assert_eq!(body["path"], "src/main.rs");
     assert_eq!(body["commit_id"], "abc1234");
-    assert!(body.get("line").is_none());
+    assert_matches!(body.get("line"), None);
     assert_eq!(report.inline, 1);
     assert_eq!(posted_bodies(&server).len(), 1);
 }
@@ -61,7 +61,7 @@ async fn old_paths_after_rename_fall_back_to_pr_file_comments_on_the_new_path() 
     assert_eq!(body["subject_type"], "file");
     assert_eq!(body["path"], "src/new.rs");
     assert_eq!(body["commit_id"], "abc1234");
-    assert!(body.get("line").is_none());
+    assert_matches!(body.get("line"), None);
     assert_eq!(report.inline, 1);
     assert_eq!(posted_bodies(&server).len(), 1);
 }

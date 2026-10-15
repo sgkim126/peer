@@ -142,8 +142,9 @@ trait OutputExt {
 
 impl OutputExt for std::process::Output {
     fn assert_success(&self) {
-        assert!(
-            self.status.success(),
+        assert_eq!(
+            self.status.code(),
+            Some(0),
             "command failed with status {:?}\nstderr: {}",
             self.status.code(),
             String::from_utf8_lossy(&self.stderr)
@@ -183,8 +184,9 @@ fn init_succeeds_in_git_repo() {
     git_init(tmp.path());
 
     let out = cmd.arg("init").output().unwrap();
-    assert!(
-        out.status.success(),
+    assert_eq!(
+        out.status.code(),
+        Some(0),
         "stderr: {}",
         String::from_utf8_lossy(&out.stderr)
     );

@@ -292,7 +292,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gitlab_orders_the_graph_and_rejects_incomplete_or_duplicate_commits() {
+    async fn gitlab_orders_commits_by_graph_when_target_branch_has_advanced() {
         let repo = Repo::new().await;
         let base = repo.commit("base.txt", "base").await;
         let first = repo.commit("one.txt", "first").await;
@@ -321,15 +321,63 @@ mod tests {
                 commits: vec![first.clone(), head.clone()]
             }
         );
-        for commits in [vec![head.clone()], vec![first.clone(), head.clone(), first]] {
-            assert_matches!(
-                resolve_merge_request_target(commits, &refs, 10, &repo.path).await,
-                Err(ReviewTargetError::IncompleteMergeRequest)
-            );
-        }
+    }
+
+    #[tokio::test]
+    async fn gitlab_rejects_an_incomplete_commit_list() {
+        let repo = Repo::new().await;
+        let base = repo.commit("base.txt", "base").await;
+        repo.commit("one.txt", "first").await;
+        let head = repo.commit("two.txt", "second").await;
+        let refs = crate::gitlab::DiffRefs {
+            base_sha: base.clone(),
+            start_sha: base,
+            head_sha: head.clone(),
+        };
+
         assert_matches!(
-            resolve_merge_request_target(vec![head.clone(), head], &refs, 1, &repo.path).await,
-            Err(ReviewTargetError::TooManyCommits { .. })
+            resolve_merge_request_target(vec![head], &refs, 10, &repo.path).await,
+            Err(ReviewTargetError::IncompleteMergeRequest)
+        );
+    }
+
+    #[tokio::test]
+    async fn gitlab_rejects_duplicate_commits() {
+        let repo = Repo::new().await;
+        let base = repo.commit("base.txt", "base").await;
+        let first = repo.commit("one.txt", "first").await;
+        let head = repo.commit("two.txt", "second").await;
+        let refs = crate::gitlab::DiffRefs {
+            base_sha: base.clone(),
+            start_sha: base,
+            head_sha: head.clone(),
+        };
+
+        assert_matches!(
+            resolve_merge_request_target(vec![first.clone(), head, first], &refs, 10, &repo.path)
+                .await,
+            Err(ReviewTargetError::IncompleteMergeRequest)
+        );
+    }
+
+    #[tokio::test]
+    async fn gitlab_rejects_too_many_commits() {
+        let repo = Repo::new().await;
+        let base = repo.commit("base.txt", "base").await;
+        let first = repo.commit("one.txt", "first").await;
+        let head = repo.commit("two.txt", "second").await;
+        let refs = crate::gitlab::DiffRefs {
+            base_sha: base.clone(),
+            start_sha: base,
+            head_sha: head.clone(),
+        };
+
+        assert_matches!(
+            resolve_merge_request_target(vec![first, head], &refs, 1, &repo.path).await,
+            Err(ReviewTargetError::TooManyCommits {
+                actual: 2,
+                maximum: 1
+            })
         );
     }
 
@@ -357,7 +405,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn pull_request_uses_its_commits_and_diff_even_after_the_base_branch_merges_it() {
+    async fn pull_request_uses_its_commits_and_diff_when_the_base_branch_has_advanced() {
         let repo = Repo::new().await;
         let base = repo.commit("base.txt", "base").await;
         run_git(&["checkout", "-b", "pull-request"], &repo.path)
@@ -370,54 +418,99 @@ mod tests {
             .unwrap();
         repo.commit("unrelated.txt", "unrelated base change").await;
 
-        for merged in [false, true] {
-            if merged {
-                run_git(
-                    &[
-                        "merge",
-                        "--no-ff",
-                        "--no-edit",
-                        "--no-gpg-sign",
-                        "pull-request",
-                    ],
-                    &repo.path,
-                )
+        let target =
+            resolve_pull_request_target(vec![first.clone(), second.clone()], 10, &repo.path)
                 .await
                 .unwrap();
+        assert_eq!(
+            target,
+            ReviewTarget::Range {
+                from: base.clone(),
+                to: second.clone(),
+                commits: vec![first.clone(), second.clone()],
             }
-            let target =
-                resolve_pull_request_target(vec![first.clone(), second.clone()], 10, &repo.path)
-                    .await
-                    .unwrap();
-            assert_eq!(
-                target,
-                ReviewTarget::Range {
-                    from: base.clone(),
-                    to: second.clone(),
-                    commits: vec![first.clone(), second.clone()],
-                }
-            );
-            validate_target(&target, 10, &repo.path).await.unwrap();
-            let input = ReviewInput::collect(
-                &target,
-                crate::context::ReviewContext::default(),
-                &crate::extract::Extractor::new(repo.path.clone()),
-            )
+        );
+        validate_target(&target, 10, &repo.path).await.unwrap();
+        let input = ReviewInput::collect(
+            &target,
+            crate::context::ReviewContext::default(),
+            &crate::extract::Extractor::new(repo.path.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(input.head, second);
+        assert_eq!(
+            input
+                .commits
+                .iter()
+                .map(|commit| commit.hash.clone())
+                .collect::<Vec<_>>(),
+            [first.clone(), second.clone()]
+        );
+        assert!(input.cumulative_diff.contains("first.txt"));
+        assert!(input.cumulative_diff.contains("second.txt"));
+        assert!(!input.cumulative_diff.contains("unrelated.txt"));
+    }
+
+    #[tokio::test]
+    async fn pull_request_uses_its_commits_and_diff_after_the_base_branch_merges_it() {
+        let repo = Repo::new().await;
+        let base = repo.commit("base.txt", "base").await;
+        run_git(&["checkout", "-b", "pull-request"], &repo.path)
             .await
             .unwrap();
-            assert_eq!(input.head, second);
-            assert_eq!(
-                input
-                    .commits
-                    .iter()
-                    .map(|commit| commit.hash.clone())
-                    .collect::<Vec<_>>(),
-                [first.clone(), second.clone()]
-            );
-            assert!(input.cumulative_diff.contains("first.txt"));
-            assert!(input.cumulative_diff.contains("second.txt"));
-            assert!(!input.cumulative_diff.contains("unrelated.txt"));
-        }
+        let first = repo.commit("first.txt", "first PR commit").await;
+        let second = repo.commit("second.txt", "second PR commit").await;
+        run_git(&["checkout", "-b", "base", base.as_ref()], &repo.path)
+            .await
+            .unwrap();
+        repo.commit("unrelated.txt", "unrelated base change").await;
+
+        run_git(
+            &[
+                "merge",
+                "--no-ff",
+                "--no-edit",
+                "--no-gpg-sign",
+                "pull-request",
+            ],
+            &repo.path,
+        )
+        .await
+        .unwrap();
+
+        let target =
+            resolve_pull_request_target(vec![first.clone(), second.clone()], 10, &repo.path)
+                .await
+                .unwrap();
+        assert_eq!(
+            target,
+            ReviewTarget::Range {
+                from: base.clone(),
+                to: second.clone(),
+                commits: vec![first.clone(), second.clone()],
+            }
+        );
+        validate_target(&target, 10, &repo.path).await.unwrap();
+        let input = ReviewInput::collect(
+            &target,
+            crate::context::ReviewContext::default(),
+            &crate::extract::Extractor::new(repo.path.clone()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(input.head, second);
+        assert_eq!(
+            input
+                .commits
+                .iter()
+                .map(|commit| commit.hash.clone())
+                .collect::<Vec<_>>(),
+            [first.clone(), second.clone()]
+        );
+        assert!(input.cumulative_diff.contains("first.txt"));
+        assert!(input.cumulative_diff.contains("second.txt"));
+        assert!(!input.cumulative_diff.contains("unrelated.txt"));
     }
 
     #[tokio::test]
@@ -585,26 +678,6 @@ mod tests {
 
         assert_matches!(
             resolve_target(&target, 1, &repo.path).await,
-            Err(ReviewTargetError::TooManyCommits {
-                actual: 2,
-                maximum: 1
-            })
-        );
-    }
-
-    #[tokio::test]
-    async fn enforces_maximum_commit_count() {
-        let repo = Repo::new().await;
-        let first = repo.commit("a.txt", "first").await;
-        let second = repo.commit("b.txt", "second").await;
-        let target = ReviewTarget::Range {
-            from: first.clone(),
-            to: second.clone(),
-            commits: vec![first, second],
-        };
-
-        assert_matches!(
-            validate_target(&target, 1, &repo.path).await,
             Err(ReviewTargetError::TooManyCommits {
                 actual: 2,
                 maximum: 1

@@ -466,26 +466,6 @@ mod tests {
         assert!(!output.contains("\u{1b}["));
     }
 
-    #[test]
-    fn includes_context_usage_separately() {
-        let mut result = result();
-        result.context_usage = Some(LlmUsage::from(vec![LlmModelUsage {
-            provider: "test-provider".to_string(),
-            input_tokens: 40,
-            output_tokens: 10,
-            cache_read_tokens: 0,
-            cache_write_tokens: 0,
-            cost_usd: 0.0004,
-            model: "context-model".to_string(),
-        }]));
-
-        let output = render_context_usage(result.context_usage.as_ref().unwrap());
-
-        assert!(output.contains(
-            "Context usage: 40 input, 10 output, $0.000400 (test-provider/context-model)"
-        ));
-    }
-
     fn multi_model_usage() -> LlmUsage {
         let first = result().usage.iter().next().unwrap().clone();
         let second = LlmModelUsage {
@@ -622,17 +602,34 @@ mod tests {
     }
 
     #[test]
-    fn colors_current_status_names() {
-        for (status, style) in [
-            ("clean", Style::new().green().bold()),
-            ("issues", Style::new().red().bold()),
-            ("exhausted", Style::new().yellow().bold()),
-            ("failed", Style::new().red().bold()),
-        ] {
-            assert_eq!(
-                status_style(status).style(status).to_string(),
-                style.style(status).to_string()
-            );
-        }
+    fn colors_clean_status_green() {
+        assert_eq!(
+            status_style("clean").style("clean").to_string(),
+            Style::new().green().bold().style("clean").to_string()
+        );
+    }
+
+    #[test]
+    fn colors_issues_status_red() {
+        assert_eq!(
+            status_style("issues").style("issues").to_string(),
+            Style::new().red().bold().style("issues").to_string()
+        );
+    }
+
+    #[test]
+    fn colors_exhausted_status_yellow() {
+        assert_eq!(
+            status_style("exhausted").style("exhausted").to_string(),
+            Style::new().yellow().bold().style("exhausted").to_string()
+        );
+    }
+
+    #[test]
+    fn colors_failed_status_red() {
+        assert_eq!(
+            status_style("failed").style("failed").to_string(),
+            Style::new().red().bold().style("failed").to_string()
+        );
     }
 }

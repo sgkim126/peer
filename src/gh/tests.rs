@@ -33,7 +33,7 @@ async fn passes_arguments_without_shell_interpretation() {
         .await
         .unwrap();
 
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(0));
     assert_eq!(output.stdout, b"a b\n$(echo unsafe)\nx; echo unsafe\n");
 }
 
@@ -51,7 +51,7 @@ async fn drains_large_output_while_writing_large_binary_input() {
         .await
         .unwrap();
 
-    assert!(output.status.success());
+    assert_eq!(output.status.code(), Some(0));
     let mut expected_stdout = vec![0; 196_608];
     expected_stdout.extend(stdin);
     assert_eq!(output.stdout, expected_stdout);
@@ -162,7 +162,7 @@ async fn cancellation_kills_child() {
     let pid = wait_for_pid(&pid_file).await;
 
     task.abort();
-    assert!(task.await.unwrap_err().is_cancelled());
+    assert_matches!(task.await, Err(error) if error.is_cancelled());
     tokio::time::timeout(Duration::from_secs(5), async {
         while process_exists(&pid) {
             tokio::time::sleep(Duration::from_millis(10)).await;
