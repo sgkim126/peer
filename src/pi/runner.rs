@@ -635,19 +635,54 @@ fn usage_from_entries(data: &Value) -> Result<LlmUsage, PiRunError> {
         .and_then(Value::as_array)
         .ok_or_else(|| PiRunError::InvalidState("get_entries omitted entries".to_string()))?;
     let mut models = Vec::new();
-    for message in entries
-        .iter()
-        .filter(|entry| entry.get("type").and_then(Value::as_str) == Some("message"))
-        .filter_map(|entry| entry.get("message"))
-        .filter(|message| message.get("role").and_then(Value::as_str) == Some("assistant"))
-    {
-        let Some(provider) = message.get("provider").and_then(Value::as_str) else {
-            continue;
+    for entry in entries {
+        let (provider, model, usage) = match entry.get("type").and_then(Value::as_str) {
+            Some("message") => {
+                let Some(message) = entry.get("message") else {
+                    continue;
+                };
+                let Some(usage) = message.get("usage") else {
+                    continue;
+                };
+                match message.get("role").and_then(Value::as_str) {
+                    Some("assistant") => {
+                        let provider = message
+                            .get("provider")
+                            .and_then(Value::as_str)
+                            .unwrap_or("Unknown");
+                        let model = message
+                            .get("responseModel")
+                            .and_then(Value::as_str)
+                            .or_else(|| message.get("model").and_then(Value::as_str))
+                            .unwrap_or("unattributed");
+                        (provider, model, usage)
+                    }
+                    _ => continue,
+                }
+            }
+            Some("usage") => {
+                let Some(usage) = entry.get("usage") else {
+                    continue;
+                };
+                let provider = entry
+                    .get("provider")
+                    .and_then(Value::as_str)
+                    .unwrap_or("Unknown");
+                let model = entry
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unattributed");
+                (provider, model, usage)
+            }
+            // Compaction records usage without provider/model attribution.
+            Some("compaction") => {
+                let Some(usage) = entry.get("usage") else {
+                    continue;
+                };
+                ("Unattributed", "compaction", usage)
+            }
+            _ => continue,
         };
-        let Some(model) = message.get("model").and_then(Value::as_str) else {
-            continue;
-        };
-        let usage = message.get("usage").unwrap_or(&Value::Null);
         models.push(LlmModelUsage {
             provider: provider.to_string(),
             model: model.to_string(),
@@ -708,6 +743,7 @@ mod tests {
                         "role": "assistant",
                         "provider": "mistral",
                         "model": "medium",
+                        "responseModel": null,
                         "usage": {
                             "input": 10,
                             "output": 2,
@@ -753,6 +789,74 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, 16);
         assert_eq!(usage.cache_write_tokens, 1);
         assert!((usage.cost_usd - 0.05).abs() < 1e-9);
+    }
+
+    #[test]
+    fn includes_peer_session_usage_sources() {
+        fn pi_usage(input: u64, cost: f64) -> Value {
+            json!({
+                "input": input,
+                "output": 1,
+                "cacheRead": 2,
+                "cacheWrite": 3,
+                "cost": {
+                    "total": cost
+                }
+            })
+        }
+
+        let entries = json!({
+            "entries": [
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "assistant",
+                        "provider": "mistral",
+                        "model": "requested",
+                        "responseModel": "actual",
+                        "usage": pi_usage(10, 0.01)
+                    }
+                },
+                {
+                    "type": "usage",
+                    "provider": "mistral",
+                    "model": "actual",
+                    "usage": pi_usage(20, 0.02)
+                },
+                {
+                    "type": "compaction",
+                    "usage": pi_usage(4, 0.04)
+                },
+                {
+                    "type": "message",
+                    "message": {
+                        "role": "user"
+                    }
+                }
+            ]
+        });
+
+        let usage = usage_from_entries(&entries).unwrap();
+        let models: Vec<_> = usage.iter().collect();
+        assert_eq!(models.len(), 2);
+        assert_eq!(
+            (models[0].provider.as_str(), models[0].model.as_str()),
+            ("Unattributed", "compaction")
+        );
+        assert_eq!(models[0].input_tokens, 4);
+        assert_eq!(models[0].output_tokens, 1);
+        assert_eq!(models[0].cache_read_tokens, 2);
+        assert_eq!(models[0].cache_write_tokens, 3);
+        assert!((models[0].cost_usd - 0.04).abs() < 1e-9);
+        assert_eq!(
+            (models[1].provider.as_str(), models[1].model.as_str()),
+            ("mistral", "actual")
+        );
+        assert_eq!(models[1].input_tokens, 30);
+        assert_eq!(models[1].output_tokens, 2);
+        assert_eq!(models[1].cache_read_tokens, 4);
+        assert_eq!(models[1].cache_write_tokens, 6);
+        assert!((models[1].cost_usd - 0.03).abs() < 1e-9);
     }
 
     async fn read_usage_snapshots(snapshots: Vec<Value>) -> Vec<LlmUsage> {
